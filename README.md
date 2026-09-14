@@ -13,8 +13,8 @@ The user portal and administration frontend remain separate applications.
   compatibility checks. Keep blocking database work in synchronous routes or
   worker threads; future asynchronous AI calls and streaming can be added
   independently.
-- No production database, SSO protocol, AI provider, or business schema has been
-  selected. SQLite is used only by automated tests.
+- No production database, SSO protocol or AI provider has been selected.
+  SQLite is used for isolated tests and local dashboard integration only.
 
 ## Local development
 
@@ -30,6 +30,18 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+也可以在项目根目录激活虚拟环境后使用 FastAPI CLI：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]" -c requirements-dev.lock
+fastapi dev
+```
+
+项目通过 `fastapi[standard]` 安装 CLI 依赖，并在 `pyproject.toml` 中指定
+`app.main:app` 为入口。已有虚拟环境需要重新执行上述安装命令；若提示安装
+`fastapi[standard]`，说明当前环境尚未安装 CLI 依赖。
+
 An `.env` file is optional for the initial development server. Supported settings
 are documented in `.env.example`; real credentials must not be committed.
 `requirements-dev.lock` records the dependency versions verified locally. Update
@@ -40,6 +52,16 @@ it deliberately with a full test run; it is not a target-platform certification.
 - Database readiness: `GET /api/v1/health/ready`
 - Current session: `GET /api/v1/auth/session`
 - SSO login URL: `GET /api/v1/auth/login-url?returnTo=/`
+- Home dashboard: `GET /api/v1/overview/home`
+- Operations dashboard: `GET /api/v1/overview/operations`
+
+首页与运营基础接口已实现数据库快照持久化和受权限控制的发布接口；资源数量、Token、
+算力与榜单尚未接入实时业务统计。字段、筛选、迁移及前端联调说明见
+[首页看板接口文档](docs/overview-api.md)。非生产环境仅两个看板 GET 可匿名读取；
+生产读取需要 `overview:read`，所有发布均需要可信身份及 `overview:read`、
+`overview:write`。暂不实现登录，后续对接第三方单点登录。
+开发环境尚未发布的板块会返回原前端的固定展示内容（126 个智能体、92 个数据集、
+48 个模型等），由 `metadata.demoSections` 标记；已发布快照优先，生产不使用样例。
 
 Without `DATABASE_URL`, liveness succeeds and readiness returns HTTP 503 with
 `database_not_configured`. No database is created automatically. Production mode
@@ -73,6 +95,8 @@ app/
   api/          Versioned routes, health probes and authentication endpoints
   core/         Environment settings and trusted identity/permission contract
   db/           Declarative model base and request-scoped sessions
+  schemas/      首页与运营接口契约及输入校验
+  services/     看板快照聚合与持久化事务
   main.py       Application factory and engine lifecycle
 migrations/     Alembic environment and future revisions
 tests/          Configuration, HTTP and database tests
@@ -95,8 +119,9 @@ compatibility guarantee.
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-There are no business revisions yet. Import new model modules into the migration
-environment before autogeneration so their tables are registered in
+The first business revision creates `overview_snapshots` without demo data.
+Import new model modules into the migration environment before autogeneration
+so their tables are registered in
 `Base.metadata`. Review generated revisions and test upgrades on the target
 database. Application startup never calls `create_all` or applies migrations.
 
@@ -129,3 +154,9 @@ distributed microservice system.
 
 - [Phase-one task checklist](docs/phase-1-task-checklist.md)
 - [Frontend API contract draft](../AiCollabHub_User/docs/api-contract-draft.md)
+
+## 开发问答与历史
+
+问答与历史已提供非生产固定演示接口，支持提交、列表、详情和删除。升级数据库后重启服务，详见 [问答接口说明](docs/conversations-api.md)。
+
+临时会话服务已支持新建空对话、追加消息、完整历史和删除；存储通过 ConversationStore 扩展，第三方回复通过 create_app(chat_provider=...) 注入，默认仍原样回显。复用现有 JSON 表，无需新迁移，详见 docs/conversations-api.md。
