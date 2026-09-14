@@ -3,7 +3,8 @@ param(
     [string]$ApplicationEnvFile,
     [int]$ApiPortA = 8000,
     [int]$ApiPortB = 8001,
-    [int]$GatewayPort = 8080
+    [int]$GatewayPort = 8080,
+    [int]$MockIamPort = 0
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -13,7 +14,8 @@ $environmentFile = if ($ApplicationEnvFile) { (Resolve-Path -LiteralPath $Applic
 $gateway = Join-Path $gatewayRoot 'nginx.exe'
 if (!(Test-Path -LiteralPath $gateway)) { throw 'Nginx executable was not found' }
 $ports = @($ApiPortA, $ApiPortB, $GatewayPort)
-if (($ports | Select-Object -Unique).Count -ne 3) { throw 'All ports must differ' }
+if ($MockIamPort -gt 0) { $ports += $MockIamPort }
+if (($ports | Select-Object -Unique).Count -ne $ports.Count) { throw 'All ports must differ' }
 if (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in $ports }) {
     throw 'A requested port is occupied. Choose unused ports; existing processes were not changed.'
 }
@@ -28,9 +30,16 @@ try {
     try { & $gateway -t; if ($LASTEXITCODE -ne 0) { throw 'Nginx configuration validation failed' } }
     finally { Pop-Location }
     $processes = @()
+    if ($MockIamPort -gt 0) {
+        $arguments = @('-m','uvicorn','app.modules.common.auth.mock_iam:create_mock_iam','--factory','--host','127.0.0.1','--port',$MockIamPort,'--no-access-log')
+        if ($environmentFile) { $arguments += @('--env-file', ('"' + $environmentFile + '"')) }
+        $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime 'iam.out.log') -RedirectStandardError (Join-Path $runtime 'iam.err.log') -PassThru
+        $processes += [PSCustomObject]@{ role='iam'; pid=$process.Id; started=$process.StartTime.ToUniversalTime().ToString('o') }
+    }
     foreach ($item in @(@('A', $ApiPortA), @('B', $ApiPortB))) {
         $env:INSTANCE_ID = $item[0]
-        $arguments = @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',$item[1])
+        # 回调查询参数含一次性票据；访问日志统一由不记录查询串的 Nginx 输出。
+        $arguments = @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',$item[1],'--no-access-log')
         if ($environmentFile) { $arguments += @('--env-file', ('"' + $environmentFile + '"')) }
         $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime ($item[0] + '.out.log')) -RedirectStandardError (Join-Path $runtime ($item[0] + '.err.log')) -PassThru
         $processes += [PSCustomObject]@{ role=$item[0]; pid=$process.Id; started=$process.StartTime.ToUniversalTime().ToString('o') }

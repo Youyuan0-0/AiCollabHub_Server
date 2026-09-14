@@ -7,6 +7,8 @@ from pydantic.alias_generators import to_camel
 
 
 class Payload(BaseModel):
+    # 把前端 JSON 的 descriptionMarkdown 等驼峰字段映射到 Python 的 description_markdown。
+    # model_dump(by_alias=True) 再按驼峰名称导出，保持发送和返回时的字段约定一致。
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
@@ -19,7 +21,9 @@ class PageQuery(BaseModel):
 class CatalogQuery(PageQuery):
     category: str = ""
     owner: str = ""
-    sort: Literal["recommended", "latest", "popular", "rating"] = "recommended"
+    sort: Literal[
+        "recommended", "latest", "popular", "rating", "recent_download", "downloads", "favorites"
+    ] = "recommended"
     facets: str = Field(default="{}", max_length=8000)
     favoriteIds: str | None = Field(default=None, max_length=16000)
 

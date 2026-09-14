@@ -9,6 +9,7 @@ certifi==2026.7.22
 cffi==2.1.1
 click==8.5.0
 colorama==0.4.6
+defusedxml==0.7.1
 fastapi==0.141.1
 greenlet==3.5.5
 h11==0.16.0
@@ -40,3 +41,33 @@ typing_extensions==4.16.0
 tzdata==2026.3; sys_platform == "win32"
 urllib3==2.7.0
 uvicorn==0.52.4
+
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.6.3
+
+# FastAPI standard: CLI and multipart request parsing.
+agent-detector==2.0.0
+detect-installer==0.2.1
+dnspython==2.8.0
+email-validator==2.3.0
+fastapi-cli==0.0.32
+fastapi-cloud-cli==0.26.0
+fastar==0.12.0
+httptools==0.8.0
+jinja2==3.1.6
+markdown-it-py==4.2.0
+mdurl==0.1.2
+pydantic-extra-types==2.11.1
+python-multipart==0.0.32
+pyyaml==6.0.3
+rich==15.0.0
+rich-toolkit==0.20.5
+rignore==0.8.1
+sentry-sdk==2.69.1
+shellingham==1.5.4
+typer==0.27.2
+watchfiles==1.2.0
+websockets==17.1

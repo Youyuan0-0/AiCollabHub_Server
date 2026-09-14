@@ -15,7 +15,10 @@ try {
     const page = await context.newPage()
     const errors = [], failedResponses = [], authRequests = [], instances = new Set()
     page.on('pageerror', error => errors.push(error.message))
-    page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/v1/auth/')) authRequests.push(request.url()) })
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (path.startsWith('/api/v1/auth/') && path !== '/api/v1/auth/config') authRequests.push(path)
+    })
     page.on('response', response => {
       if (response.status() >= 400) failedResponses.push({ path: new URL(response.url()).pathname, status: response.status() })
       const instance = response.headers()['x-app-instance']
