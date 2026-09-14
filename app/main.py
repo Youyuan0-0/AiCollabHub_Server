@@ -11,6 +11,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.router import api_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
+from app.modules.applications.application_service import ApplicationService
+from app.modules.applications.demo_store import create_demo_application_service
+from app.modules.applications.identity import DemoIdentityProvider, SessionIdentityProvider
 from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
@@ -24,6 +27,7 @@ def create_app(
     *,
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
     cas_client=None,
+    applications_factory: Callable[[], ApplicationService] = create_demo_application_service,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -106,6 +110,11 @@ def create_app(
         application.include_router(auth_router, prefix="/api/v1")
     # 认证按配置启用，业务仍返回 Mock；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
+        # 每个 FastAPI 实例创建一份场景应用业务对象，路由从 request.app.state 取出并复用。
+        application.state.application_service = applications_factory()
+        application.state.application_identity = (
+            SessionIdentityProvider() if settings.auth_mode == "mock" else DemoIdentityProvider()
+        )
         application.include_router(
             mock_router,
             dependencies=(

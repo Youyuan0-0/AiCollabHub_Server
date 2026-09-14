@@ -99,6 +99,34 @@ def notification(ticket):
     }
 
 
+def test_applications_use_verified_identity_and_disable_demo_switch(auth):
+    a, _, iam, _ = auth
+    login(a, iam)
+    actor = a.get("/api/v1/application-session").json()
+    assert actor["current"]["id"] == "mock-user"
+    assert actor["current"]["organizationId"] == ""
+    assert actor["actors"] == [] and actor["directory"]["organizations"] == []
+    assert (
+        a.post(
+            "/api/v1/application-demo-session",
+            json={"actorId": "demo-admin", "audience": "user"},
+            headers=csrf(a),
+        ).status_code
+        == 404
+    )
+    assert a.get("/api/v1/admin/application-session").status_code == 401
+    payload = {"data": {"name": "登录后的申请"}}
+    assert a.post("/api/v1/application-publications", json=payload).status_code == 403
+    record = a.post("/api/v1/application-publications", json=payload, headers=csrf(a)).json()
+    assert record["createdBy"] == "mock-user" and record["organizationId"] == ""
+    login(a, iam, scope="admin", subject="mock-admin")
+    admin = a.get("/api/v1/admin/application-session").json()
+    assert admin["current"]["id"] == "mock-admin" and admin["current"]["role"] == "admin"
+    assert a.get("/api/v1/admin/application-dependencies").status_code == 200
+    # IAM 切换身份会撤销旧会话；场景接口应要求重新登录，不能回退到演示发布者。
+    assert a.get("/api/v1/application-session").status_code == 401
+
+
 def test_cross_instance_callback_session_and_business_csrf(auth):
     a, b, iam, engine = auth
     assert a.get("/api/v1/auth/config").json()["enabled"] is True

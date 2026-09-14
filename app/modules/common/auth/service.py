@@ -82,7 +82,13 @@ def require_business_identity(request: Request) -> None:
     scope = "admin" if request.url.path.startswith("/api/v1/admin/") else "user"
     # 会话检查始终使用主库，不能因为备库或缓存延迟重新接受已撤销的会话。
     with Session(request.app.state.database_engine) as db:
-        authenticated_session(db, request, scope)
+        session = authenticated_session(db, request, scope)
+        # 场景应用复用已验证身份，保存记录时不再另选一个演示用户。
+        request.state.business_identity = {
+            "id": session.subject,
+            "name": session.display_name or session.subject,
+            "scope": scope,
+        }
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         verify_csrf(request, scope)
 

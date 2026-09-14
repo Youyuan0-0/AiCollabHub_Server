@@ -1,0 +1,62 @@
+{
+  "app-ppt": {
+    "downloadCount": 320,
+    "favoriteCount": 86,
+    "lastDownloadedAt": "2026-09-10T08:10:00Z"
+  },
+  "app-meeting": {
+    "downloadCount": 120,
+    "favoriteCount": 210,
+    "lastDownloadedAt": "2026-09-14T02:30:00Z"
+  },
+  "app-writing": {
+    "downloadCount": 410,
+    "favoriteCount": 620,
+    "lastDownloadedAt": "2026-09-12T09:00:00Z"
+  },
+  "app-summary": {
+    "downloadCount": 90,
+    "favoriteCount": 55,
+    "lastDownloadedAt": "2026-09-07T05:20:00Z"
+  },
+  "app-translate": {
+    "downloadCount": 780,
+    "favoriteCount": 160,
+    "lastDownloadedAt": "2026-09-13T06:00:00Z"
+  },
+  "app-report": {
+    "downloadCount": 480,
+    "favoriteCount": 180,
+    "lastDownloadedAt": "2026-09-11T07:15:00Z"
+  },
+  "app-mail": {
+    "downloadCount": 80,
+    "favoriteCount": 60,
+    "lastDownloadedAt": "2026-09-08T01:45:00Z"
+  },
+  "app-schedule": {
+    "downloadCount": 0,
+    "favoriteCount": 25,
+    "lastDownloadedAt": null
+  },
+  "app-contract": {
+    "downloadCount": 190,
+    "favoriteCount": 110,
+    "lastDownloadedAt": "2026-09-14T07:40:00Z"
+  },
+  "app-resume": {
+    "downloadCount": 250,
+    "favoriteCount": 70,
+    "lastDownloadedAt": "2026-09-09T10:00:00Z"
+  },
+  "app-qa": {
+    "downloadCount": 220,
+    "favoriteCount": 240,
+    "lastDownloadedAt": "2026-09-06T04:00:00Z"
+  },
+  "app-flow": {
+    "downloadCount": 0,
+    "favoriteCount": 0,
+    "lastDownloadedAt": null
+  }
+}

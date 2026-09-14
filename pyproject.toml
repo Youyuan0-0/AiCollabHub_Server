@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "defusedxml>=0.7.1,<1",
     "httpx>=0.28,<1",
+    "jsonschema>=4.23,<5",
     "minio>=7.2.20,<8",
     "psycopg[binary]>=3.3.5,<4",
     "pydantic-settings>=2.7,<3",
