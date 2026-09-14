@@ -10,8 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "alembic>=1.14,<2",
-    # 标准依赖包含 FastAPI CLI，支持使用 fastapi dev 启动开发服务。
-    "fastapi[standard]>=0.115,<1",
+    "fastapi>=0.115,<1",
     "pydantic-settings>=2.7,<3",
     "sqlalchemy>=2.0,<2.1",
     "uvicorn>=0.34,<1",
@@ -26,10 +25,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
-
-[tool.fastapi]
-# 指定模块中的应用实例，使项目根目录下的 fastapi dev 无需额外参数。
-entrypoint = "app.main:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

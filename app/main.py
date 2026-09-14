@@ -9,15 +9,11 @@ from app.api.router import api_router
 from app.core.auth import IdentityProvider
 from app.core.config import Settings
 from app.db.session import create_db_engine
-from app.services.chat_provider import ChatProvider, EchoChatProvider
 
 
 # 工厂函数允许测试注入独立配置，避免不同应用实例共享数据库连接池。
 def create_app(
-    settings: Settings | None = None,
-    *,
-    identity_provider: IdentityProvider | None = None,
-    chat_provider: ChatProvider | None = None,
+    settings: Settings | None = None, *, identity_provider: IdentityProvider | None = None
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -50,12 +46,6 @@ def create_app(
     )
     # 通过应用工厂注入受信任的 SSO 实现，默认不启用任何演示身份。
     application.state.identity_provider = identity_provider
-    # 默认回显回复；第三方适配器通过工厂注入，不直接处理数据库。
-    application.state.chat_provider = (
-        chat_provider if chat_provider is not None else EchoChatProvider()
-    )
-    # 开发看板只读策略由服务端环境决定，不能由浏览器请求参数切换。
-    application.state.app_env = settings.app_env
     # Vue 使用同源开发代理时无需 CORS；独立跨域访问须显式配置允许的来源。
     if settings.cors_origins:
         application.add_middleware(
