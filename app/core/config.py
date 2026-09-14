@@ -47,6 +47,38 @@ class Settings(BaseSettings):
     minio_timeout: float = Field(default=5, gt=0)
     minio_max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
     cors_origins: list[str] = []
+    # 本轮仅开放模拟 IAM；真实 CAS 签名规范确认前，不提供生产认证开关。
+    auth_mode: Literal["disabled", "mock"] = "disabled"
+    auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
+    auth_mock_iam_url: AnyHttpUrl = "http://127.0.0.1:18002"
+    auth_mock_secret: SecretStr | None = None
+    auth_cookie_secure: bool = False
+    auth_session_ttl: int = Field(default=28800, ge=60, le=86400)
+    auth_login_ttl: int = Field(default=300, ge=30, le=600)
+    auth_audit_retention_days: int = Field(default=90, ge=1)
+    auth_mock_admin_subjects: list[str] = ["mock-admin"]
+
+    @model_validator(mode="after")
+    def validate_authentication(self) -> "Settings":
+        for url in (self.auth_public_origin, self.auth_mock_iam_url):
+            if (
+                url.username
+                or url.password
+                or url.query
+                or url.fragment
+                or url.path not in (None, "/")
+            ):
+                raise ValueError("Authentication URLs must be origins without credentials")
+        if self.auth_mode == "mock":
+            if self.app_env == "production":
+                raise ValueError("Mock IAM is prohibited in production")
+            if not self.database_url:
+                raise ValueError("Mock authentication requires shared DATABASE_URL")
+            if not self.auth_mock_secret or len(self.auth_mock_secret.get_secret_value()) < 32:
+                raise ValueError("AUTH_MOCK_SECRET must contain at least 32 characters")
+            if self.auth_public_origin.scheme == "https" and not self.auth_cookie_secure:
+                raise ValueError("HTTPS authentication requires secure cookies")
+        return self
 
     @field_validator(
         "database_url",

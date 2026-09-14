@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,6 +11,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.router import api_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
+from app.modules.common.auth.cas import MockCasClient
+from app.modules.common.auth.router import config_router
+from app.modules.common.auth.router import router as auth_router
+from app.modules.common.auth.service import require_business_identity
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
 
@@ -19,6 +23,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
+    cas_client=None,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -29,9 +34,14 @@ def create_app(
         application.state.database_engine = (
             resources.database.primary if resources.database is not None else None
         )
+        application.state.cas_client = cas_client
+        if settings.auth_mode == "mock" and cas_client is None:
+            application.state.cas_client = MockCasClient(settings)
         try:
             yield
         finally:
+            if settings.auth_mode == "mock" and cas_client is None:
+                application.state.cas_client.close()
             try:
                 await run_in_threadpool(resources.close)
             finally:
@@ -61,9 +71,11 @@ def create_app(
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             if settings.app_env != "production" and not request.url.path.startswith(
-                "/api/v1/health/"
+                ("/api/v1/health/", "/api/v1/auth/")
             ):
                 response.headers["X-Data-Mode"] = "mock"
+        if request.url.path.startswith("/api/v1/auth/"):
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @application.exception_handler(SQLAlchemyError)
@@ -89,9 +101,17 @@ def create_app(
             ],
         )
     application.include_router(api_router)
-    # 本阶段没有登录或权限模块；样例接口只在开发/测试环境注册。
+    application.include_router(config_router, prefix="/api/v1")
+    if settings.auth_mode == "mock":
+        application.include_router(auth_router, prefix="/api/v1")
+    # 认证按配置启用，业务仍返回 Mock；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
-        application.include_router(mock_router)
+        application.include_router(
+            mock_router,
+            dependencies=(
+                [Depends(require_business_identity)] if settings.auth_mode == "mock" else []
+            ),
+        )
     return application
 
 

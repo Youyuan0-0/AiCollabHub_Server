@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, pool
 
 from app.core.config import Settings
 from app.db.base import Base
+from app.modules.common.auth import models  # noqa: F401
 
 # 复用应用的数据库配置，不在 alembic.ini 中另外保存连接凭据。
 settings = Settings()

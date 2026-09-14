@@ -2,7 +2,7 @@
 
 人工智能协同平台的 FastAPI + SQLAlchemy 后端框架。当前阶段只搭建用户端、独立管理端、模块化后端及部署基础，前后端通过 HTTP Mock 接口联通。
 
-登录、权限、真实反馈持久化和业务文件模块已移除。页面使用后端提供的固定样例，提交、处理、发布、问答等操作返回模拟结果，不调用真实业务系统，也不写数据库、Redis 或 MinIO。服务连接和主备验证通过独立的健康检查与脚本执行。
+业务页面继续使用后端固定样例，提交、处理、发布、问答等操作返回模拟结果，不调用真实业务系统。新增可选的 CAS 登录联调：模拟 IAM 提供一次性票据，平台用 PostgreSQL 保存共享会话、登录请求与认证日志。未建设个人资料页、完整用户档案、身份同步或正式角色权限。服务连接和主备验证通过独立的健康检查与脚本执行。
 
 ## 技术与目录
 
@@ -26,9 +26,10 @@ app/
     knowledge/           知识库、文档与检索样例
     tools/               AI 工具目录与调用样例
     common/              公共 DTO、样例加载、概览、反馈、申请和发布
+      auth/              CAS 适配、共享会话、认证日志及独立模拟 IAM
     admin/               独立管理端的列表与处理样例
   main.py                应用工厂
-migrations/              Alembic 环境和空基线
+migrations/              Alembic 基线及认证三表迁移
 deploy/                  PostgreSQL、Redis、Nginx 配置及部署说明
 scripts/                 启停、连接验证、主备验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
@@ -46,7 +47,9 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-默认 `APP_ENV=development`，不需要外部服务就能运行全部样例页面接口。`.env.example` 是配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
+默认 `APP_ENV=development`、`AUTH_MODE=disabled`，不需要外部服务就能运行匿名样例接口。启用 `AUTH_MODE=mock` 后，两套前端和业务样例接口都要求有效会话，写请求校验 CSRF；需要先执行认证迁移，并单独运行模拟 IAM。`.env.example` 是配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
+
+单点登录的配置、启动、验证及边界见 [认证联调说明](deploy/authentication.md)。集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。
 
 | 地址 | 用途 |
 | --- | --- |
@@ -60,7 +63,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 
 ## HTTP Mock 契约
 
-默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例接口另带 `X-Data-Mode: mock`。无登录、会话、CSRF 或权限依赖。
+默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例业务接口另带 `X-Data-Mode: mock`。认证开关独立控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
 
 | 路由 | 当前行为 |
 | --- | --- |
@@ -80,7 +83,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 
 | 能力 | 项目已有内容 | 当前边界 |
 | --- | --- | --- |
-| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | 页面 Mock 不访问数据库；当前 `DB_READ_ENABLED=false` |
+| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | Mock 业务不持久化；启用认证时会话和认证日志实际访问主库 |
 | 同步重放 | `remote_apply` 校验、提交期限和不确定结果处理；主备配置及测试脚本 | 只对显式使用数据库事务的调用生效；Mock 提交不会触发复制 |
 | Redis | 共享客户端、环境前缀、TTL、失败按未命中处理、Compose 模板 | 真实 Redis 服务待提供；没有业务缓存 |
 | MinIO | 对象上传、读取、删除、大小检查、连接回收 | 基础适配器及服务探测；没有业务文件 API |
@@ -102,7 +105,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-当前 `20260913_01` 是空基线，不建立业务表；沿用版本号仅为兼容已运行过的测试库迁移标记。本轮没有删除远端历史测试表或文件。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免把清理代码误当作删表授权；以后确需删除表时手工编写并审核迁移。
+`20260913_01` 是兼容历史测试库的空基线；`20260914_01` 新增 `auth_session`、`auth_login_request`、`auth_event_log` 三张认证表。本轮不删除远端历史测试表或文件。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免把清理代码误当作删表授权。
 
 `compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备。现有局域网测试集群为 PostgreSQL 16.14，服务配置与既有验证记录见 [部署说明](deploy/README.md)。
 
@@ -113,9 +116,11 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
 node scripts/verify_framework_browser.mjs
+# AUTH_MODE=mock 的网关使用以下登录验证脚本：
+node scripts/verify_auth_browser.mjs
 ```
 
-Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约。Mock 路由测试禁止所有数据库、Redis 和 MinIO 网络调用。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关，覆盖桌面与手机的 10 个页面、无登录访问、模拟提交和 A/B 分流。
+Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约，以及模拟 CAS、跨实例会话、单点登出、CSRF、迁移。匿名 Mock 契约测试禁止外部服务调用。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关；框架脚本用于认证关闭的环境，认证脚本验证桌面/手机登录、原页面返回、管理端准入、Mock 写请求和 A/B 会话及登出一致性。
 
 验证范围是框架和演示联通，不包括真实业务、Redis 服务、两台物理服务器容灾或 2 万在线/5000 并发容量。
 
