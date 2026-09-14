@@ -1,38 +1,42 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.router import api_router
-from app.core.auth import IdentityProvider
+from app.api.router import api_router, mock_router
 from app.core.config import Settings
-from app.db.session import create_db_engine
+from app.core.resources import ApplicationResources, create_resources
+from app.storage.client import ObjectNotFound, StorageUnavailable
 
 
 # 工厂函数允许测试注入独立配置，避免不同应用实例共享数据库连接池。
 def create_app(
-    settings: Settings | None = None, *, identity_provider: IdentityProvider | None = None
+    settings: Settings | None = None,
+    *,
+    resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        # 在应用生命周期内管理连接池：yield 前初始化，应用退出时由 finally 清理。
-        engine = (
-            create_db_engine(settings.database_url.get_secret_value())
-            if settings.database_url is not None
-            else None
+        resources = await run_in_threadpool(resources_factory, settings)
+        application.state.resources = resources
+        application.state.database_engine = (
+            resources.database.primary if resources.database is not None else None
         )
-        application.state.database_engine = engine
         try:
             yield
         finally:
-            if engine is not None:
-                # 引擎清理是同步操作，在线程池执行以免阻塞事件循环。
-                await run_in_threadpool(engine.dispose)
-            application.state.database_engine = None
+            try:
+                await run_in_threadpool(resources.close)
+            finally:
+                application.state.database_engine = None
+                application.state.resources = None
 
     # 生产环境关闭交互文档和 OpenAPI 描述，减少不必要的接口信息暴露。
     development_docs = settings.app_env != "production"
@@ -44,17 +48,50 @@ def create_app(
         redoc_url=None,
         openapi_url="/openapi.json" if development_docs else None,
     )
-    # 通过应用工厂注入受信任的 SSO 实现，默认不启用任何演示身份。
-    application.state.identity_provider = identity_provider
+    application.state.settings = settings
+    application.state.database_engine = None
+    application.state.resources = None
+
+    @application.middleware("http")
+    async def request_context(request, call_next):
+        request.state.request_id = str(uuid4())
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        response.headers["X-App-Instance"] = settings.instance_id
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+            if settings.app_env != "production" and not request.url.path.startswith(
+                "/api/v1/health/"
+            ):
+                response.headers["X-Data-Mode"] = "mock"
+        return response
+
+    @application.exception_handler(SQLAlchemyError)
+    async def database_unavailable(request, error):
+        return JSONResponse(status_code=503, content={"detail": "database_unavailable"})
+
+    @application.exception_handler(StorageUnavailable)
+    async def storage_unavailable(request, error):
+        return JSONResponse(status_code=503, content={"detail": "object_storage_unavailable"})
+
+    @application.exception_handler(ObjectNotFound)
+    async def object_not_found(request, error):
+        return JSONResponse(status_code=404, content={"detail": "object_not_found"})
+
     # Vue 使用同源开发代理时无需 CORS；独立跨域访问须显式配置允许的来源。
     if settings.cors_origins:
         application.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=[
+                "Content-Type",
+            ],
         )
     application.include_router(api_router)
+    # 本阶段没有登录或权限模块；样例接口只在开发/测试环境注册。
+    if settings.app_env != "production":
+        application.include_router(mock_router)
     return application
 
 

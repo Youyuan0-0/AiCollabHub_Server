@@ -1,0 +1,44 @@
+{
+  "kb-tech-docs": [
+    {
+      "id": "prototype-chunk-1",
+      "documentName": "涡轮叶片结构设计指南.pdf",
+      "index": 1,
+      "text": "航空发动机总体设计是发动机研制的基础环节，涉及气动热力设计、结构强度设计、控制系统设计等多学科交叉领域。总体设计需在满足推力、油耗、可靠性等指标的前提下，实现各子系统的协调匹配。",
+      "characterCount": 89,
+      "confidence": 0.96
+    },
+    {
+      "id": "prototype-chunk-2",
+      "documentName": "涡轮叶片结构设计指南.pdf",
+      "index": 2,
+      "text": "涡轮进口温度是衡量发动机性能的关键参数之一。提高涡轮进口温度可以显著提升发动机推力和热效率，但同时对涡轮叶片材料、冷却技术和涂层工艺提出了更高要求。",
+      "characterCount": 74,
+      "confidence": 0.94
+    },
+    {
+      "id": "prototype-chunk-3",
+      "documentName": "涡轮叶片结构设计指南.pdf",
+      "index": 3,
+      "text": "压气机设计需遵循级负荷匹配原则，合理分配各级压比和效率。对于高推重比发动机，通常采用多级轴流压气机，其设计挑战在于如何在宽工况范围内保持高效率，同时抑制喘振和失速现象。",
+      "characterCount": 84,
+      "confidence": 0.92
+    },
+    {
+      "id": "prototype-chunk-4",
+      "documentName": "涡轮叶片结构设计指南.pdf",
+      "index": 4,
+      "text": "燃烧室设计目标是在有限空间内实现高效、稳定的燃烧过程，同时控制污染物排放。先进燃烧室采用头部旋流器、分级供油等关键技术，在提高燃烧效率的同时降低污染物排放。",
+      "characterCount": 78,
+      "confidence": 0.95
+    },
+    {
+      "id": "prototype-chunk-5",
+      "documentName": "涡轮叶片结构设计指南.pdf",
+      "index": 5,
+      "text": "发动机控制系统是实现发动机安全、高效运行的核心。全权限数字电子控制系统通过实时监测发动机状态参数，自动调节燃油流量、导叶角度等控制量，实现最优性能控制和故障保护。",
+      "characterCount": 81,
+      "confidence": 0.93
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+
+from app.modules.common.schemas import CatalogQuery
+from app.modules.datasets.service import list_resources
+
+router = APIRouter(prefix="/datasets", tags=["datasets (mock)"])
+
+
+@router.get("")
+def resources(query: Annotated[CatalogQuery, Query()]):
+    return list_resources(query)

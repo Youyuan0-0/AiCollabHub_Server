@@ -6,12 +6,18 @@ from app.db.base import Base
 
 # 复用应用的数据库配置，不在 alembic.ini 中另外保存连接凭据。
 settings = Settings()
-if settings.database_url is None:
-    raise RuntimeError("DATABASE_URL must be configured before running migrations")
+database_setting = settings.database_migration_url or settings.database_url
+if database_setting is None:
+    raise RuntimeError("DATABASE_URL or DATABASE_MIGRATION_URL is required for migrations")
 
-database_url = settings.database_url.get_secret_value()
+database_url = database_setting.get_secret_value()
 # 新增业务模型后需先导入对应模块，使表定义注册到 Base.metadata。
 target_metadata = Base.metadata
+
+
+def include_object(obj, name, object_type, reflected, compare_to):
+    # 框架阶段不接管旧测试表；未在当前模型声明的表不会被自动生成删除操作。
+    return not (object_type == "table" and reflected and compare_to is None)
 
 
 def run_migrations_offline() -> None:
@@ -22,6 +28,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -36,6 +43,7 @@ def run_migrations_online() -> None:
                 connection=connection,
                 target_metadata=target_metadata,
                 compare_type=True,
+                include_object=include_object,
             )
             with context.begin_transaction():
                 context.run_migrations()

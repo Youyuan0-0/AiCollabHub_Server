@@ -1,0 +1,2287 @@
+[
+  {
+    "id": "model-aerogen-video",
+    "kind": "model",
+    "name": "AeroGen-Video-Large",
+    "description": "面向航空场景的文本生成视频模型合集，支持镜头规划与提示词改写。",
+    "owner": "中国航空发动机集团",
+    "category": "文本生成视频",
+    "tags": [
+      "14B",
+      "Transformers",
+      "3 个子模型"
+    ],
+    "usage": 3210,
+    "rating": 4.6,
+    "updatedAt": "2026-07-09",
+    "status": "available",
+    "badge": "合集",
+    "tone": "violet",
+    "version": "v1.4",
+    "framework": "Transformers",
+    "facets": {
+      "taskType": [
+        "文本生成视频"
+      ],
+      "framework": [
+        "Transformers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "capabilities": [
+      "文本生成视频",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "14B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Transformers"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "88.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "86.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "320ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.4",
+        "releasedAt": "2026-07-09",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-aerogen-video/chat/completions",
+    "usageExample": "POST /api/v1/models/model-aerogen-video/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-hunyuan",
+    "kind": "model",
+    "name": "Hunyuan-Di-Plus",
+    "description": "适用于长文本生成与复杂指令理解的通用语言模型。",
+    "owner": "中国航发涡轮院",
+    "category": "文本生成",
+    "tags": [
+      "298.79B",
+      "Safetensors",
+      "长文本"
+    ],
+    "usage": 1540,
+    "rating": 4.5,
+    "updatedAt": "2026-07-06",
+    "status": "approval",
+    "badge": "新接入",
+    "tone": "blue",
+    "version": "v1.0",
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors"
+      ],
+      "serviceState": [
+        "需审批"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署"
+      ]
+    },
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "298.79B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "需审批"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "89.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "87.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "354ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-06",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-hunyuan/chat/completions",
+    "usageExample": "POST /api/v1/models/model-hunyuan/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-longcat",
+    "kind": "model",
+    "name": "AeroLLM-LongCat-2.0",
+    "description": "针对航空发动机技术语料持续预训练的行业语言模型。",
+    "owner": "中国航发动研所",
+    "category": "文本生成",
+    "tags": [
+      "行业模型",
+      "Transformers",
+      "2 个子模型"
+    ],
+    "usage": 7120,
+    "rating": 4.8,
+    "updatedAt": "2026-07-04",
+    "status": "available",
+    "badge": "推荐",
+    "tone": "teal",
+    "version": "v2.0",
+    "framework": "Transformers",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Transformers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "28B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Transformers"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "90.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "88.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "388ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-07-04",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-longcat/chat/completions",
+    "usageExample": "POST /api/v1/models/model-longcat/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-glm",
+    "kind": "model",
+    "name": "GLM-5.2-Aero",
+    "description": "支持技术问答、图文理解和工具调用的多模态模型合集。",
+    "owner": "中国航发航材院",
+    "category": "统一多模态",
+    "tags": [
+      "多模态",
+      "Safetensors",
+      "2 个子模型"
+    ],
+    "usage": 9240,
+    "rating": 4.8,
+    "updatedAt": "2026-06-28",
+    "status": "available",
+    "badge": "合集",
+    "tone": "amber",
+    "version": "v5.2",
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "统一多模态"
+      ],
+      "framework": [
+        "Safetensors"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "capabilities": [
+      "统一多模态",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "35B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "91.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "89.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "422ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v5.2",
+        "releasedAt": "2026-06-28",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-glm/chat/completions",
+    "usageExample": "POST /api/v1/models/model-glm/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-ocr",
+    "kind": "model",
+    "name": "AeroVision-OCR-v3",
+    "description": "针对工程图纸、扫描件和表格优化的视觉文字识别模型。",
+    "owner": "中国航发动力所",
+    "category": "视觉多模态理解",
+    "tags": [
+      "3.34B",
+      "OCR",
+      "Transformers"
+    ],
+    "usage": 8230,
+    "rating": 4.7,
+    "updatedAt": "2026-07-03",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "cyan",
+    "version": "v3.0",
+    "framework": "Transformers",
+    "facets": {
+      "taskType": [
+        "视觉多模态理解"
+      ],
+      "framework": [
+        "Transformers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "capabilities": [
+      "视觉多模态理解",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "3.34B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Transformers"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "92.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "90.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "456ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.60000000000001%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-07-03",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-ocr/chat/completions",
+    "usageExample": "POST /api/v1/models/model-ocr/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-aerodraw",
+    "kind": "model",
+    "name": "AeroDraw-3.0-Turbo",
+    "description": "根据结构描述和设计意图生成概念图与辅助设计图像。",
+    "owner": "中国航发动控所",
+    "category": "文本生成图片",
+    "tags": [
+      "30.20B",
+      "PyTorch",
+      "图像生成"
+    ],
+    "usage": 6910,
+    "rating": 4.4,
+    "updatedAt": "2026-06-29",
+    "status": "available",
+    "tone": "rose",
+    "version": "v3.0",
+    "framework": "PyTorch",
+    "facets": {
+      "taskType": [
+        "文本生成图片"
+      ],
+      "framework": [
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "capabilities": [
+      "文本生成图片",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "30.20B"
+      },
+      {
+        "label": "模型框架",
+        "value": "PyTorch"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "93.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "91.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "490ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-29",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-aerodraw/chat/completions",
+    "usageExample": "POST /api/v1/models/model-aerodraw/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-aeromm",
+    "kind": "model",
+    "name": "AeroMM-M3",
+    "description": "统一处理文本、图像和表格输入的航空领域多模态模型。",
+    "owner": "中国航发贵阳所",
+    "category": "统一多模态",
+    "tags": [
+      "多模态",
+      "PyTorch",
+      "Safetensors"
+    ],
+    "usage": 4860,
+    "rating": 4.6,
+    "updatedAt": "2026-06-25",
+    "status": "maintenance",
+    "badge": "合集",
+    "tone": "violet",
+    "version": "M3",
+    "framework": "PyTorch",
+    "facets": {
+      "taskType": [
+        "统一多模态"
+      ],
+      "framework": [
+        "PyTorch"
+      ],
+      "serviceState": [
+        "维护中"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持训练"
+      ]
+    },
+    "capabilities": [
+      "统一多模态",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "56B"
+      },
+      {
+        "label": "模型框架",
+        "value": "PyTorch"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "维护中"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "94.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "92.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "524ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "M3",
+        "releasedAt": "2026-06-25",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-aeromm/chat/completions",
+    "usageExample": "POST /api/v1/models/model-aeromm/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-deepseek-aero",
+    "kind": "model",
+    "name": "DeepSeek-V4-Pro-Aero",
+    "description": "适配集团知识与推理任务的大参数语言模型服务。",
+    "owner": "中国航空发动机集团",
+    "category": "文本生成",
+    "tags": [
+      "推理模型",
+      "889.48B",
+      "Safetensors"
+    ],
+    "usage": 5720,
+    "rating": 4.9,
+    "updatedAt": "2026-07-08",
+    "status": "available",
+    "badge": "热门",
+    "tone": "blue",
+    "version": "v4",
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "889.48B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "95.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "93.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "558ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v4",
+        "releasedAt": "2026-07-08",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-deepseek-aero/chat/completions",
+    "usageExample": "POST /api/v1/models/model-deepseek-aero/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-lingbot",
+    "kind": "model",
+    "name": "LingBot-World-V2",
+    "description": "面向文本生成视频任务的模型合集。",
+    "owner": "中国航发研究院",
+    "category": "文本生成视频",
+    "tags": [
+      "模型合集",
+      "Safetensors",
+      "PyTorch"
+    ],
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成视频"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "usage": 0,
+    "rating": 4.5,
+    "updatedAt": "2026-07-09",
+    "status": "available",
+    "badge": "合集",
+    "tone": "teal",
+    "capabilities": [
+      "文本生成视频",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "70B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "88.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "94.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "592ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-09",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-lingbot/chat/completions",
+    "usageExample": "POST /api/v1/models/model-lingbot/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-nex",
+    "kind": "model",
+    "name": "Nex-N2-Pro",
+    "description": "面向文本生成与专业问答任务的模型。",
+    "owner": "中国航发动力所",
+    "category": "文本生成",
+    "tags": [
+      "396.80B",
+      "Safetensors",
+      "PyTorch"
+    ],
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "usage": 13100,
+    "rating": 4.6,
+    "updatedAt": "2026-06-09",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "blue",
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "396.80B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "89.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "86.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "626ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.60000000000001%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-09",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-nex/chat/completions",
+    "usageExample": "POST /api/v1/models/model-nex/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-agents",
+    "kind": "model",
+    "name": "Agents-A1",
+    "description": "面向智能体文本交互场景的生成模型。",
+    "owner": "中国航发涡轮院",
+    "category": "文本生成",
+    "tags": [
+      "35.11B",
+      "Safetensors",
+      "PyTorch",
+      "apache-2.0"
+    ],
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "usage": 3500,
+    "rating": 4.4,
+    "updatedAt": "2026-07-10",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "cyan",
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "35.11B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "90.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "87.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "660ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-10",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-agents/chat/completions",
+    "usageExample": "POST /api/v1/models/model-agents/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-boogu",
+    "kind": "model",
+    "name": "Boogu-Image-0.1-Edit",
+    "description": "面向图像生成与图像编辑的模型。",
+    "owner": "中国航发动研所",
+    "category": "文本生成图片",
+    "tags": [
+      "19.14B",
+      "Safetensors",
+      "Diffusers",
+      "apache-2.0"
+    ],
+    "framework": "Diffusers",
+    "facets": {
+      "taskType": [
+        "文本生成图片"
+      ],
+      "framework": [
+        "Safetensors",
+        "Diffusers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "usage": 7500,
+    "rating": 4.5,
+    "updatedAt": "2026-07-09",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "rose",
+    "capabilities": [
+      "文本生成图片",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "19.14B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Diffusers"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "91.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "88.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "694ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-09",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-boogu/chat/completions",
+    "usageExample": "POST /api/v1/models/model-boogu/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-qwen-agent",
+    "kind": "model",
+    "name": "Qwen-AgentWorld",
+    "description": "面向智能体场景的统一多模态模型合集。",
+    "owner": "中国航发航材院",
+    "category": "统一多模态",
+    "tags": [
+      "模型合集",
+      "Safetensors",
+      "PyTorch",
+      "Transformers"
+    ],
+    "framework": "Transformers",
+    "facets": {
+      "taskType": [
+        "统一多模态"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch",
+        "Transformers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "usage": 0,
+    "rating": 4.7,
+    "updatedAt": "2026-06-24",
+    "status": "available",
+    "badge": "合集",
+    "tone": "amber",
+    "capabilities": [
+      "统一多模态",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "98B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Transformers"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "92.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "89.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "728ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-24",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-qwen-agent/chat/completions",
+    "usageExample": "POST /api/v1/models/model-qwen-agent/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-qwen-distill",
+    "kind": "model",
+    "name": "Qwen3.6-27B-Thinking-Distill",
+    "description": "面向推理与文本生成的蒸馏模型。",
+    "owner": "中国航发贵阳所",
+    "category": "文本生成",
+    "tags": [
+      "27.78B",
+      "Safetensors",
+      "apache-2.0",
+      "qwen3_5"
+    ],
+    "framework": "Transformers",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch",
+        "Transformers"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "usage": 8600,
+    "rating": 4.6,
+    "updatedAt": "2026-06-29",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "violet",
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "27.78B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Transformers"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "93.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "90.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "762ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-29",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-qwen-distill/chat/completions",
+    "usageExample": "POST /api/v1/models/model-qwen-distill/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-leanstral",
+    "kind": "model",
+    "name": "Leanstral-1.5-119B-A6B",
+    "description": "面向文本生成任务的大参数模型。",
+    "owner": "中国航发动控所",
+    "category": "文本生成",
+    "tags": [
+      "119.40B",
+      "Safetensors",
+      "PyTorch",
+      "apache-2.0"
+    ],
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验",
+        "支持训练"
+      ]
+    },
+    "usage": 1600,
+    "rating": 4.4,
+    "updatedAt": "2026-07-04",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "teal",
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "工具调用"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "Transformer Decoder"
+      },
+      {
+        "label": "参数规模",
+        "value": "119.40B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "BF16 / INT8"
+      },
+      {
+        "label": "上下文长度",
+        "value": "32K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "94.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "91.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "796ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.60000000000001%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-04",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-leanstral/chat/completions",
+    "usageExample": "POST /api/v1/models/model-leanstral/chat/completions",
+    "license": "集团内部模型许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  },
+  {
+    "id": "model-openpangu",
+    "kind": "model",
+    "name": "openPangu-2.0-Flash",
+    "description": "面向专业文本交互与生成任务的模型。",
+    "owner": "中国航空发动机集团",
+    "category": "文本生成",
+    "tags": [
+      "100.14B",
+      "Safetensors",
+      "PyTorch",
+      "openpangu_v2"
+    ],
+    "framework": "Safetensors",
+    "facets": {
+      "taskType": [
+        "文本生成"
+      ],
+      "framework": [
+        "Safetensors",
+        "PyTorch"
+      ],
+      "serviceState": [
+        "在线"
+      ],
+      "support": [
+        "支持评测",
+        "支持部署",
+        "支持体验"
+      ]
+    },
+    "usage": 4800,
+    "rating": 4.5,
+    "updatedAt": "2026-07-02",
+    "status": "available",
+    "badge": "新接入",
+    "tone": "blue",
+    "capabilities": [
+      "文本生成",
+      "OpenAI兼容接口",
+      "流式输出",
+      "批量推理"
+    ],
+    "metadata": [
+      {
+        "label": "模型架构",
+        "value": "多模态 Transformer"
+      },
+      {
+        "label": "参数规模",
+        "value": "100.14B"
+      },
+      {
+        "label": "模型框架",
+        "value": "Safetensors"
+      },
+      {
+        "label": "权重精度",
+        "value": "FP16"
+      },
+      {
+        "label": "上下文长度",
+        "value": "128K Token"
+      },
+      {
+        "label": "训练状态",
+        "value": "部署完成"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "领域问答",
+        "value": "95.2"
+      },
+      {
+        "label": "指令遵循",
+        "value": "92.6"
+      },
+      {
+        "label": "平均延迟",
+        "value": "830ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-07-02",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "model",
+        "type": "string",
+        "required": true,
+        "description": "模型服务标识"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "required": true,
+        "description": "OpenAI格式消息数组"
+      },
+      {
+        "name": "temperature",
+        "type": "number",
+        "required": false,
+        "description": "生成随机性，范围0-2"
+      },
+      {
+        "name": "stream",
+        "type": "boolean",
+        "required": false,
+        "description": "是否启用流式响应"
+      }
+    ],
+    "endpoint": "/api/v1/models/model-openpangu/chat/completions",
+    "usageExample": "POST /api/v1/models/model-openpangu/chat/completions",
+    "license": "原厂许可 + 集团补充条款",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "统一AI网关",
+      "模型评测平台",
+      "训推平台"
+    ]
+  }
+]

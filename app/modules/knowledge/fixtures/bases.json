@@ -1,0 +1,232 @@
+[
+  {
+    "id": "kb-tech-docs",
+    "name": "航空发动机技术文档",
+    "description": "覆盖总体、结构、强度、控制等专业的技术报告与设计规范。",
+    "owner": "研发中心",
+    "category": "技术文档",
+    "documentCount": 1286,
+    "chunkCount": 18420,
+    "updatedAt": "2026-09-03",
+    "visibility": "集团公开",
+    "status": "ready",
+    "tone": "blue",
+    "documents": [
+      {
+        "name": "涡轮叶片结构设计指南.pdf",
+        "type": "PDF",
+        "size": "18.4 MB",
+        "updatedAt": "2026-09-03",
+        "status": "ready",
+        "chunkCount": 82
+      },
+      {
+        "name": "总体性能设计规范.docx",
+        "type": "Word",
+        "size": "6.2 MB",
+        "updatedAt": "2026-08-29",
+        "status": "ready",
+        "chunkCount": 99
+      },
+      {
+        "name": "控制系统术语表.xlsx",
+        "type": "Excel",
+        "size": "2.8 MB",
+        "updatedAt": "2026-08-25",
+        "status": "ready",
+        "chunkCount": 116
+      }
+    ],
+    "indexConfig": {
+      "mode": "高质量模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 800,
+      "chunkOverlap": 120,
+      "topK": 6,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  },
+  {
+    "id": "kb-fault",
+    "name": "故障案例知识库",
+    "description": "典型外场故障、试车异常及其定位过程与处置经验。",
+    "owner": "中国航发动力所",
+    "category": "故障案例",
+    "documentCount": 864,
+    "chunkCount": 12390,
+    "updatedAt": "2026-09-01",
+    "visibility": "本单位",
+    "status": "ready",
+    "tone": "rose",
+    "documents": [
+      {
+        "name": "高压转子振动异常案例.pdf",
+        "type": "PDF",
+        "size": "11.2 MB",
+        "updatedAt": "2026-09-01",
+        "status": "ready",
+        "chunkCount": 113
+      },
+      {
+        "name": "燃烧室故障处置汇编.docx",
+        "type": "Word",
+        "size": "8.1 MB",
+        "updatedAt": "2026-08-22",
+        "status": "ready",
+        "chunkCount": 130
+      }
+    ],
+    "indexConfig": {
+      "mode": "高质量模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 600,
+      "chunkOverlap": 120,
+      "topK": 8,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  },
+  {
+    "id": "kb-test",
+    "name": "试验数据规范",
+    "description": "试验数据采集、校验、清洗与交付相关制度和模板。",
+    "owner": "中国航发涡轮院",
+    "category": "标准规范",
+    "documentCount": 326,
+    "chunkCount": 4620,
+    "updatedAt": "2026-08-30",
+    "visibility": "集团公开",
+    "status": "syncing",
+    "tone": "teal",
+    "documents": [
+      {
+        "name": "整机试验数据交付规范.pdf",
+        "type": "PDF",
+        "size": "4.7 MB",
+        "updatedAt": "2026-08-30",
+        "status": "parsing",
+        "chunkCount": 144
+      },
+      {
+        "name": "测点命名标准.xlsx",
+        "type": "Excel",
+        "size": "1.1 MB",
+        "updatedAt": "2026-08-18",
+        "status": "ready",
+        "chunkCount": 161
+      }
+    ],
+    "indexConfig": {
+      "mode": "经济模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 800,
+      "chunkOverlap": 120,
+      "topK": 6,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  },
+  {
+    "id": "kb-safety",
+    "name": "安全操作手册",
+    "description": "生产、试验和维护现场的安全要求与标准操作流程。",
+    "owner": "质量安全部",
+    "category": "操作手册",
+    "documentCount": 218,
+    "chunkCount": 3150,
+    "updatedAt": "2026-08-24",
+    "visibility": "集团公开",
+    "status": "ready",
+    "tone": "amber",
+    "documents": [
+      {
+        "name": "试车台安全操作手册.pdf",
+        "type": "PDF",
+        "size": "9.6 MB",
+        "updatedAt": "2026-08-24",
+        "status": "ready",
+        "chunkCount": 175
+      }
+    ],
+    "indexConfig": {
+      "mode": "高质量模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 600,
+      "chunkOverlap": 120,
+      "topK": 8,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  },
+  {
+    "id": "kb-training",
+    "name": "培训教材库",
+    "description": "新员工培训、专业技术课程与岗位能力建设资料。",
+    "owner": "人力资源部",
+    "category": "培训教材",
+    "documentCount": 542,
+    "chunkCount": 7820,
+    "updatedAt": "2026-08-20",
+    "visibility": "集团公开",
+    "status": "ready",
+    "tone": "violet",
+    "documents": [
+      {
+        "name": "航空发动机原理基础.pptx",
+        "type": "PPT",
+        "size": "32.5 MB",
+        "updatedAt": "2026-08-20",
+        "status": "ready",
+        "chunkCount": 206
+      }
+    ],
+    "indexConfig": {
+      "mode": "高质量模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 800,
+      "chunkOverlap": 120,
+      "topK": 6,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  },
+  {
+    "id": "kb-ops",
+    "name": "智能运维指南",
+    "description": "状态监测、寿命预测与智能维修相关方法和工具指南。",
+    "owner": "智能所",
+    "category": "运维指南",
+    "documentCount": 178,
+    "chunkCount": 2680,
+    "updatedAt": "2026-08-16",
+    "visibility": "指定成员",
+    "status": "ready",
+    "tone": "cyan",
+    "documents": [
+      {
+        "name": "健康管理系统使用说明.pdf",
+        "type": "PDF",
+        "size": "13.8 MB",
+        "updatedAt": "2026-08-16",
+        "status": "ready",
+        "chunkCount": 237
+      }
+    ],
+    "indexConfig": {
+      "mode": "经济模式",
+      "embeddingModel": "BGE-M3-Aero",
+      "chunkMode": "智能分段",
+      "chunkSize": 600,
+      "chunkOverlap": 120,
+      "topK": 8,
+      "similarityThreshold": 0.72,
+      "retrievalMode": "混合检索"
+    }
+  }
+]

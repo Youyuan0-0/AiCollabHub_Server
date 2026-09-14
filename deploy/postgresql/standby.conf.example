@@ -1,0 +1,7 @@
+# PostgreSQL 备库连接参数示例，须从主库一致性基础备份初始化。
+# 替换地址和凭证文件路径；数据目录内还需要 standby.signal。
+hot_standby = on
+primary_conninfo = 'host=PRIMARY_HOST port=5432 user=aih_replicator application_name=aicollabhub_standby passfile=/run/secrets/pgpass connect_timeout=5'
+
+# 不在本文件中保存复制密码。pgpass 的权限和格式按目标 OS 的 PostgreSQL 要求设置。
+# 如使用复制槽，须先在主库创建物理槽，再配置 primary_slot_name 和 WAL 保留上限。

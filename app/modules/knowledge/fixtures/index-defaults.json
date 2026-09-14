@@ -1,0 +1,10 @@
+{
+  "mode": "高质量模式",
+  "embeddingModel": "BGE-M3-Aero",
+  "chunkMode": "智能分段",
+  "chunkSize": 800,
+  "chunkOverlap": 120,
+  "topK": 6,
+  "similarityThreshold": 0.72,
+  "retrievalMode": "混合检索"
+}

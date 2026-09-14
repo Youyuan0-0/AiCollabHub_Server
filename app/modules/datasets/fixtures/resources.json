@@ -1,0 +1,1346 @@
+[
+  {
+    "id": "ds-fault-v3",
+    "kind": "dataset",
+    "name": "AeroEngine-Fault-Dataset-v3",
+    "description": "覆盖典型故障现象、原因定位与处置过程的结构化案例数据。",
+    "owner": "中国航发动力所",
+    "category": "智能运维",
+    "tags": [
+      "故障案例",
+      "时序数据",
+      "已脱敏"
+    ],
+    "usage": 15320,
+    "rating": 4.8,
+    "updatedAt": "2026-08-28",
+    "status": "available",
+    "badge": "推荐",
+    "tone": "blue",
+    "version": "v3.2",
+    "facets": {
+      "dataApplication": [
+        "智能运维"
+      ],
+      "dataShape": [
+        "结构化数据",
+        "时序"
+      ],
+      "aiPurpose": [
+        "微调数据集"
+      ],
+      "organization": [
+        "中国航发动力所"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "结构化数据 / 时序"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "微调数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "2.8 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按月更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "专家复核"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "92分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "96%"
+      },
+      {
+        "label": "内容一致",
+        "value": "94%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "97%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.2",
+        "releasedAt": "2026-08-28",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能运维",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能运维",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能运维",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-fault-v3",
+    "usageExample": "GET /api/v1/datasets/ds-fault-v3/versions/v3.2/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-testbench",
+    "kind": "dataset",
+    "name": "TestBench-Performance-2026",
+    "description": "试验台性能参数与工况记录，可用于趋势预测和异常分析。",
+    "owner": "中国航发涡轮院",
+    "category": "智能试验",
+    "tags": [
+      "性能参数",
+      "结构化数据",
+      "时序"
+    ],
+    "usage": 8620,
+    "rating": 4.6,
+    "updatedAt": "2026-08-21",
+    "status": "available",
+    "badge": "新上线",
+    "tone": "teal",
+    "version": "2026.08",
+    "facets": {
+      "dataApplication": [
+        "智能试验"
+      ],
+      "dataShape": [
+        "结构化数据",
+        "时序"
+      ],
+      "aiPurpose": [
+        "评测数据集"
+      ],
+      "organization": [
+        "中国航发涡轮院"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "结构化数据 / 时序"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "评测数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "4.5 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按季度更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "规则校验 + 人工抽检"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "93分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "95%"
+      },
+      {
+        "label": "内容一致",
+        "value": "93%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "96%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "2026.08",
+        "releasedAt": "2026-08-21",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能试验",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能试验",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能试验",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-testbench",
+    "usageExample": "GET /api/v1/datasets/ds-testbench/versions/2026.08/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "公开",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-turbine-corpus",
+    "kind": "dataset",
+    "name": "Turbine-Design-Corpus",
+    "description": "涡轮设计规范、分析报告与专家知识形成的领域文本语料。",
+    "owner": "中国航发动研所",
+    "category": "智能研发",
+    "tags": [
+      "设计语料",
+      "知识库",
+      "文本"
+    ],
+    "usage": 5790,
+    "rating": 4.8,
+    "updatedAt": "2026-08-18",
+    "status": "approval",
+    "tone": "violet",
+    "version": "v1.6",
+    "facets": {
+      "dataApplication": [
+        "智能研发"
+      ],
+      "dataShape": [
+        "文本"
+      ],
+      "aiPurpose": [
+        "知识库"
+      ],
+      "organization": [
+        "中国航发动研所"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "审批后下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "文本"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "知识库"
+      },
+      {
+        "label": "数据规模",
+        "value": "6.2 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按月更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "规则校验 + 人工抽检"
+      },
+      {
+        "label": "开放范围",
+        "value": "指定单位"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "94分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "94%"
+      },
+      {
+        "label": "内容一致",
+        "value": "92%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "97%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.6",
+        "releasedAt": "2026-08-18",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能研发",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能研发",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能研发",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-turbine-corpus",
+    "usageExample": "GET /api/v1/datasets/ds-turbine-corpus/versions/v1.6/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "秘密",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-superalloy",
+    "kind": "dataset",
+    "name": "Superalloy-Material-DB",
+    "description": "高温合金成分、工艺、组织与性能的多维材料数据。",
+    "owner": "中国航发航材院",
+    "category": "智能制造",
+    "tags": [
+      "材料数据",
+      "高温合金",
+      "结构化"
+    ],
+    "usage": 5810,
+    "rating": 4.7,
+    "updatedAt": "2026-08-14",
+    "status": "available",
+    "tone": "amber",
+    "version": "v2.1",
+    "facets": {
+      "dataApplication": [
+        "智能制造"
+      ],
+      "dataShape": [
+        "结构化数据"
+      ],
+      "aiPurpose": [
+        "预训练数据集"
+      ],
+      "organization": [
+        "中国航发航材院"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "结构化数据"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "预训练数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "7.9 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按季度更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "专家复核"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "95分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "96%"
+      },
+      {
+        "label": "内容一致",
+        "value": "91%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "96%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.1",
+        "releasedAt": "2026-08-14",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能制造",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能制造",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能制造",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-superalloy",
+    "usageExample": "GET /api/v1/datasets/ds-superalloy/versions/v2.1/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-blade-image",
+    "kind": "dataset",
+    "name": "Blade-Defect-ImageSet",
+    "description": "叶片裂纹、烧蚀、磨损等缺陷图像及专家标注结果。",
+    "owner": "中国航发动力所",
+    "category": "智能运维",
+    "tags": [
+      "图像数据",
+      "缺陷检测",
+      "标注"
+    ],
+    "usage": 6940,
+    "rating": 4.9,
+    "updatedAt": "2026-08-31",
+    "status": "available",
+    "badge": "热门",
+    "tone": "rose",
+    "version": "v4.0",
+    "facets": {
+      "dataApplication": [
+        "智能运维"
+      ],
+      "dataShape": [
+        "图像"
+      ],
+      "aiPurpose": [
+        "微调数据集"
+      ],
+      "organization": [
+        "中国航发动力所"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "图像"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "微调数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "9.6 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按月更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "规则校验 + 人工抽检"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "96分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "95%"
+      },
+      {
+        "label": "内容一致",
+        "value": "94%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "97%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v4.0",
+        "releasedAt": "2026-08-31",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "uri",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能运维",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能运维",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能运维",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-blade-image",
+    "usageExample": "GET /api/v1/datasets/ds-blade-image/versions/v4.0/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "公开",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-vibration",
+    "kind": "dataset",
+    "name": "Vibration-Signal-Bench",
+    "description": "不同转速与负载下的振动信号，用于状态监测算法训练。",
+    "owner": "中国航发涡轮院",
+    "category": "智能试验",
+    "tags": [
+      "振动信号",
+      "音频",
+      "时序"
+    ],
+    "usage": 4310,
+    "rating": 4.5,
+    "updatedAt": "2026-08-08",
+    "status": "maintenance",
+    "tone": "cyan",
+    "version": "v2.8",
+    "facets": {
+      "dataApplication": [
+        "智能试验"
+      ],
+      "dataShape": [
+        "音频",
+        "时序"
+      ],
+      "aiPurpose": [
+        "评测数据集"
+      ],
+      "organization": [
+        "中国航发涡轮院"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "音频 / 时序"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "评测数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "11.3 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按季度更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "规则校验 + 人工抽检"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "97分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "94%"
+      },
+      {
+        "label": "内容一致",
+        "value": "93%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "96%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.8",
+        "releasedAt": "2026-08-08",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能试验",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能试验",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能试验",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-vibration",
+    "usageExample": "GET /api/v1/datasets/ds-vibration/versions/v2.8/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "公开",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-qa",
+    "kind": "dataset",
+    "name": "AeroEngine-QA-Corpus",
+    "description": "面向航空发动机技术问答的专家经验与高质量问答对。",
+    "owner": "中国航空发动机集团",
+    "category": "智能运营",
+    "tags": [
+      "问答对",
+      "专家经验",
+      "微调数据集"
+    ],
+    "usage": 22400,
+    "rating": 4.9,
+    "updatedAt": "2026-08-25",
+    "status": "available",
+    "badge": "高评分",
+    "tone": "blue",
+    "version": "v5.3",
+    "facets": {
+      "dataApplication": [
+        "智能运营"
+      ],
+      "dataShape": [
+        "文本"
+      ],
+      "aiPurpose": [
+        "微调数据集"
+      ],
+      "organization": [
+        "中国航空发动机集团"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "授权范围内下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "文本"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "微调数据集"
+      },
+      {
+        "label": "数据规模",
+        "value": "13.0 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按月更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "专家复核"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "98分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "96%"
+      },
+      {
+        "label": "内容一致",
+        "value": "92%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "97%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v5.3",
+        "releasedAt": "2026-08-25",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能运营",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能运营",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能运营",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-qa",
+    "usageExample": "GET /api/v1/datasets/ds-qa/versions/v5.3/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  },
+  {
+    "id": "ds-standards",
+    "kind": "dataset",
+    "name": "Aviation-Standards-Collection",
+    "description": "航空标准、企业规范及其结构化条款索引集合。",
+    "owner": "中国航发动控所",
+    "category": "智能运营",
+    "tags": [
+      "标准规范",
+      "知识库",
+      "评测数据集"
+    ],
+    "usage": 3790,
+    "rating": 4.6,
+    "updatedAt": "2026-08-03",
+    "status": "approval",
+    "tone": "violet",
+    "version": "v1.2",
+    "facets": {
+      "dataApplication": [
+        "智能运营"
+      ],
+      "dataShape": [
+        "文本",
+        "多模态融合数据"
+      ],
+      "aiPurpose": [
+        "知识库"
+      ],
+      "organization": [
+        "中国航发动控所"
+      ]
+    },
+    "capabilities": [
+      "在线样例预览",
+      "版本追溯",
+      "质量报告",
+      "审批后下载"
+    ],
+    "metadata": [
+      {
+        "label": "数据形态",
+        "value": "文本 / 多模态融合数据"
+      },
+      {
+        "label": "AI应用目的",
+        "value": "知识库"
+      },
+      {
+        "label": "数据规模",
+        "value": "14.7 GB"
+      },
+      {
+        "label": "更新频率",
+        "value": "按季度更新"
+      },
+      {
+        "label": "标注方式",
+        "value": "规则校验 + 人工抽检"
+      },
+      {
+        "label": "开放范围",
+        "value": "指定单位"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "综合质量",
+        "value": "92分",
+        "description": "七维质量审核综合得分"
+      },
+      {
+        "label": "结构完整",
+        "value": "95%"
+      },
+      {
+        "label": "内容一致",
+        "value": "91%"
+      },
+      {
+        "label": "抽检通过",
+        "value": "96%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.2",
+        "releasedAt": "2026-08-03",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "record_id",
+        "type": "string",
+        "required": true,
+        "description": "记录唯一标识"
+      },
+      {
+        "name": "scenario",
+        "type": "string",
+        "required": true,
+        "description": "业务场景或试验工况"
+      },
+      {
+        "name": "content",
+        "type": "text",
+        "required": true,
+        "description": "数据主体或资源地址"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "required": false,
+        "description": "专家标注或分类标签"
+      }
+    ],
+    "preview": {
+      "columns": [
+        "record_id",
+        "scenario",
+        "content",
+        "label"
+      ],
+      "rows": [
+        [
+          "AE-000128",
+          "智能运营",
+          "已脱敏样例数据 01",
+          "正常"
+        ],
+        [
+          "AE-000129",
+          "智能运营",
+          "已脱敏样例数据 02",
+          "需复核"
+        ],
+        [
+          "AE-000130",
+          "智能运营",
+          "已脱敏样例数据 03",
+          "异常"
+        ]
+      ]
+    },
+    "endpoint": "/api/v1/datasets/ds-standards",
+    "usageExample": "GET /api/v1/datasets/ds-standards/versions/v1.2/preview",
+    "license": "集团内部数据使用许可 V1.0",
+    "securityLevel": "公开",
+    "relatedResources": [
+      "数据清洗工具链",
+      "质量评估服务",
+      "知识库构建工具"
+    ]
+  }
+]

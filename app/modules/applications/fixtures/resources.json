@@ -1,0 +1,1541 @@
+[
+  {
+    "id": "app-ppt",
+    "kind": "application",
+    "name": "智能 PPT 生成",
+    "description": "输入主题或大纲，自动生成专业演示文稿与图表。",
+    "owner": "数字化部",
+    "category": "文档创作",
+    "tags": [
+      "文档创作",
+      "自研应用"
+    ],
+    "usage": 3200,
+    "rating": 4.3,
+    "updatedAt": "2026-08-28",
+    "status": "available",
+    "tone": "blue",
+    "version": "v1.1",
+    "facets": {
+      "scenario": [
+        "文档创作"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "文档创作",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "MCP"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "326次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.2秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.7%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.3/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.1",
+        "releasedAt": "2026-08-28",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-ppt/runs",
+    "usageExample": "POST /api/v1/agents/app-ppt/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-meeting",
+    "kind": "application",
+    "name": "录音转会议纪要",
+    "description": "自动转写会议录音，提取决策、待办和责任人。",
+    "owner": "智能所",
+    "category": "会议办公",
+    "tags": [
+      "会议办公",
+      "第三方接入"
+    ],
+    "usage": 5800,
+    "rating": 4.3999999999999995,
+    "updatedAt": "2026-08-27",
+    "status": "available",
+    "badge": "热门",
+    "tone": "teal",
+    "version": "v1.2",
+    "facets": {
+      "scenario": [
+        "会议办公"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "会议办公",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "367次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.5秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.8%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.4/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.2",
+        "releasedAt": "2026-08-27",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-meeting/runs",
+    "usageExample": "POST /api/v1/agents/app-meeting/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  },
+  {
+    "id": "app-writing",
+    "kind": "application",
+    "name": "AI 写作助手",
+    "description": "辅助撰写技术报告、方案文档与工作汇报。",
+    "owner": "研发中心",
+    "category": "文档创作",
+    "tags": [
+      "文档创作",
+      "自研应用"
+    ],
+    "usage": 4500,
+    "rating": 4.5,
+    "updatedAt": "2026-08-26",
+    "status": "available",
+    "tone": "violet",
+    "version": "v1.3",
+    "facets": {
+      "scenario": [
+        "文档创作"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "文档创作",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "408次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.7999999999999998秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.9%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.5/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.3",
+        "releasedAt": "2026-08-26",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-writing/runs",
+    "usageExample": "POST /api/v1/agents/app-writing/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-summary",
+    "kind": "application",
+    "name": "文档摘要生成",
+    "description": "快速提取长篇文档要点并生成结构化摘要。",
+    "owner": "数字化部",
+    "category": "文档创作",
+    "tags": [
+      "文档创作",
+      "第三方接入"
+    ],
+    "usage": 2900,
+    "rating": 4.6,
+    "updatedAt": "2026-08-25",
+    "status": "available",
+    "tone": "amber",
+    "version": "v1.4",
+    "facets": {
+      "scenario": [
+        "文档创作"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "文档创作",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "MCP"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "449次"
+      },
+      {
+        "label": "平均响应",
+        "value": "2.0999999999999996秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.6/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.4",
+        "releasedAt": "2026-08-25",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-summary/runs",
+    "usageExample": "POST /api/v1/agents/app-summary/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  },
+  {
+    "id": "app-translate",
+    "kind": "application",
+    "name": "多语言翻译助手",
+    "description": "支持航空专业术语的多语言精准翻译。",
+    "owner": "智能所",
+    "category": "翻译沟通",
+    "tags": [
+      "翻译沟通",
+      "自研应用"
+    ],
+    "usage": 1800,
+    "rating": 4.7,
+    "updatedAt": "2026-08-24",
+    "status": "available",
+    "tone": "cyan",
+    "version": "v1.5",
+    "facets": {
+      "scenario": [
+        "翻译沟通"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "翻译沟通",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "490次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.2秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.10000000000001%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.7/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.5",
+        "releasedAt": "2026-08-24",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-translate/runs",
+    "usageExample": "POST /api/v1/agents/app-translate/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-report",
+    "kind": "application",
+    "name": "数据报表生成",
+    "description": "自动分析试验和生产数据并生成可视化报表。",
+    "owner": "研发中心",
+    "category": "数据处理",
+    "tags": [
+      "数据处理",
+      "第三方接入"
+    ],
+    "usage": 2100,
+    "rating": 4.8,
+    "updatedAt": "2026-08-23",
+    "status": "available",
+    "badge": "新上线",
+    "tone": "blue",
+    "version": "v1.6",
+    "facets": {
+      "scenario": [
+        "数据处理"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "数据处理",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "531次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.5秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.7%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.8/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.6",
+        "releasedAt": "2026-08-23",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-report/runs",
+    "usageExample": "POST /api/v1/agents/app-report/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  },
+  {
+    "id": "app-mail",
+    "kind": "application",
+    "name": "邮件智能回复",
+    "description": "根据邮件内容生成专业回复建议并适配语气。",
+    "owner": "数字化部",
+    "category": "会议办公",
+    "tags": [
+      "会议办公",
+      "自研应用"
+    ],
+    "usage": 3600,
+    "rating": 4.3,
+    "updatedAt": "2026-08-22",
+    "status": "available",
+    "tone": "teal",
+    "version": "v1.7",
+    "facets": {
+      "scenario": [
+        "会议办公"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "会议办公",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "MCP"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "572次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.7999999999999998秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.8%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.3/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.7",
+        "releasedAt": "2026-08-22",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-mail/runs",
+    "usageExample": "POST /api/v1/agents/app-mail/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-schedule",
+    "kind": "application",
+    "name": "日程智能规划",
+    "description": "结合任务优先级规划日程并协调会议时间。",
+    "owner": "智能所",
+    "category": "会议办公",
+    "tags": [
+      "会议办公",
+      "第三方接入"
+    ],
+    "usage": 1500,
+    "rating": 4.3999999999999995,
+    "updatedAt": "2026-08-21",
+    "status": "maintenance",
+    "tone": "amber",
+    "version": "v1.8",
+    "facets": {
+      "scenario": [
+        "会议办公"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "维护中"
+      ]
+    },
+    "capabilities": [
+      "会议办公",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "维护中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "613次"
+      },
+      {
+        "label": "平均响应",
+        "value": "2.0999999999999996秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.9%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.4/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.8",
+        "releasedAt": "2026-08-21",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-schedule/runs",
+    "usageExample": "POST /api/v1/agents/app-schedule/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  },
+  {
+    "id": "app-contract",
+    "kind": "application",
+    "name": "合同审查助手",
+    "description": "识别合同风险条款和关键信息并提出修改建议。",
+    "owner": "研发中心",
+    "category": "法务合规",
+    "tags": [
+      "法务合规",
+      "自研应用"
+    ],
+    "usage": 980,
+    "rating": 4.5,
+    "updatedAt": "2026-08-20",
+    "status": "available",
+    "tone": "rose",
+    "version": "v1.9",
+    "facets": {
+      "scenario": [
+        "法务合规"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "法务合规",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "654次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.2秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.5/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.9",
+        "releasedAt": "2026-08-20",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-contract/runs",
+    "usageExample": "POST /api/v1/agents/app-contract/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-resume",
+    "kind": "application",
+    "name": "简历智能筛选",
+    "description": "依据岗位需求提取候选人技能并生成推荐排序。",
+    "owner": "数字化部",
+    "category": "数据处理",
+    "tags": [
+      "数据处理",
+      "第三方接入"
+    ],
+    "usage": 1200,
+    "rating": 4.6,
+    "updatedAt": "2026-08-19",
+    "status": "available",
+    "tone": "violet",
+    "version": "v1.10",
+    "facets": {
+      "scenario": [
+        "数据处理"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "数据处理",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "MCP"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "695次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.5秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.10000000000001%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.6/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.10",
+        "releasedAt": "2026-08-19",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-resume/runs",
+    "usageExample": "POST /api/v1/agents/app-resume/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  },
+  {
+    "id": "app-qa",
+    "kind": "application",
+    "name": "知识问答助手",
+    "description": "基于集团知识库回答技术问题并定位相关文档。",
+    "owner": "智能所",
+    "category": "文档创作",
+    "tags": [
+      "文档创作",
+      "自研应用"
+    ],
+    "usage": 6400,
+    "rating": 4.7,
+    "updatedAt": "2026-08-18",
+    "status": "available",
+    "badge": "热门",
+    "tone": "cyan",
+    "version": "v1.11",
+    "facets": {
+      "scenario": [
+        "文档创作"
+      ],
+      "sourceType": [
+        "自研应用"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "文档创作",
+      "多轮交互",
+      "文档输入",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "AeroLLM-LongCat-2.0"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "736次"
+      },
+      {
+        "label": "平均响应",
+        "value": "1.7999999999999998秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.7%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.7/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.11",
+        "releasedAt": "2026-08-18",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-qa/runs",
+    "usageExample": "POST /api/v1/agents/app-qa/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "航空发动机技术文档"
+    ]
+  },
+  {
+    "id": "app-flow",
+    "kind": "application",
+    "name": "流程图生成",
+    "description": "通过自然语言生成业务流程图和系统架构图。",
+    "owner": "研发中心",
+    "category": "会议办公",
+    "tags": [
+      "会议办公",
+      "第三方接入"
+    ],
+    "usage": 2300,
+    "rating": 4.8,
+    "updatedAt": "2026-08-17",
+    "status": "available",
+    "tone": "blue",
+    "version": "v1.12",
+    "facets": {
+      "scenario": [
+        "会议办公"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "runtimeState": [
+        "运行中"
+      ]
+    },
+    "capabilities": [
+      "会议办公",
+      "多轮交互",
+      "结构化输出",
+      "运行记录可追溯"
+    ],
+    "metadata": [
+      {
+        "label": "底层模型",
+        "value": "GLM-5.2-Aero"
+      },
+      {
+        "label": "接入协议",
+        "value": "Function Call"
+      },
+      {
+        "label": "触发方式",
+        "value": "页面交互 / API调用"
+      },
+      {
+        "label": "部署方式",
+        "value": "远程服务"
+      },
+      {
+        "label": "运行状态",
+        "value": "运行中"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "777次"
+      },
+      {
+        "label": "平均响应",
+        "value": "2.0999999999999996秒"
+      },
+      {
+        "label": "调用成功率",
+        "value": "98.8%"
+      },
+      {
+        "label": "用户满意度",
+        "value": "4.8/5"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.12",
+        "releasedAt": "2026-08-17",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "input",
+        "type": "string",
+        "required": true,
+        "description": "用户任务描述"
+      },
+      {
+        "name": "attachments",
+        "type": "array",
+        "required": false,
+        "description": "关联文档或数据文件"
+      },
+      {
+        "name": "output_format",
+        "type": "string",
+        "required": false,
+        "description": "期望输出格式"
+      }
+    ],
+    "endpoint": "/api/v1/agents/app-flow/runs",
+    "usageExample": "POST /api/v1/agents/app-flow/runs",
+    "license": "集团内部应用许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "统一AI网关",
+      "故障案例知识库"
+    ]
+  }
+]

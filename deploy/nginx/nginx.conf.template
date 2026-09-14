@@ -1,0 +1,31 @@
+worker_processes 1;
+pid logs/nginx.pid;
+error_log logs/error.log warn;
+events { worker_connections 1024; }
+http {
+    include mime.types;
+    default_type application/octet-stream;
+    log_format application '$request_id $request_method $uri $status $upstream_addr $request_time';
+    access_log logs/access.log application;
+    server_tokens off;
+    sendfile on;
+    keepalive_timeout 30;
+    upstream platform_api {
+        server 127.0.0.1:@@API_A@@ weight=1 max_fails=2 fail_timeout=10s;
+        server 127.0.0.1:@@API_B@@ weight=1 max_fails=2 fail_timeout=10s;
+        keepalive 16;
+    }
+    server {
+        listen 127.0.0.1:@@GATEWAY_PORT@@;
+        server_name localhost;
+        root "@@USER_DIST@@";
+        client_max_body_size 11m;
+        location /api/ { include platform-proxy.conf; }
+        location = /admin { return 302 /admin/; }
+        location /admin/ {
+            alias "@@ADMIN_DIST@@/";
+            try_files $uri $uri/ /admin/index.html;
+        }
+        location / { try_files $uri $uri/ /index.html; }
+    }
+}

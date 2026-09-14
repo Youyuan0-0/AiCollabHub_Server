@@ -1,0 +1,3 @@
+# Candidate driver versions for compatibility checks, not production certification.
+dmPython==2.5.38
+dmSQLAlchemy==2.0.17

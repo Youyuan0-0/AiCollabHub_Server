@@ -1,0 +1,1542 @@
+[
+  {
+    "id": "tool-translation",
+    "kind": "tool",
+    "name": "智能翻译引擎",
+    "description": "提供中英双向及多语种航空技术文档翻译能力。",
+    "owner": "数据所",
+    "category": "文本处理",
+    "tags": [
+      "文本处理",
+      "自研工具"
+    ],
+    "usage": 12100,
+    "rating": 4.2,
+    "updatedAt": "2026-08-30",
+    "status": "available",
+    "tone": "blue",
+    "version": "v1.0",
+    "facets": {
+      "toolType": [
+        "文本处理"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "文本处理",
+      "标准API",
+      "智能体可引用",
+      "批量处理"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "GPU推理服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "420次"
+      },
+      {
+        "label": "平均响应",
+        "value": "180ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.1%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-08-30",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-translation/invoke",
+    "usageExample": "POST /api/v1/tools/tool-translation/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-abstract",
+    "kind": "tool",
+    "name": "文档智能摘要",
+    "description": "自动提取长文档核心观点、关键数据与行动项。",
+    "owner": "智能所",
+    "category": "文本处理",
+    "tags": [
+      "文本处理",
+      "第三方接入"
+    ],
+    "usage": 8700,
+    "rating": 4.3,
+    "updatedAt": "2026-08-29",
+    "status": "available",
+    "tone": "violet",
+    "version": "v2.1",
+    "facets": {
+      "toolType": [
+        "文本处理"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "文本处理",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "477次"
+      },
+      {
+        "label": "平均响应",
+        "value": "206ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.19999999999999%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.1",
+        "releasedAt": "2026-08-29",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-abstract/invoke",
+    "usageExample": "POST /api/v1/tools/tool-abstract/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-ocr",
+    "kind": "tool",
+    "name": "图纸 OCR 识别",
+    "description": "识别工程图纸、CAD 扫描件中的文字和符号。",
+    "owner": "算法平台部",
+    "category": "图像处理",
+    "tags": [
+      "图像处理",
+      "自研工具"
+    ],
+    "usage": 6100,
+    "rating": 4.4,
+    "updatedAt": "2026-08-28",
+    "status": "available",
+    "tone": "teal",
+    "version": "v3.2",
+    "facets": {
+      "toolType": [
+        "图像处理"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "图像处理",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "534次"
+      },
+      {
+        "label": "平均响应",
+        "value": "232ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.3%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.2",
+        "releasedAt": "2026-08-28",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-ocr/invoke",
+    "usageExample": "POST /api/v1/tools/tool-ocr/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-speech",
+    "kind": "tool",
+    "name": "语音转写助手",
+    "description": "实时语音转文字并支持多人声纹与角色区分。",
+    "owner": "数据所",
+    "category": "语音处理",
+    "tags": [
+      "语音处理",
+      "第三方接入"
+    ],
+    "usage": 15300,
+    "rating": 4.5,
+    "updatedAt": "2026-08-27",
+    "status": "available",
+    "badge": "热门",
+    "tone": "rose",
+    "version": "v1.3",
+    "facets": {
+      "toolType": [
+        "语音处理"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "语音处理",
+      "标准API",
+      "智能体可引用",
+      "批量处理"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "GPU推理服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "591次"
+      },
+      {
+        "label": "平均响应",
+        "value": "258ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.39999999999999%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.3",
+        "releasedAt": "2026-08-27",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-speech/invoke",
+    "usageExample": "POST /api/v1/tools/tool-speech/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-graph",
+    "kind": "tool",
+    "name": "知识图谱检索",
+    "description": "通过自然语言检索知识图谱并返回关联知识。",
+    "owner": "智能所",
+    "category": "数据分析",
+    "tags": [
+      "数据分析",
+      "自研工具"
+    ],
+    "usage": 4800,
+    "rating": 4.6000000000000005,
+    "updatedAt": "2026-08-26",
+    "status": "available",
+    "tone": "amber",
+    "version": "v2.4",
+    "facets": {
+      "toolType": [
+        "数据分析"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "数据分析",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "648次"
+      },
+      {
+        "label": "平均响应",
+        "value": "284ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.5%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.4",
+        "releasedAt": "2026-08-26",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-graph/invoke",
+    "usageExample": "POST /api/v1/tools/tool-graph/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-code",
+    "kind": "tool",
+    "name": "代码辅助生成",
+    "description": "辅助生成和解释 MATLAB、Python、C++ 仿真代码。",
+    "owner": "算法平台部",
+    "category": "代码开发",
+    "tags": [
+      "代码开发",
+      "第三方接入"
+    ],
+    "usage": 3200,
+    "rating": 4.7,
+    "updatedAt": "2026-08-25",
+    "status": "available",
+    "badge": "新上线",
+    "tone": "cyan",
+    "version": "v3.5",
+    "facets": {
+      "toolType": [
+        "代码开发"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "代码开发",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "705次"
+      },
+      {
+        "label": "平均响应",
+        "value": "310ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.6%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.5",
+        "releasedAt": "2026-08-25",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-code/invoke",
+    "usageExample": "POST /api/v1/tools/tool-code/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-parser",
+    "kind": "tool",
+    "name": "多格式文档解析",
+    "description": "解析 PDF、Word、Excel、PPT 等常见文档格式。",
+    "owner": "数据所",
+    "category": "文本处理",
+    "tags": [
+      "文本处理",
+      "自研工具"
+    ],
+    "usage": 9600,
+    "rating": 4.8,
+    "updatedAt": "2026-08-24",
+    "status": "available",
+    "tone": "rose",
+    "version": "v1.6",
+    "facets": {
+      "toolType": [
+        "文本处理"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "文本处理",
+      "标准API",
+      "智能体可引用",
+      "批量处理"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "GPU推理服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "762次"
+      },
+      {
+        "label": "平均响应",
+        "value": "336ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.1%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.6",
+        "releasedAt": "2026-08-24",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-parser/invoke",
+    "usageExample": "POST /api/v1/tools/tool-parser/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-vector",
+    "kind": "tool",
+    "name": "向量检索服务",
+    "description": "提供大规模向量数据的高性能相似度检索。",
+    "owner": "智能所",
+    "category": "数据分析",
+    "tags": [
+      "数据分析",
+      "第三方接入"
+    ],
+    "usage": 7400,
+    "rating": 4.2,
+    "updatedAt": "2026-08-23",
+    "status": "available",
+    "badge": "热门",
+    "tone": "violet",
+    "version": "v2.7",
+    "facets": {
+      "toolType": [
+        "数据分析"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "数据分析",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "819次"
+      },
+      {
+        "label": "平均响应",
+        "value": "362ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.19999999999999%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.7",
+        "releasedAt": "2026-08-23",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-vector/invoke",
+    "usageExample": "POST /api/v1/tools/tool-vector/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-evaluation",
+    "kind": "tool",
+    "name": "模型评测平台",
+    "description": "支持自动评测、人工评测和模型横向对比。",
+    "owner": "算法平台部",
+    "category": "模型工具",
+    "tags": [
+      "模型工具",
+      "自研工具"
+    ],
+    "usage": 5100,
+    "rating": 4.3,
+    "updatedAt": "2026-08-22",
+    "status": "approval",
+    "tone": "amber",
+    "version": "v3.8",
+    "facets": {
+      "toolType": [
+        "模型工具"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "模型工具",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "876次"
+      },
+      {
+        "label": "平均响应",
+        "value": "388ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.3%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.2%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.8",
+        "releasedAt": "2026-08-22",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-evaluation/invoke",
+    "usageExample": "POST /api/v1/tools/tool-evaluation/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-defect",
+    "kind": "tool",
+    "name": "缺陷图像检测",
+    "description": "检测航空零部件裂纹、磨损和变形等缺陷。",
+    "owner": "数据所",
+    "category": "图像处理",
+    "tags": [
+      "图像处理",
+      "第三方接入"
+    ],
+    "usage": 2800,
+    "rating": 4.4,
+    "updatedAt": "2026-08-21",
+    "status": "available",
+    "badge": "新上线",
+    "tone": "blue",
+    "version": "v1.9",
+    "facets": {
+      "toolType": [
+        "图像处理"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "图像处理",
+      "标准API",
+      "智能体可引用",
+      "批量处理"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "GPU推理服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "933次"
+      },
+      {
+        "label": "平均响应",
+        "value": "414ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.39999999999999%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.3%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v1.9",
+        "releasedAt": "2026-08-21",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v1.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-defect/invoke",
+    "usageExample": "POST /api/v1/tools/tool-defect/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-tts",
+    "kind": "tool",
+    "name": "语音合成引擎",
+    "description": "提供多音色、可调情感的高质量文本转语音服务。",
+    "owner": "智能所",
+    "category": "语音处理",
+    "tags": [
+      "语音处理",
+      "自研工具"
+    ],
+    "usage": 4200,
+    "rating": 4.5,
+    "updatedAt": "2026-08-20",
+    "status": "available",
+    "tone": "teal",
+    "version": "v2.10",
+    "facets": {
+      "toolType": [
+        "语音处理"
+      ],
+      "sourceType": [
+        "自研工具"
+      ],
+      "deployment": [
+        "平台托管"
+      ]
+    },
+    "capabilities": [
+      "语音处理",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "自研工具"
+      },
+      {
+        "label": "技术栈",
+        "value": "Python / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "平台托管"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "990次"
+      },
+      {
+        "label": "平均响应",
+        "value": "440ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.5%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.4%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v2.10",
+        "releasedAt": "2026-08-20",
+        "status": "current",
+        "note": "优化领域能力并完善接口说明。"
+      },
+      {
+        "version": "v2.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-tts/invoke",
+    "usageExample": "POST /api/v1/tools/tool-tts/invoke",
+    "license": "集团自研工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  },
+  {
+    "id": "tool-visualization",
+    "kind": "tool",
+    "name": "数据可视化分析",
+    "description": "支持多维数据探索、趋势分析与异常检测。",
+    "owner": "算法平台部",
+    "category": "数据分析",
+    "tags": [
+      "数据分析",
+      "第三方接入"
+    ],
+    "usage": 3600,
+    "rating": 4.6000000000000005,
+    "updatedAt": "2026-08-19",
+    "status": "available",
+    "tone": "violet",
+    "version": "v3.11",
+    "facets": {
+      "toolType": [
+        "数据分析"
+      ],
+      "sourceType": [
+        "第三方接入"
+      ],
+      "deployment": [
+        "API接入"
+      ]
+    },
+    "capabilities": [
+      "数据分析",
+      "标准API",
+      "智能体可引用",
+      "同步调用"
+    ],
+    "metadata": [
+      {
+        "label": "来源类型",
+        "value": "第三方接入"
+      },
+      {
+        "label": "技术栈",
+        "value": "Java / REST"
+      },
+      {
+        "label": "部署方式",
+        "value": "API接入"
+      },
+      {
+        "label": "依赖环境",
+        "value": "CPU通用服务"
+      },
+      {
+        "label": "调用协议",
+        "value": "HTTPS + JSON"
+      },
+      {
+        "label": "开放范围",
+        "value": "集团内部"
+      }
+    ],
+    "metrics": [
+      {
+        "label": "今日调用",
+        "value": "1047次"
+      },
+      {
+        "label": "平均响应",
+        "value": "466ms"
+      },
+      {
+        "label": "调用成功率",
+        "value": "99.6%"
+      },
+      {
+        "label": "错误率",
+        "value": "0.5%"
+      }
+    ],
+    "versions": [
+      {
+        "version": "v3.11",
+        "releasedAt": "2026-08-19",
+        "status": "current",
+        "note": "完成稳定性验证与安全检查。"
+      },
+      {
+        "version": "v3.0",
+        "releasedAt": "2026-06-18",
+        "status": "available",
+        "note": "上一稳定版本，可用于兼容性验证。"
+      },
+      {
+        "version": "v0.9",
+        "releasedAt": "2026-04-12",
+        "status": "archived",
+        "note": "历史归档版本，仅保留记录。"
+      }
+    ],
+    "schema": [
+      {
+        "name": "request_id",
+        "type": "string",
+        "required": true,
+        "description": "幂等请求标识"
+      },
+      {
+        "name": "input",
+        "type": "object",
+        "required": true,
+        "description": "工具输入参数"
+      },
+      {
+        "name": "options",
+        "type": "object",
+        "required": false,
+        "description": "可选运行参数"
+      }
+    ],
+    "endpoint": "/api/v1/tools/tool-visualization/invoke",
+    "usageExample": "POST /api/v1/tools/tool-visualization/invoke",
+    "license": "第三方工具许可",
+    "securityLevel": "内部",
+    "relatedResources": [
+      "智能体编排平台",
+      "调用监控中心",
+      "统一AI网关"
+    ]
+  }
+]

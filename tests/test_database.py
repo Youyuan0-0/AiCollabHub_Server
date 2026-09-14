@@ -49,7 +49,7 @@ def migration_config() -> Config:
 
 
 def test_migrations_require_database_configuration():
-    with pytest.raises(RuntimeError, match="DATABASE_URL must be configured"):
+    with pytest.raises(RuntimeError, match="DATABASE_URL or DATABASE_MIGRATION_URL"):
         command.upgrade(migration_config(), "head")
 
 
@@ -81,6 +81,7 @@ def test_generated_migration_upgrades_and_downgrades(tmp_path, monkeypatch):
     )
     engine = create_db_engine(url)
     try:
+        command.upgrade(config, "head")
         command.revision(config, message="migration smoke test", autogenerate=True)
         command.upgrade(config, "head")
         assert "migration_probe" in inspect(engine).get_table_names()
@@ -90,3 +91,17 @@ def test_generated_migration_upgrades_and_downgrades(tmp_path, monkeypatch):
         engine.dispose()
         # 测试表注册在共享元数据中，需要移除，避免影响后续用例。
         Base.metadata.remove(table)
+
+
+def test_migration_connection_can_be_separate_from_runtime_connection(tmp_path, monkeypatch):
+    primary = tmp_path / "runtime.db"
+    migration = tmp_path / "migration.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{primary.as_posix()}")
+    monkeypatch.setenv("DATABASE_MIGRATION_URL", f"sqlite:///{migration.as_posix()}")
+    command.upgrade(migration_config(), "head")
+    engine = create_db_engine(f"sqlite:///{migration.as_posix()}")
+    try:
+        assert "alembic_version" in inspect(engine).get_table_names()
+        assert not primary.exists()
+    finally:
+        engine.dispose()
