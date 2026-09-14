@@ -1,8 +1,8 @@
 # AiCollabHub Server
 
-人工智能协同平台的 FastAPI + SQLAlchemy 后端框架。当前阶段只搭建用户端、独立管理端、模块化后端及部署基础，前后端通过 HTTP Mock 接口联通。
+人工智能协同平台的 FastAPI + SQLAlchemy 后端框架。保留用户端、独立管理端、模块化后端及部署基础；首页/运营看板与多轮会话接入数据库，其余模块通过 HTTP Mock 接口联通。
 
-登录、权限、真实反馈持久化和业务文件模块已移除。页面使用后端提供的固定样例，提交、处理、发布、问答等操作返回模拟结果，不调用真实业务系统，也不写数据库、Redis 或 MinIO。服务连接和主备验证通过独立的健康检查与脚本执行。
+登录、权限、真实反馈持久化和业务文件模块已移除。看板读取数据库快照，未发布板块补充固定样例；会话支持空对话、追加消息、历史及删除并持久化，默认原样回显问题。其余提交、处理和资源发布返回模拟结果，不调用真实业务系统，也不写数据库、Redis 或 MinIO。服务连接和主备验证通过独立的健康检查与脚本执行。
 
 ## 技术与目录
 
@@ -16,7 +16,10 @@
 app/
   core/                  配置及实例资源生命周期
   db/                    连接池、会话、读路由、提交等待处理
-  api/                   版本化路由与健康检查
+  api/                   版本化路由、健康检查、数据库看板与会话
+  schemas/               看板与会话契约
+  services/              快照聚合、会话存储与回复提供器
+  data/                  看板及历史固定样例
   cache/                 Redis 客户端
   storage/               MinIO 客户端
   modules/
@@ -28,7 +31,7 @@ app/
     common/              公共 DTO、样例加载、概览、反馈、申请和发布
     admin/               独立管理端的列表与处理样例
   main.py                应用工厂
-migrations/              Alembic 环境和空基线
+migrations/              Alembic 环境、框架基线、看板及会话迁移
 deploy/                  PostgreSQL、Redis、Nginx 配置及部署说明
 scripts/                 启停、连接验证、主备验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
@@ -46,7 +49,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-默认 `APP_ENV=development`，不需要外部服务就能运行全部样例页面接口。`.env.example` 是配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
+默认 `APP_ENV=development`。看板和会话需要配置 `DATABASE_URL` 并执行迁移；其余 Mock 接口不依赖外部服务。`.env.example` 是配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
 
 | 地址 | 用途 |
 | --- | --- |
@@ -56,23 +59,23 @@ py -3.13 -m venv .venv
 | `GET /api/v1/health/ready` | 真实主库连接检查；未配置时返回 503 |
 | `GET /api/v1/health/dependencies` | 开发/测试环境的真实服务连接状态 |
 
-Mock 接口只注册在 development/test 环境；production 不提供样例业务路由及依赖诊断，且要求配置数据库。当前没有正式业务 API。启动不会建表、建桶、修改复制配置或调用供应方。
+Mock 接口只注册在 development/test 环境；数据库看板和会话在 production 返回 503，样例业务路由及依赖诊断不开放。production 要求配置数据库，当前没有正式业务 API。启动不会建表、建桶、修改复制配置或调用供应方。
 
 ## HTTP Mock 契约
 
-默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例接口另带 `X-Data-Mode: mock`。无登录、会话、CSRF 或权限依赖。
+默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例接口另带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。无登录、会话、CSRF 或权限依赖。
 
 | 路由 | 当前行为 |
 | --- | --- |
 | `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
-| `GET /overview/home`、`/overview/operations` | 首页、Token 和算力看板样例 |
-| `/conversations` | 固定历史样例、模拟回答和删除回执 |
+| `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
+| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 共享开发历史、新建、续聊和删除，持久化到数据库 |
 | `/knowledge-bases` 及其子路径 | 知识库、分段、文件元信息、配置与检索样例 |
 | `GET/POST /feedback` | 固定反馈列表、模拟提交回执 |
 | `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
 | `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
 
-写操作不保存跨请求状态；再次查询或刷新恢复固定样例。用户端提交的反馈不会新增到管理端，管理端处理不会形成持久化回复。文件只传文件名、大小等元信息，不上传二进制。浏览器收藏仍是本机演示状态。
+除会话外，Mock 写操作不保存跨请求状态；再次查询或刷新恢复固定样例。看板 PUT 在所有环境返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。用户端提交的反馈不会新增到管理端，管理端处理不会形成持久化回复。文件只传文件名、大小等元信息，不上传二进制。浏览器收藏仍是本机演示状态。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -80,7 +83,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 
 | 能力 | 项目已有内容 | 当前边界 |
 | --- | --- | --- |
-| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | 页面 Mock 不访问数据库；当前 `DB_READ_ENABLED=false` |
+| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | 除看板和会话外的 Mock 不访问数据库；当前 `DB_READ_ENABLED=false` |
 | 同步重放 | `remote_apply` 校验、提交期限和不确定结果处理；主备配置及测试脚本 | 只对显式使用数据库事务的调用生效；Mock 提交不会触发复制 |
 | Redis | 共享客户端、环境前缀、TTL、失败按未命中处理、Compose 模板 | 真实 Redis 服务待提供；没有业务缓存 |
 | MinIO | 对象上传、读取、删除、大小检查、连接回收 | 基础适配器及服务探测；没有业务文件 API |
@@ -102,7 +105,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-当前 `20260913_01` 是空基线，不建立业务表；沿用版本号仅为兼容已运行过的测试库迁移标记。本轮没有删除远端历史测试表或文件。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免把清理代码误当作删表授权；以后确需删除表时手工编写并审核迁移。
+迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）。已有基线或看板库可继续执行 `upgrade head`，不需要重新 stamp 或删除表。本轮没有删除远端历史测试表或文件。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免把清理代码误当作删表授权；以后确需删除表时手工编写并审核迁移。
 
 `compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备。现有局域网测试集群为 PostgreSQL 16.14，服务配置与既有验证记录见 [部署说明](deploy/README.md)。
 
@@ -115,10 +118,21 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 node scripts/verify_framework_browser.mjs
 ```
 
-Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约。Mock 路由测试禁止所有数据库、Redis 和 MinIO 网络调用。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关，覆盖桌面与手机的 10 个页面、无登录访问、模拟提交和 A/B 分流。
+Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约。Mock 路由测试禁止所有数据库、Redis 和 MinIO 网络调用；数据库看板和会话使用独立临时库验证。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关，覆盖桌面与手机的 10 个页面、无登录访问、模拟提交和 A/B 分流。
 
 验证范围是框架和演示联通，不包括真实业务、Redis 服务、两台物理服务器容灾或 2 万在线/5000 并发容量。
 
 - [部署与服务验证](deploy/README.md)
 - [当前阶段任务](docs/current-task-priorities.md)
 - [前端接口契约](../AiCollabHub_User/docs/api-contract-draft.md)
+
+## 数据库看板与多轮会话
+
+首次合并后安装 `python -m pip install -e ".[dev]" -c requirements-dev.lock`，以补齐
+FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据库并执行迁移。
+也可使用 `fastapi dev`，入口由 `pyproject.toml` 声明。
+
+会话为共享开发记录，没有登录和用户隔离。`create_app(chat_provider=...)` 可注入
+第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
+附件仅由旧 multipart 提交入口兼容接收，不保存或参与回答；多轮 JSON 不支持附件。
+数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。

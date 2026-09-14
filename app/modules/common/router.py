@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.modules.common import service
 from app.modules.common.catalog import find_sample
-from app.modules.common.fixtures import fixture
 from app.modules.common.schemas import AccessInput, FeedbackInput, InvocationInput, PublicationInput
 
 router = APIRouter(tags=["common (mock)"])
@@ -17,14 +16,7 @@ def framework(request: Request):
     }
 
 
-@router.get("/overview/home")
-def home():
-    return fixture("common", "home")
-
-
-@router.get("/overview/operations")
-def operations(tokenPeriod: str = "月", rankingType: str = "用户活跃榜"):
-    return service.operations(tokenPeriod, rankingType)
+# 看板由 app.api.overview 读取数据库快照，避免相同路径仍命中固定 Mock。
 
 
 @router.get("/feedback")

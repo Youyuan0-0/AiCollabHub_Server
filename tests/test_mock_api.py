@@ -34,15 +34,13 @@ def clients(monkeypatch):
 
 def test_all_pages_have_http_samples_without_authentication(clients):
     a, b = clients
+    # 看板和会话已独立验证数据库行为，此处仅覆盖禁止访问外部服务的 Mock 模块。
     for path in (
         "/datasets",
         "/models",
         "/applications",
         "/tools",
         "/knowledge-bases",
-        "/overview/home",
-        "/overview/operations",
-        "/conversations",
         "/feedback",
         "/admin/feedback",
         "/admin/overview",
@@ -96,10 +94,9 @@ def test_feedback_actions_echo_but_do_not_create_real_business_state(clients):
     assert a.get("/api/v1/feedback").json() == original
 
 
-def test_chat_knowledge_and_tools_return_mock_contracts(clients):
+def test_knowledge_and_tools_return_mock_contracts(clients):
     a, b = clients
-    answer = a.post("/api/v1/conversations", json={"question": "测试", "model": "demo"})
-    assert answer.status_code == 200 and "模拟回答" in answer.json()["text"]
+    # 多轮会话不再属于无状态 Mock，其历史与持久化由专用用例覆盖。
     base = a.get("/api/v1/knowledge-bases").json()[0]
     assert b.get(f"/api/v1/knowledge-bases/{base['id']}/chunks").status_code == 200
     uploaded = a.post(

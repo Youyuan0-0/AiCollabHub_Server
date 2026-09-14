@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 
+from app.api.conversations import router as conversations_router
 from app.api.health import router as health_router
+from app.api.overview import router as overview_router
 from app.modules.admin.router import router as admin_router
 from app.modules.applications.router import router as applications_router
 from app.modules.common.router import router as common_router
@@ -12,6 +14,9 @@ from app.modules.tools.router import router as tools_router
 # 平台接口统一使用版本前缀，后续业务模块的路由在此集中挂载。
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router)
+# 看板与多轮会话统一走数据库实现；各自依赖限制开发环境，避免与模块 Mock 重复注册。
+api_router.include_router(overview_router)
+api_router.include_router(conversations_router)
 
 # Mock 路由与基础设施探测分离；七个模块共用 /api/v1 契约，内部按领域组织。
 mock_router = APIRouter(prefix="/api/v1")

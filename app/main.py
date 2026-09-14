@@ -11,14 +11,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.router import api_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
+from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
 
-# 工厂函数允许测试注入独立配置，避免不同应用实例共享数据库连接池。
+# settings 与 resources_factory 隔离实例配置和连接池；chat_provider 可注入回复实现，默认回显。
+# 返回独立 FastAPI 应用，启动仅创建资源客户端，不自动执行数据库迁移。
 def create_app(
     settings: Settings | None = None,
     *,
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
+    chat_provider: ChatProvider | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -48,6 +51,11 @@ def create_app(
         redoc_url=None,
         openapi_url="/openapi.json" if development_docs else None,
     )
+    # 环境由服务端配置决定；会话回复提供器不依赖已移除的身份模块。
+    application.state.app_env = settings.app_env
+    application.state.chat_provider = (
+        chat_provider if chat_provider is not None else EchoChatProvider()
+    )
     application.state.settings = settings
     application.state.database_engine = None
     application.state.resources = None
@@ -63,7 +71,11 @@ def create_app(
             if settings.app_env != "production" and not request.url.path.startswith(
                 "/api/v1/health/"
             ):
-                response.headers["X-Data-Mode"] = "mock"
+                # 看板和会话包含持久化数据，不能标记为无状态 Mock；样例板块由响应元信息区分。
+                database_path = request.url.path.split("/")[3:4]
+                response.headers["X-Data-Mode"] = (
+                    "development" if database_path in (["overview"], ["conversations"]) else "mock"
+                )
         return response
 
     @application.exception_handler(SQLAlchemyError)

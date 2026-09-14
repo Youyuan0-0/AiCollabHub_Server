@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "alembic>=1.14,<2",
-    "fastapi>=0.115,<1",
+    # 标准依赖包含 CLI 和 multipart 解析，支持开发启动及旧问答表单接口。
+    "fastapi[standard]>=0.115,<1",
     "minio>=7.2.20,<8",
     "psycopg[binary]>=3.3.5,<4",
     "pydantic-settings>=2.7,<3",
@@ -29,6 +30,10 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.fastapi]
+# 项目根目录执行 fastapi dev 时使用此应用入口。
+entrypoint = "app.main:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
