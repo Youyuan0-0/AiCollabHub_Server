@@ -1,8 +1,12 @@
 # AiCollabHub Server
 
-人工智能协同平台的 FastAPI + SQLAlchemy 后端框架。当前阶段只搭建用户端、独立管理端、模块化后端及部署基础，前后端通过 HTTP Mock 接口联通。
+人工智能协同平台的 FastAPI + SQLAlchemy 后端。在现有模块化框架和部署基础上，前后端通过 HTTP Mock 接口联通，并逐步补齐场景应用的资料和发布演示。
 
 业务页面继续使用后端固定样例，提交、处理、发布、问答等操作返回模拟结果，不调用真实业务系统。新增可选的 CAS 登录联调：模拟 IAM 提供一次性票据，平台用 PostgreSQL 保存共享会话、登录请求与认证日志。未建设个人资料页、完整用户档案、身份同步或正式角色权限。服务连接和主备验证通过独立的健康检查与脚本执行。
+
+场景应用业务使用单实例临时存储，可演示发布、审核、同步和调用等流程；这部分不连接数据库或供应方，认证模块按独立配置启用。
+
+启用 `AUTH_MODE=mock` 时，`require_business_identity()` 校验会话及写请求的 CSRF，并把可信身份交给 `SessionIdentityProvider`。场景应用据此保存发布者和审核者标识，用户端和管理端分别读取 `/application-session` 与 `/admin/application-session`。此时关闭演示账号切换，不使用演示组织或项目替代尚未接入的 IAM 归属信息。`AUTH_MODE=disabled` 时继续使用原有演示账号。
 
 ## 技术与目录
 
@@ -35,7 +39,7 @@ scripts/                 启停、连接验证、主备验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
 ```
 
-模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。样例 JSON 按领域存放，读取时复制，避免请求间或 A/B 实例间混入修改状态。当前是模块化单体，可部署多个同版实例；不是每个目录单独运行一个微服务。
+模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。样例 JSON 按领域存放，读取时复制。场景应用由 `application_service.py` 处理业务规则、`memory_repository.py` 在每个 FastAPI 实例内单独暂存新增状态；`ports.py` 定义后续数据库/供应方替换合同；发布流程演示应直连单个实例、使用一个 worker，重启或代码热重载后重置，A/B 实例之间不共享记录。数据库持久化和多实例共享留待后续实现。
 
 ## 本地开发
 
@@ -68,6 +72,12 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 | 路由 | 当前行为 |
 | --- | --- |
 | `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
+| `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
+| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
+| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入同实例的应用目录 |
+| `GET /admin/applications` 及详情、`PUT .../{id}/visibility` | 应用管理与有效的范围限制；关闭登录时用预置身份，启用后复用公共会话 |
+| `GET /admin/application-review-queue` | 管理端审核查询、状态筛选、分页及数量 |
+| `GET /application-form-configuration`、`GET/PUT /admin/application-configuration` | 表单必填和提示配置、管理列配置；提交校验与页面生效 |
 | `GET /overview/home`、`/overview/operations` | 首页、Token 和算力看板样例 |
 | `/conversations` | 固定历史样例、模拟回答和删除回执 |
 | `/knowledge-bases` 及其子路径 | 知识库、分段、文件元信息、配置与检索样例 |
@@ -75,7 +85,7 @@ Mock 接口只注册在 development/test 环境；production 不提供样例业�
 | `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
 | `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
 
-写操作不保存跨请求状态；再次查询或刷新恢复固定样例。用户端提交的反馈不会新增到管理端，管理端处理不会形成持久化回复。文件只传文件名、大小等元信息，不上传二进制。浏览器收藏仍是本机演示状态。
+场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制。场景应用在HTTP模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。应用字段、状态和后续关联表规划见 [场景应用模块说明](app/modules/applications/README.md)。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
