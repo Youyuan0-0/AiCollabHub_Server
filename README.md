@@ -6,6 +6,8 @@
 
 可选的 CAS 登录联调使用模拟 IAM 提供一次性票据，平台用 PostgreSQL 保存共享会话、登录请求与认证日志。未建设个人资料页、完整用户档案、身份同步或正式角色权限。
 
+用户端和管理端通过同一网关使用 `ach_session` HttpOnly Cookie（路径 `/api`），任一端登录后另一端直接沿用身份，管理端仍逐次校验管理员准入。任一端退出、会话过期或收到单点登出通知后，两端同时失效；切换账号同步替换两端身份。兼容旧的分端 Cookie，但不延长旧会话有效期；旧 Cookie 对应不同账号时要求重新选择账号。
+
 场景应用业务使用单实例临时存储，可演示发布、审核、同步和调用等流程；这部分不连接数据库或供应方，认证模块按独立配置启用。
 
 启用 `AUTH_MODE=mock` 时，`require_business_identity()` 校验会话及写请求的 CSRF，并把可信身份交给 `SessionIdentityProvider`。场景应用据此保存发布者和审核者标识，用户端和管理端分别读取 `/application-session` 与 `/admin/application-session`。此时关闭演示账号切换，不使用演示组织或项目替代尚未接入的 IAM 归属信息。`AUTH_MODE=disabled` 时继续使用原有演示账号。

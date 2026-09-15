@@ -46,6 +46,15 @@ def clear_login_cookie(response, scope: str):
     response.delete_cookie(service.login_cookie(scope), path="/api", httponly=True, samesite="lax")
 
 
+def share_session_cookie(response, request: Request, value: AuthSession, raw: str):
+    # 旧会话可直接沿用，Cookie 有效期保持原值；不因访问另一端而延长登录时间。
+    if request.cookies.get(service.cookie_name()) != raw:
+        set_cookie(
+            response, request, service.cookie_name(), raw, max(0, value.expires_at - service.now())
+        )
+    return response
+
+
 def login_failure(request: Request, db: Session, scope: str, error: str, return_path: str):
     prepare_write(db, request.app.state.settings)
     service.audit(db, request, scope, "login", error)
@@ -68,6 +77,17 @@ def login(
 ):
     settings = request.app.state.settings
     target = safe_return_path(return_to or ("/admin/" if scope == "admin" else "/"), scope)
+    if not renew:
+        try:
+            value, raw = service.authenticated_session(db, request, scope)
+        except HTTPException as error:
+            if error.status_code == 403:
+                return login_failure(request, db, scope, "admin_not_allowed", target)
+            if error.status_code != 401:
+                raise
+        else:
+            # 已登录时直接返回原页面；切换账号仍通过 renew=true 显式进入 IAM。
+            return share_session_cookie(RedirectResponse(target, 303), request, value, raw)
     state, browser = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     callback = str(settings.auth_public_origin).rstrip("/") + "/api/v1/auth/callback?"
     callback += urlencode({"state": state, "scope": scope})
@@ -141,7 +161,7 @@ def callback(
                 AuthSession(
                     token_hash=digest(raw_token),
                     ticket_hash=digest(ticket),
-                    scope=scope,
+                    scope="platform",
                     subject=principal.subject,
                     display_name=principal.display_name,
                     created_at=service.now(),
@@ -151,51 +171,52 @@ def callback(
             db.flush()
     except IntegrityError:
         return login_failure(request, db, scope, "ticket_already_closed", target)
-    previous = request.cookies.get(service.cookie_name(scope))
-    if previous:
-        db.execute(
-            update(AuthSession)
-            .where(AuthSession.token_hash == digest(previous))
-            .values(
-                revoked_at=service.now(),
-            )
-        )
+    service.revoke_browser_sessions(db, request)
     service.audit(db, request, scope, "login", "success", principal.subject)
     commit_write(db)
     response = RedirectResponse(target, 303)
-    set_cookie(response, request, service.cookie_name(scope), raw_token, settings.auth_session_ttl)
+    set_cookie(response, request, service.cookie_name(), raw_token, settings.auth_session_ttl)
+    for name in service.LEGACY_SESSION_COOKIES:
+        response.delete_cookie(name, path="/api", httponly=True, samesite="lax")
     clear_login_cookie(response, scope)
     return response
 
 
 @router.get("/session")
 def current_session(request: Request, db: SessionDependency, scope: Scope = "user"):
-    value = service.authenticated_session(db, request, scope)
-    return {
-        "user": {
-            "id": value.subject,
-            "displayName": value.display_name,
-            "canAccessAdmin": service.can_access_admin(request.app.state.settings, value.subject),
-        },
-        "expiresAt": datetime.fromtimestamp(value.expires_at, UTC).isoformat(),
-        "csrfToken": csrf_token(
-            request.cookies[service.cookie_name(scope)],
-            request.app.state.settings.auth_mock_secret.get_secret_value(),
-        ),
-    }
+    value, raw = service.authenticated_session(db, request, scope)
+    response = JSONResponse(
+        {
+            "user": {
+                "id": value.subject,
+                "displayName": value.display_name,
+                "canAccessAdmin": service.can_access_admin(
+                    request.app.state.settings, value.subject
+                ),
+            },
+            "expiresAt": datetime.fromtimestamp(value.expires_at, UTC).isoformat(),
+            "csrfToken": csrf_token(
+                raw,
+                request.app.state.settings.auth_mock_secret.get_secret_value(),
+            ),
+        }
+    )
+    return share_session_cookie(response, request, value, raw)
 
 
 @router.post("/logout")
 def logout(
     request: Request, db: SessionDependency, scope: Scope = "user", global_logout: bool = True
 ):
-    service.verify_csrf(request, scope)
     settings = request.app.state.settings
-    raw = request.cookies.get(service.cookie_name(scope), "")
-    value = db.get(AuthSession, digest(raw))
+    if service.cookie_name() in request.cookies:
+        raw = service.session_tokens(request).get(service.cookie_name(), "")
+        value = db.get(AuthSession, digest(raw)) if raw else None
+    else:
+        value, raw = service.authenticated_session(db, request, "user")
+    service.verify_csrf(request, raw)
     prepare_write(db, settings)
-    if value is not None and value.scope == scope:
-        value.revoked_at = service.now()
+    service.revoke_browser_sessions(db, request)
     service.audit(db, request, scope, "logout", "success", value.subject if value else None)
     commit_write(db)
     target = str(settings.auth_public_origin).rstrip("/")
@@ -207,7 +228,8 @@ def logout(
             else target
         }
     )
-    response.delete_cookie(service.cookie_name(scope), path="/api", httponly=True, samesite="lax")
+    for name in (service.cookie_name(), *service.LEGACY_SESSION_COOKIES):
+        response.delete_cookie(name, path="/api", httponly=True, samesite="lax")
     return response
 
 

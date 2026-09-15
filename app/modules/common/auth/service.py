@@ -18,8 +18,19 @@ def now() -> int:
     return int(time.time())
 
 
-def cookie_name(scope: str) -> str:
-    return "ach_session_" + scope
+LEGACY_SESSION_COOKIES = {"ach_session_user": "user", "ach_session_admin": "admin"}
+
+
+def cookie_name() -> str:
+    return "ach_session"
+
+
+def session_tokens(request: Request) -> dict[str, str]:
+    return {
+        name: raw
+        for name in (cookie_name(), *LEGACY_SESSION_COOKIES)
+        if 20 <= len(raw := request.cookies.get(name, "")) <= 200
+    }
 
 
 def login_cookie(scope: str) -> str:
@@ -48,41 +59,65 @@ def audit(
     )
 
 
-def authenticated_session(db: Session, request: Request, scope: str) -> AuthSession:
-    raw = request.cookies.get(cookie_name(scope), "")
-    value = db.get(AuthSession, digest(raw)) if 20 <= len(raw) <= 200 else None
-    if (
-        value is None
-        or not value.subject
-        or value.scope != scope
-        or value.revoked_at is not None
-        or value.expires_at <= now()
-    ):
+def authenticated_session(db: Session, request: Request, scope: str) -> tuple[AuthSession, str]:
+    # 新 Cookie 一旦存在就具有唯一优先级；失效后不能通过旧 Cookie 恢复登录。
+    tokens = session_tokens(request)
+    if cookie_name() in request.cookies:
+        tokens = {cookie_name(): tokens[cookie_name()]} if cookie_name() in tokens else {}
+    matches = []
+    for name, raw in tokens.items():
+        value = db.get(AuthSession, digest(raw))
+        allowed_scopes = (
+            {"platform", "user", "admin"}
+            if name == cookie_name()
+            else {LEGACY_SESSION_COOKIES[name]}
+        )
+        if (
+            value is not None
+            and value.subject
+            and value.scope in allowed_scopes
+            and value.revoked_at is None
+            and value.expires_at > now()
+        ):
+            matches.append((value, raw))
+    # 升级前两端若残留不同账号，不自动选择其中的管理员身份。
+    if not matches or len({value.subject for value, _ in matches}) != 1:
         raise HTTPException(401, "authentication_required")
+    value, raw = max(matches, key=lambda item: (item[0].created_at, item[0].token_hash))
     settings = request.app.state.settings
+    # scope 表示本次访问的入口，管理员准入由服务端身份判断，不能由 Cookie 名决定。
     if scope == "admin" and not can_access_admin(settings, value.subject):
         raise HTTPException(403, "admin_not_allowed")
-    return value
+    return value, raw
 
 
-def verify_csrf(request: Request, scope: str) -> None:
+def verify_csrf(request: Request, raw_token: str) -> None:
     settings = request.app.state.settings
     expected_origin = str(settings.auth_public_origin).rstrip("/")
-    if request.headers.get("origin") != expected_origin:
+    if not raw_token or request.headers.get("origin") != expected_origin:
         raise HTTPException(403, "csrf_rejected")
     expected = csrf_token(
-        request.cookies.get(cookie_name(scope), ""),
+        raw_token,
         settings.auth_mock_secret.get_secret_value(),
     )
     if not hmac.compare_digest(expected.encode(), request.headers.get("x-csrf-token", "").encode()):
         raise HTTPException(403, "csrf_rejected")
 
 
+def revoke_browser_sessions(db: Session, request: Request) -> None:
+    # 同时撤销本浏览器携带的旧会话，避免退出或切换账号后遗留另一端的有效令牌。
+    hashes = [digest(raw) for raw in session_tokens(request).values()]
+    if hashes:
+        db.execute(
+            update(AuthSession).where(AuthSession.token_hash.in_(hashes)).values(revoked_at=now())
+        )
+
+
 def require_business_identity(request: Request) -> None:
     scope = "admin" if request.url.path.startswith("/api/v1/admin/") else "user"
     # 会话检查始终使用主库，不能因为备库或缓存延迟重新接受已撤销的会话。
     with Session(request.app.state.database_engine) as db:
-        session = authenticated_session(db, request, scope)
+        session, raw = authenticated_session(db, request, scope)
         # 场景应用复用已验证身份，保存记录时不再另选一个演示用户。
         request.state.business_identity = {
             "id": session.subject,
@@ -90,7 +125,7 @@ def require_business_identity(request: Request) -> None:
             "scope": scope,
         }
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
-        verify_csrf(request, scope)
+        verify_csrf(request, raw)
 
 
 def revoke_ticket(db: Session, request: Request, ticket: str) -> None:
