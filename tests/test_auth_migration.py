@@ -137,7 +137,7 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         assert {table.name for table in tables}.issubset(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_01"
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_02"
             )
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
@@ -166,7 +166,7 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_01"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_02"]
     command.upgrade(config, "head", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):
