@@ -1,5 +1,6 @@
 from alembic import context
 from sqlalchemy import create_engine, pool
+from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
 from app.db.base import Base
@@ -7,6 +8,7 @@ from app.db.conversations import Conversation, StoredConversationMessage  # noqa
 from app.db.overview import OverviewSnapshot  # noqa: F401
 from app.db.session import normalize_database_url
 from app.modules.common.auth import models  # noqa: F401
+from app.modules.common.identity_sync import models as identity_models  # noqa: F401
 
 # 复用应用的数据库配置，不在 alembic.ini 中另外保存连接凭据。
 settings = Settings()
@@ -41,7 +43,17 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     # 迁移是短时命令，不保留连接池；命令结束后释放数据库连接资源。
-    engine = create_engine(database_url, poolclass=pool.NullPool)
+    connect_args = {}
+    if make_url(database_url).get_backend_name() == "postgresql":
+        connect_args = {
+            "connect_timeout": settings.db_connect_timeout,
+            "target_session_attrs": "read-write",
+            "options": (
+                str(make_url(database_url).query.get("options", ""))
+                + " -c synchronous_commit=local"
+            ).strip(),
+        }
+    engine = create_engine(database_url, poolclass=pool.NullPool, connect_args=connect_args)
     try:
         with engine.connect() as connection:
             context.configure(

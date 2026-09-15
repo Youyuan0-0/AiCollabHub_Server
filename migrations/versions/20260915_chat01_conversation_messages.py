@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import context, op
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "20260915_chat01"
@@ -120,19 +122,13 @@ def legacy_record(row):
         ) from None
 
 
-def upgrade():
-    """在线迁移先校验所有旧数据，再建新表并搬迁；仅成功后删除旧表，保留原 ID。"""
-    if context.is_offline_mode():
-        raise RuntimeError("Conversation data migration requires an online database connection")
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        # 搬迁期间阻止旧 API 写入，确保读取快照与最终删除旧表之间没有遗漏的消息。
-        bind.execute(sa.text("LOCK TABLE demo_conversations IN ACCESS EXCLUSIVE MODE"))
-    legacy = sa.Table("demo_conversations", sa.MetaData(), autoload_with=bind)
-    records = [legacy_record(row) for row in bind.execute(sa.select(legacy)).mappings()]
+def conversation_metadata():
+    """冻结此迁移版本的表定义，后续业务模型增删字段不会改变旧迁移的校验规则。"""
+    metadata = sa.MetaData()
     json_type = sa.JSON().with_variant(JSONB(), "postgresql")
-    conversations = op.create_table(
+    conversations = sa.Table(
         "conversations",
+        metadata,
         sa.Column("id", sa.String(64), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("model", sa.Text(), nullable=False),
@@ -146,11 +142,16 @@ def upgrade():
         sa.PrimaryKeyConstraint("id", name=op.f("pk_conversations")),
         sa.CheckConstraint("version >= 0", name=op.f("ck_conversations_version_nonnegative")),
     )
-    op.create_index(
-        "ix_conversations_history", "conversations", ["owner_id", "deleted", "updated_at", "id"]
+    sa.Index(
+        "ix_conversations_history",
+        conversations.c.owner_id,
+        conversations.c.deleted,
+        conversations.c.updated_at,
+        conversations.c.id,
     )
-    messages = op.create_table(
+    sa.Table(
         "conversation_messages",
+        metadata,
         sa.Column("conversation_id", sa.String(64), nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
         sa.Column("id", sa.Text(), nullable=False),
@@ -178,6 +179,67 @@ def upgrade():
             "role IN ('user', 'assistant')", name=op.f("ck_conversation_messages_role_valid")
         ),
     )
+    return metadata
+
+
+def current_schema_exists(bind):
+    """独立入口可能已经完成分表；校验一致后接管，避免全量升级重复建表。"""
+    existing = set(sa.inspect(bind).get_table_names())
+    expected = {"conversations", "conversation_messages"}
+    if not existing & expected:
+        return False
+    if not expected <= existing:
+        raise RuntimeError("Incomplete conversation tables; migration aborted")
+    metadata = conversation_metadata()
+    migration_context = MigrationContext.configure(
+        bind,
+        opts={
+            "compare_type": True,
+            "include_object": lambda obj, name, kind, reflected, compared: (
+                kind != "table" or name in expected
+            ),
+        },
+    )
+    if compare_metadata(migration_context, metadata):
+        raise RuntimeError("Existing conversation schema differs from the expected schema")
+    if "demo_conversations" in existing:
+        if bind.dialect.name == "postgresql":
+            bind.execute(sa.text("LOCK TABLE demo_conversations IN ACCESS EXCLUSIVE MODE"))
+        legacy = sa.Table("demo_conversations", sa.MetaData(), autoload_with=bind)
+        if bind.execute(sa.select(legacy.c.id).limit(1)).first() is not None:
+            # 两套表都有来源时不猜测覆盖关系；中止并保留全部记录供核对。
+            raise RuntimeError("Ambiguous conversation tables; migration aborted")
+        # 兼容补表迁移在分表后重建的空表，不保留第二套存储。
+        op.drop_table("demo_conversations")
+    return True
+
+
+def upgrade():
+    """在线迁移先校验所有旧数据，再建新表并搬迁；仅成功后删除旧表，保留原 ID。"""
+    if context.is_offline_mode():
+        raise RuntimeError("Conversation data migration requires an online database connection")
+    bind = op.get_bind()
+    if current_schema_exists(bind):
+        return
+    # 某些旧分支仅推进了版本号，缺少旧表；空表也走相同的转换流程。
+    op.create_table(
+        "demo_conversations",
+        sa.Column("id", sa.String(64), nullable=False),
+        sa.Column("payload", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("deleted", sa.Boolean(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_demo_conversations")),
+        if_not_exists=True,
+    )
+    if bind.dialect.name == "postgresql":
+        # 搬迁期间阻止旧 API 写入，确保读取快照与最终删除旧表之间没有遗漏的消息。
+        bind.execute(sa.text("LOCK TABLE demo_conversations IN ACCESS EXCLUSIVE MODE"))
+    legacy = sa.Table("demo_conversations", sa.MetaData(), autoload_with=bind)
+    records = [legacy_record(row) for row in bind.execute(sa.select(legacy)).mappings()]
+    metadata = conversation_metadata()
+    metadata.create_all(bind, checkfirst=False)
+    conversations = metadata.tables["conversations"]
+    messages = metadata.tables["conversation_messages"]
     for record, items in records:
         bind.execute(conversations.insert().values(**record))
         if items:

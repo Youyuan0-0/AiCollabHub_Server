@@ -5,7 +5,9 @@ import { resolve } from 'node:path'
 const require = createRequire(resolve('../AiCollabHub_User/package.json'))
 const { chromium, expect } = require('@playwright/test')
 const baseURL = process.env.FRAMEWORK_URL || 'http://127.0.0.1:18880'
-const directory = resolve('.runtime/framework-mock-20260913')
+const directory = resolve('.runtime/framework-verification')
+const configuration = await fetch(baseURL + '/api/v1/auth/config').then(response => response.json())
+if (configuration.enabled !== false) throw new Error('This script requires AUTH_MODE=disabled; use verify_auth_browser.mjs for mock login')
 await mkdir(directory, { recursive: true })
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
 const results = []
@@ -13,7 +15,7 @@ try {
   for (const [name, viewport] of [['desktop', { width: 1440, height: 960 }], ['mobile', { width: 390, height: 844 }]]) {
     const context = await browser.newContext({ viewport })
     const page = await context.newPage()
-    const errors = [], failedResponses = [], authRequests = [], instances = new Set()
+    const errors = [], failedResponses = [], authRequests = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('request', request => {
       const path = new URL(request.url()).pathname
@@ -21,8 +23,6 @@ try {
     })
     page.on('response', response => {
       if (response.status() >= 400) failedResponses.push({ path: new URL(response.url()).pathname, status: response.status() })
-      const instance = response.headers()['x-app-instance']
-      if (instance) instances.add(instance)
     })
     for (const path of ['/', '/datasets', '/models', '/applications', '/knowledge', '/tools', '/feedback', '/publish', '/admin/', '/admin/services']) {
       await page.goto(baseURL + path)
@@ -34,7 +34,7 @@ try {
       }
       if (path === '/knowledge') expect(await page.locator('.knowledge-card').count()).toBeGreaterThan(0)
       if (path === '/') await expect(page.locator('.home-content-grid')).toBeVisible()
-      if (path === '/admin/') expect(await page.locator('tbody tr').count()).toBeGreaterThan(0)
+      if (path === '/admin/services') await expect(page.locator('.el-table__body tbody tr')).toHaveCount(3)
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
       expect(overflow, path).toBe(false)
       if (['/', '/datasets', '/knowledge', '/admin/'].includes(path)) {
@@ -49,7 +49,7 @@ try {
     await page.getByRole('button', { name: '提交反馈', exact: true }).click()
     expect((await submitted).status()).toBe(201)
     await expect(page.getByText('模拟提交完成', { exact: true })).toBeVisible()
-    await page.goto(baseURL + '/admin/')
+    await page.goto(baseURL + '/admin/feedback')
     await page.locator('.row-title').first().click()
     await page.getByLabel('处理说明', { exact: true }).fill('Mock 请求已收到')
     await page.getByRole('button', { name: '保存处理结果', exact: true }).click()
@@ -57,8 +57,7 @@ try {
     expect(failedResponses).toEqual([])
     expect(errors).toEqual([])
     expect(authRequests).toEqual([])
-    expect([...instances].sort()).toEqual(['A', 'B'])
-    results.push({ viewport: name, routes: 10, dataMode: 'backend mock over HTTP', authenticated: false, errors: 0, instances: [...instances].sort() })
+    results.push({ viewport: name, routes: 10, dataMode: 'backend mock over HTTP', authenticated: false, errors: 0 })
     await context.close()
   }
   await writeFile(resolve(directory, 'browser-results.json'), JSON.stringify(results, null, 2))

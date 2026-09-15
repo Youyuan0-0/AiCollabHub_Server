@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.db.conversations import Conversation, StoredConversationMessage
 from app.db.overview import OverviewSnapshot
 from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthSession
+from app.modules.common.identity_sync.models import IdentityRole, IdentityState, IdentitySyncReceipt
 from app.schemas.conversations import ConversationRecord
 from app.services.conversation_store import SqlConversationStore
 
@@ -60,7 +61,10 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
         "20260914_02",
         "20260914_03",
         "20260915_01",
+        "20260915_02",
+        "20260915_03",
         "20260915_chat01",
+        "20260915_merge01",
         "legacy-auth",
         "legacy-combined",
     ],
@@ -187,8 +191,7 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
             )
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "20260915_merge01"
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_04"
             )
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
@@ -215,12 +218,63 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         engine.dispose()
 
 
+def test_repair_migration_restores_missing_conversations_without_losing_sessions(
+    tmp_path, monkeypatch
+):
+    """旧库版本已到身份同步但缺少历史表时，升级补表且不重建已有登录记录。"""
+    url = f"sqlite:///{tmp_path / 'repair.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "20260915_02")
+        Table("demo_conversations", MetaData(), autoload_with=engine).drop(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                AuthSession.__table__.insert().values(
+                    token_hash="existing-token",
+                    ticket_hash="existing-ticket",
+                    scope="user",
+                    subject="existing-user",
+                    created_at=1,
+                    expires_at=9999999999,
+                )
+            )
+        command.upgrade(config, "head")
+        command.check(config)
+        assert "demo_conversations" not in inspect(engine).get_table_names()
+        record = ConversationRecord(
+            id="repaired-chat",
+            title="修复后的会话",
+            model="test",
+            knowledge_base="",
+            owner_id="existing-user",
+            created_at=datetime(2026, 9, 15, tzinfo=UTC),
+            updated_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        with Session(engine) as session:
+            SqlConversationStore(session).save(record, expected_version=None)
+        command.downgrade(config, "20260914_03")
+        with engine.connect() as connection:
+            payload = connection.scalar(
+                text("SELECT payload FROM demo_conversations WHERE id = 'repaired-chat'")
+            )
+            assert ConversationRecord.model_validate_json(payload) == record
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(select(AuthSession.subject)) == "existing-user"
+        with Session(engine) as session:
+            assert SqlConversationStore(session).get(record.id) == record
+    finally:
+        engine.dispose()
+
+
 def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monkeypatch):
     """汇合后只有一个 head；历史认证支持离线 SQL，会话数据搬迁明确要求在线连接。"""
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_merge01"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_04"]
     command.upgrade(config, "20260915_01", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):
@@ -228,6 +282,160 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     assert "CREATE TABLE demo_conversations" in sql
     with pytest.raises(RuntimeError, match="requires an online database connection"):
         command.upgrade(config, "head", sql=True)
+
+
+@pytest.mark.parametrize("previous", ["20260915_01", "20260915_02", "20260915_03"])
+def test_global_upgrade_adopts_independent_conversations_and_preserves_identity(
+    tmp_path, monkeypatch, previous
+):
+    """先独立迁移会话的共享库也能升级全部模块，不重复建表或丢失身份状态。"""
+    root = Path(__file__).resolve().parents[1]
+    url = f"sqlite:///{tmp_path / 'independent.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    shared = Config(str(root / "alembic.ini"))
+    module = Config(str(root / "alembic.conversations.ini"))
+    engine = create_engine(url)
+    try:
+        command.upgrade(shared, previous)
+        command.upgrade(module, "head")
+        existing = set(inspect(engine).get_table_names())
+        with engine.begin() as connection:
+            connection.execute(
+                AuthSession.__table__.insert().values(
+                    token_hash="preserved-token",
+                    ticket_hash="preserved-ticket",
+                    scope="platform",
+                    subject="preserved-user",
+                    created_at=1,
+                    expires_at=9999999999,
+                )
+            )
+            if "iam_identity_state" in existing:
+                connection.execute(
+                    IdentityState.__table__.insert().values(
+                        subject="preserved-user",
+                        status="disabled",
+                        sync_time=3,
+                        updated_at=4,
+                    )
+                )
+                connection.execute(
+                    IdentityRole.__table__.insert().values(
+                        subject="preserved-user",
+                        role_code="platform_admin",
+                        authorized=False,
+                        sync_time=3,
+                        updated_at=4,
+                    )
+                )
+                connection.execute(
+                    IdentitySyncReceipt.__table__.insert().values(
+                        event_id="preserved-event",
+                        payload_hash="f" * 64,
+                        resource_type="user",
+                        sync_time=3,
+                        applied=1,
+                        ignored=0,
+                        unchanged=0,
+                        revoked_sessions=1,
+                        attempts=1,
+                        received_at=4,
+                        last_received_at=4,
+                    )
+                )
+            preserved = {
+                model: connection.execute(select(model)).mappings().all()
+                for model in (AuthSession, IdentityState, IdentityRole, IdentitySyncReceipt)
+                if model.__tablename__ in existing
+            }
+        record = ConversationRecord(
+            id="module-chat",
+            title="独立迁移后的会话",
+            model="test",
+            knowledge_base="",
+            owner_id="preserved-user",
+            created_at=datetime(2026, 9, 15, tzinfo=UTC),
+            updated_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        with Session(engine) as session:
+            SqlConversationStore(session).save(record, expected_version=None)
+        command.upgrade(shared, "head")
+        command.upgrade(shared, "head")
+        command.check(shared)
+        command.check(module)
+        assert "demo_conversations" not in inspect(engine).get_table_names()
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_04"
+            )
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version_conversations"))
+                == "20260915_chat01"
+            )
+            for model, rows in preserved.items():
+                assert connection.execute(select(model)).mappings().all() == rows
+        with Session(engine) as session:
+            assert SqlConversationStore(session).get(record.id) == record
+    finally:
+        engine.dispose()
+
+
+def test_merge_validation_uses_frozen_schema_instead_of_future_orm(tmp_path, monkeypatch):
+    """业务模型未来添加字段时，旧迁移仍按自己的版本校验，不提前要求新列。"""
+    url = f"sqlite:///{tmp_path / 'frozen.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "20260915_merge01")
+        future_table = Conversation.__table__.to_metadata(MetaData())
+        future_table.append_column(Column("future_feature", Text))
+        monkeypatch.setattr(Conversation, "__table__", future_table)
+        command.upgrade(config, "head")
+        assert "future_feature" not in {
+            column["name"] for column in inspect(engine).get_columns("conversations")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_merge_does_not_discard_legacy_data_when_both_stores_exist(tmp_path, monkeypatch):
+    """补表分支出现新的旧格式记录时中止，不能当作空表删除或覆盖关系表。"""
+    url = f"sqlite:///{tmp_path / 'ambiguous.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "20260915_merge01")
+        record = ConversationRecord(
+            id="normalized-chat",
+            title="关系表中的会话",
+            model="test",
+            knowledge_base="",
+            created_at=datetime(2026, 9, 15, tzinfo=UTC),
+            updated_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        with Session(engine) as session:
+            SqlConversationStore(session).save(record, expected_version=None)
+        command.upgrade(config, "20260915_03")
+        old = Table("demo_conversations", MetaData(), autoload_with=engine)
+        with engine.begin() as connection:
+            connection.execute(
+                old.insert().values(
+                    id="legacy-only",
+                    payload='{"preserved":true}',
+                    created_at=datetime(2026, 9, 15),
+                    deleted=False,
+                )
+            )
+        with pytest.raises(RuntimeError, match="Ambiguous conversation tables"):
+            command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(select(old.c.payload)) == '{"preserved":true}'
+        with Session(engine) as session:
+            assert SqlConversationStore(session).get(record.id) == record
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("legacy", ["auth", "overview", "conversations"])

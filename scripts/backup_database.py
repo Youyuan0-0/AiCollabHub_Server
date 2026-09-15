@@ -35,6 +35,7 @@ def main():
         "PGPASSWORD": url.password or "",
         "PGDATABASE": url.database or "",
         "PGCONNECT_TIMEOUT": "5",
+        "PGOPTIONS": (str(url.query.get("options", "")) + " -c synchronous_commit=local").strip(),
     }
     args.directory.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
@@ -70,6 +71,7 @@ def main():
         user=url.username,
         password=url.password,
         connect_timeout=5,
+        options=env["PGOPTIONS"],
     ) as source:
         source.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
         source.read_only = True
@@ -109,6 +111,7 @@ def main():
             password=url.password,
             connect_timeout=5,
             autocommit=True,
+            options=env["PGOPTIONS"],
         ) as conn:
             conn.execute(
                 sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(target))
@@ -121,6 +124,7 @@ def main():
             user=url.username,
             password=url.password,
             connect_timeout=5,
+            options=env["PGOPTIONS"],
         ) as conn:
             manifest["restoredCounts"] = inventory(conn)
         if manifest["restoredCounts"] != source_counts:

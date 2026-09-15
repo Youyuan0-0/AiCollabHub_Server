@@ -1,3 +1,4 @@
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
@@ -15,7 +16,7 @@ from app.modules.common.auth import service
 from app.modules.common.auth.cas import IAMUnavailable, MockCasClient
 from app.modules.common.auth.mock_iam import PREFIX, create_mock_iam
 from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthSession
-from app.modules.common.auth.security import digest
+from app.modules.common.auth.security import csrf_token, digest
 
 SECRET = "test-only-secret-with-at-least-32-characters"
 
@@ -114,7 +115,7 @@ def test_applications_use_verified_identity_and_disable_demo_switch(auth):
         ).status_code
         == 404
     )
-    assert a.get("/api/v1/admin/application-session").status_code == 401
+    assert a.get("/api/v1/admin/application-session").status_code == 403
     payload = {"data": {"name": "登录后的申请"}}
     assert a.post("/api/v1/application-publications", json=payload).status_code == 403
     record = a.post("/api/v1/application-publications", json=payload, headers=csrf(a)).json()
@@ -123,8 +124,8 @@ def test_applications_use_verified_identity_and_disable_demo_switch(auth):
     admin = a.get("/api/v1/admin/application-session").json()
     assert admin["current"]["id"] == "mock-admin" and admin["current"]["role"] == "admin"
     assert a.get("/api/v1/admin/application-dependencies").status_code == 200
-    # IAM 切换身份会撤销旧会话；场景接口应要求重新登录，不能回退到演示发布者。
-    assert a.get("/api/v1/application-session").status_code == 401
+    # 切换账号后两端统一使用新身份，不能回退到原用户或演示发布者。
+    assert a.get("/api/v1/application-session").json()["current"]["id"] == "mock-admin"
 
 
 def test_cross_instance_callback_session_and_business_csrf(auth):
@@ -148,7 +149,8 @@ def test_cross_instance_callback_session_and_business_csrf(auth):
     with Session(engine) as db:
         values = db.scalars(select(AuthSession)).all()
         assert len(values) == 1 and values[0].subject == "mock-user"
-        assert values[0].token_hash != a.cookies.get("ach_session_user")
+        assert values[0].token_hash == digest(a.cookies.get("ach_session"))
+        assert values[0].scope == "platform"
         assert values[0].ticket_hash != parse_qs(urlsplit(callback).query)["ticket"][0]
         assert db.scalar(select(AuthEventLog).where(AuthEventLog.result == "success")) is not None
 
@@ -183,21 +185,26 @@ def test_callback_requires_browser_binding_and_live_state(auth):
     assert a.get("/api/v1/auth/session").status_code == 401
 
 
-def test_local_logout_and_expiry_are_shared(auth):
+@pytest.mark.parametrize("scope", ["user", "admin"])
+def test_local_logout_and_expiry_are_shared(auth, scope):
     a, b, iam, engine = auth
-    login(a, iam)
+    login(a, iam, subject="mock-admin", scope=scope)
     b.cookies.update(a.cookies)
     assert a.post("/api/v1/auth/logout").status_code == 403
     headers = csrf(a)
-    response = a.post("/api/v1/auth/logout?global_logout=false", headers=headers)
+    response = a.post(f"/api/v1/auth/logout?global_logout=false&scope={scope}", headers=headers)
     assert response.status_code == 200
-    assert response.json()["redirectUrl"] == "http://testserver/login?logged_out=1"
+    prefix = "/admin" if scope == "admin" else ""
+    assert response.json()["redirectUrl"] == f"http://testserver{prefix}/login?logged_out=1"
+    assert "ach_session" not in a.cookies
     assert b.get("/api/v1/auth/session").status_code == 401
-    login(a, iam)
+    assert b.get("/api/v1/auth/session?scope=admin").status_code == 401
+    login(a, iam, subject="mock-admin", scope=scope)
     with Session(engine) as db:
         db.execute(update(AuthSession).values(expires_at=service.now() - 1))
         db.commit()
     assert a.get("/api/v1/datasets").status_code == 401
+    assert a.get("/api/v1/admin/feedback").status_code == 401
 
 
 def test_admin_access_is_explicit_and_session_scope_cannot_be_forged(auth):
@@ -205,22 +212,24 @@ def test_admin_access_is_explicit_and_session_scope_cannot_be_forged(auth):
     response = login(a, iam, scope="admin")
     assert "admin_not_allowed" in response.headers["location"]
     assert a.get("/api/v1/admin/feedback").status_code == 401
-    login(a, iam, subject="mock-admin")
-    assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is True
-    b.cookies.set("ach_session_admin", a.cookies.get("ach_session_user"), path="/api")
+    login(a, iam)
+    assert a.get("/api/v1/admin/feedback").status_code == 403
+    assert a.get("/api/v1/auth/session?scope=admin").json()["detail"] == "admin_not_allowed"
+    response = a.get("/api/v1/auth/login?scope=admin&return_to=/admin/feedback")
+    assert "admin_not_allowed" in response.headers["location"]
+    assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user"
+    b.cookies.set("ach_session_admin", a.cookies.get("ach_session"), path="/api")
     assert b.get("/api/v1/admin/feedback").status_code == 401
-    login(a, iam, subject="mock-admin", scope="admin")
-    assert a.get("/api/v1/admin/feedback").status_code == 200
+    b.cookies.update(a.cookies)
+    assert b.get("/api/v1/admin/feedback").status_code == 403
 
 
 def test_single_logout_covers_both_frontends_and_is_idempotent(auth):
     a, b, iam, _ = auth
     login(a, iam, subject="mock-admin")
-    # 已在 IAM 登录时，第二个应用无需重新选择账号。
+    # 切换前端直接复用平台会话，不再创建第二次 CAS 登录。
     start = a.get("/api/v1/auth/login?scope=admin&return_to=/admin/feedback")
-    issued = iam.get(start.headers["location"])
-    assert issued.status_code == 303
-    assert a.get(issued.headers["location"]).headers["location"] == "/admin/feedback"
+    assert start.headers["location"] == "/admin/feedback"
     b.cookies.update(a.cookies)
     response = a.post("/api/v1/auth/logout", headers=csrf(a))
     assert iam.get(response.json()["redirectUrl"]).status_code == 303
@@ -343,7 +352,7 @@ def test_uncertain_commit_never_returns_a_session_cookie(auth, monkeypatch):
     monkeypatch.setattr(auth_router, "commit_write", commit_then_lose_confirmation)
     response = a.get(callback)
     assert response.status_code == 503
-    assert "ach_session_user" not in a.cookies
+    assert "ach_session" not in a.cookies
     assert a.get("/api/v1/auth/session").status_code == 401
 
 
@@ -354,3 +363,146 @@ def test_switching_mock_account_revokes_previous_sessions(auth):
     login(a, iam, subject="mock-admin", scope="admin")
     assert b.get("/api/v1/auth/session").status_code == 401
     assert a.get("/api/v1/auth/session?scope=admin").json()["user"]["id"] == "mock-admin"
+    assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-admin"
+
+
+@pytest.mark.parametrize("entry_scope", ["user", "admin"])
+def test_one_login_covers_both_frontends_and_instances(auth, entry_scope):
+    a, b, iam, engine = auth
+    login(a, iam, subject="mock-admin", scope=entry_scope)
+    raw = a.cookies.get("ach_session")
+    b.cookies.update(a.cookies)
+    tokens = set()
+    for client in (a, b):
+        for scope, target in (("user", "/datasets?q=AI"), ("admin", "/admin/services")):
+            value = client.get(f"/api/v1/auth/session?scope={scope}")
+            assert value.status_code == 200
+            assert value.json()["user"]["id"] == "mock-admin"
+            tokens.add(value.json()["csrfToken"])
+            response = client.get(
+                "/api/v1/auth/login", params={"scope": scope, "return_to": target}
+            )
+            assert response.status_code == 303 and response.headers["location"] == target
+            assert client.cookies.get("ach_session") == raw
+        assert client.get("/api/v1/datasets").status_code == 200
+        assert client.get("/api/v1/admin/feedback").status_code == 200
+    assert len(tokens) == 1
+    with Session(engine) as db:
+        assert len(db.scalars(select(AuthSession)).all()) == 1
+        assert len(db.scalars(select(AuthLoginRequest)).all()) == 1
+    # 显式切换账号仍创建新的登录请求。
+    response = a.get("/api/v1/auth/login?scope=admin&renew=true")
+    assert response.headers["location"].startswith("http://iam.test/")
+
+
+def legacy_session(engine, client, scope, subject="mock-admin", created_at=None):
+    raw = f"legacy-test-token-{scope}-{subject}"
+    created = created_at if created_at is not None else service.now() - 60
+    with Session(engine) as db:
+        db.add(
+            AuthSession(
+                token_hash=digest(raw),
+                ticket_hash=digest("ST-" + raw),
+                scope=scope,
+                subject=subject,
+                display_name=subject,
+                created_at=created,
+                expires_at=created + 600,
+            )
+        )
+        db.commit()
+    client.cookies.set("ach_session_" + scope, raw, domain="testserver.local", path="/api")
+    return raw
+
+
+@pytest.mark.parametrize("old_scope", ["user", "admin"])
+def test_existing_login_is_promoted_without_extending_expiry(auth, old_scope):
+    a, b, _, engine = auth
+    raw = legacy_session(engine, a, old_scope)
+    b.cookies.update(a.cookies)
+    response = a.get("/api/v1/auth/session?scope=admin")
+    assert response.status_code == 200
+    assert a.cookies.get("ach_session") == raw
+    assert "HttpOnly" in response.headers["set-cookie"]
+    cookies = SimpleCookie(response.headers["set-cookie"])
+    assert 0 < int(cookies["ach_session"]["max-age"]) <= 540
+    assert a.get("/api/v1/auth/session").json()["expiresAt"] == response.json()["expiresAt"]
+    redirect = b.get("/api/v1/auth/login?scope=user&return_to=/datasets")
+    assert redirect.headers["location"] == "/datasets"
+    assert b.cookies.get("ach_session") == raw
+    assert a.post("/api/v1/auth/logout?global_logout=false", headers=csrf(a)).status_code == 200
+    assert not any(name.startswith("ach_session") for name in a.cookies)
+    b.cookies.delete("ach_session")
+    assert b.get("/api/v1/auth/session").status_code == 401
+
+
+@pytest.mark.parametrize("shared_state", ["expired", "revoked", "missing", "malformed"])
+def test_invalid_shared_session_never_falls_back_to_legacy(auth, shared_state):
+    a, _, iam, engine = auth
+    login(a, iam, subject="mock-admin")
+    raw = a.cookies.get("ach_session")
+    legacy_session(engine, a, "admin")
+    with Session(engine) as db:
+        value = db.get(AuthSession, digest(raw))
+        if shared_state == "expired":
+            value.expires_at = service.now() - 1
+        elif shared_state == "revoked":
+            value.revoked_at = service.now()
+        elif shared_state == "missing":
+            db.delete(value)
+        else:
+            a.cookies.delete("ach_session")
+            a.cookies.set("ach_session", "bad", path="/api")
+        db.commit()
+    for scope in ("user", "admin"):
+        assert a.get(f"/api/v1/auth/session?scope={scope}").status_code == 401
+
+
+def test_legacy_identities_must_agree_and_cannot_be_elevated_by_cookie_name(auth):
+    a, b, _, engine = auth
+    raw = legacy_session(engine, a, "user", subject="mock-user")
+    legacy_session(engine, a, "admin")
+    for scope in ("user", "admin"):
+        assert a.get(f"/api/v1/auth/session?scope={scope}").status_code == 401
+    b.cookies.set("ach_session_admin", raw, path="/api")
+    assert b.get("/api/v1/auth/session?scope=admin").status_code == 401
+    b.cookies.clear()
+    b.cookies.set("ach_session_user", raw, path="/api")
+    assert b.get("/api/v1/auth/session?scope=admin").status_code == 403
+
+
+@pytest.mark.parametrize("action", ["logout", "renew"])
+def test_logout_and_account_switch_revoke_all_presented_legacy_sessions(auth, action):
+    a, _, iam, engine = auth
+    raw_user = legacy_session(engine, a, "user", created_at=service.now() - 120)
+    raw_admin = legacy_session(engine, a, "admin")
+    headers = csrf(a)
+    assert a.cookies.get("ach_session") == raw_admin
+    if action == "logout":
+        assert a.post("/api/v1/auth/logout?global_logout=false", headers=headers).status_code == 200
+    else:
+        login(a, iam, subject="mock-user")
+        assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user"
+    assert not any(name in a.cookies for name in service.LEGACY_SESSION_COOKIES)
+    with Session(engine) as db:
+        assert all(
+            db.get(AuthSession, digest(raw)).revoked_at is not None for raw in (raw_user, raw_admin)
+        )
+
+
+def test_shared_session_keeps_csrf_and_current_admin_checks(auth):
+    a, _, iam, _ = auth
+    login(a, iam, subject="mock-admin")
+    headers = csrf(a)
+    for invalid in (
+        {**headers, "Origin": "http://evil.test"},
+        {**headers, "X-CSRF-Token": "wrong"},
+    ):
+        assert a.post("/api/v1/auth/logout?scope=admin", headers=invalid).status_code == 403
+    assert a.get("/api/v1/auth/session?scope=admin").status_code == 200
+    a.app.state.settings.auth_mock_admin_subjects = []
+    assert a.get("/api/v1/auth/session?scope=admin").status_code == 403
+    assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is False
+    login(a, iam, subject="mock-user")
+    assert a.post("/api/v1/auth/logout", headers=headers).status_code == 403
+    assert csrf(a)["X-CSRF-Token"] == csrf_token(a.cookies.get("ach_session"), SECRET)

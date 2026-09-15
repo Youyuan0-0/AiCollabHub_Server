@@ -10,7 +10,6 @@ from sqlalchemy.engine import Engine
 from app.cache.client import CacheDependency
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
-from app.db.routing import DatabasePools, ReadSessionDependency
 from app.db.session import SessionDependency, create_db_engine
 from app.main import create_app
 from app.storage.client import StorageDependency, StorageUnavailable
@@ -36,8 +35,6 @@ def test_real_client_factories_and_liveness_do_not_connect_to_services(monkeypat
     monkeypatch.setattr(Minio, "_execute", connect)
     settings = Settings(
         database_url="postgresql+psycopg://writer:placeholder@127.0.0.1/platform",
-        database_read_url="postgresql+psycopg://reader:placeholder@127.0.0.1/platform",
-        db_read_enabled=True,
         redis_url="redis://127.0.0.1:6379/0",
         minio_endpoint="http://127.0.0.1:9000",
         minio_access_key="placeholder-access",
@@ -46,7 +43,7 @@ def test_real_client_factories_and_liveness_do_not_connect_to_services(monkeypat
     app = create_app(settings)
     with TestClient(app) as client:
         assert client.get("/api/v1/health/live").json() == {"status": "ok"}
-        assert app.state.resources.database.replica is not None
+        assert app.state.resources.database is app.state.database_engine
         assert app.state.resources.cache is not None
         assert app.state.resources.storage is not None
     connect.assert_not_called()
@@ -54,7 +51,7 @@ def test_real_client_factories_and_liveness_do_not_connect_to_services(monkeypat
 
 def test_partial_resource_initialization_cleans_up_previous_clients(monkeypatch):
     database, cache = Mock(), Mock()
-    monkeypatch.setattr("app.core.resources.DatabasePools.from_settings", lambda settings: database)
+    monkeypatch.setattr("app.core.resources.create_db_engine", lambda *args, **kwargs: database)
     monkeypatch.setattr("app.core.resources.RedisCache.from_settings", lambda settings: cache)
     monkeypatch.setattr(
         "app.core.resources.MinioStorage.from_settings",
@@ -70,7 +67,7 @@ def test_partial_resource_initialization_cleans_up_previous_clients(monkeypatch)
     with pytest.raises(ValueError, match="invalid storage"):
         create_resources(settings)
     cache.close.assert_called_once()
-    database.close.assert_called_once()
+    database.dispose.assert_called_once()
 
 
 def test_close_failure_still_closes_other_resources_and_clears_state():
@@ -98,7 +95,7 @@ def test_unconfigured_dependencies_have_explicit_behavior():
         return {"configured": True}
 
     @app.get("/test-read")
-    def read_probe(session: ReadSessionDependency):
+    def read_probe(session: SessionDependency):
         return {"configured": True}
 
     with TestClient(app) as client:
@@ -111,13 +108,13 @@ def test_unconfigured_dependencies_have_explicit_behavior():
         )
 
 
-def test_dependency_report_is_separate_from_primary_readiness(tmp_path):
+def test_dependency_report_is_separate_from_database_readiness(tmp_path):
     engine = create_db_engine(f"sqlite:///{(tmp_path / 'primary.db').as_posix()}")
     cache = Mock()
     cache.probe.return_value = False
     storage = Mock()
     storage.probe.return_value = True
-    resources = ApplicationResources(database=DatabasePools(engine), cache=cache, storage=storage)
+    resources = ApplicationResources(database=engine, cache=cache, storage=storage)
     resources._cleanup.callback(engine.dispose)
     app = create_app(
         Settings(),
@@ -131,8 +128,6 @@ def test_dependency_report_is_separate_from_primary_readiness(tmp_path):
             "status": "degraded",
             "dependencies": {
                 "database": "available",
-                "replica": "disabled",
-                "read_fallback": "disabled",
                 "redis": "unavailable",
                 "minio": "available",
             },
@@ -152,22 +147,18 @@ def test_production_does_not_expose_development_diagnostics(tmp_path):
     cache.probe.assert_not_called()
 
 
-def test_unavailable_read_database_returns_503_without_automatic_fallback(tmp_path):
+def test_unavailable_database_reports_failure(tmp_path):
     settings = Settings(
-        database_url=f"sqlite:///{(tmp_path / 'primary.db').as_posix()}",
-        database_read_url=f"sqlite:///{(tmp_path / 'missing' / 'replica.db').as_posix()}",
-        db_read_enabled=True,
+        database_url=f"sqlite:///{(tmp_path / 'missing' / 'database.db').as_posix()}",
     )
     app = create_app(settings)
-
-    @app.get("/test-read")
-    def read_probe(session: ReadSessionDependency):
-        return {"configured": True}
-
     with TestClient(app) as client:
-        response = client.get("/test-read")
+        response = client.get("/api/v1/health/ready")
         assert response.status_code == 503
-        assert response.json() == {"detail": "read_database_unavailable"}
+        assert response.json() == {"detail": "database_unavailable"}
+        assert client.get("/api/v1/health/dependencies").json()["dependencies"]["database"] == (
+            "unavailable"
+        )
 
 
 def test_storage_error_response_does_not_leak_sdk_details():
@@ -183,7 +174,7 @@ def test_storage_error_response_does_not_leak_sdk_details():
         assert response.json() == {"detail": "object_storage_unavailable"}
 
 
-def test_fastapi_primary_and_read_dependencies_use_separate_databases(tmp_path):
+def test_reads_and_writes_use_the_same_database_across_requests(tmp_path):
     from sqlalchemy import Column, Integer, MetaData, String, Table, select
 
     metadata = MetaData()
@@ -191,25 +182,21 @@ def test_fastapi_primary_and_read_dependencies_use_separate_databases(tmp_path):
         "records", metadata, Column("id", Integer, primary_key=True), Column("label", String)
     )
     settings = Settings(
-        database_url=f"sqlite:///{(tmp_path / 'primary.db').as_posix()}",
-        database_read_url=f"sqlite:///{(tmp_path / 'replica.db').as_posix()}",
-        db_read_enabled=True,
+        database_url=f"sqlite:///{(tmp_path / 'database.db').as_posix()}",
     )
     app = create_app(settings)
 
-    @app.get("/test-primary")
-    def primary_probe(session: SessionDependency):
+    @app.get("/test-records")
+    def read_records(session: SessionDependency):
         return {"label": session.scalar(select(table.c.label))}
 
-    @app.get("/test-replica")
-    def replica_probe(session: ReadSessionDependency):
-        return {"label": session.scalar(select(table.c.label))}
+    @app.post("/test-records")
+    def write_record(session: SessionDependency):
+        session.execute(table.insert().values(id=1, label="committed"))
+        session.commit()
+        return {"ok": True}
 
     with TestClient(app) as client:
-        pools = app.state.resources.database
-        for label, engine in (("primary", pools.primary), ("replica", pools.replica)):
-            metadata.create_all(engine)
-            with engine.begin() as connection:
-                connection.execute(table.insert().values(id=1, label=label))
-        assert client.get("/test-primary").json() == {"label": "primary"}
-        assert client.get("/test-replica").json() == {"label": "replica"}
+        metadata.create_all(app.state.resources.database)
+        assert client.post("/test-records").json() == {"ok": True}
+        assert client.get("/test-records").json() == {"label": "committed"}

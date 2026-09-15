@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from os import getpid
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI
@@ -18,6 +19,7 @@ from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
+from app.modules.common.identity_sync.router import router as identity_sync_router
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
@@ -40,9 +42,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         resources = await run_in_threadpool(resources_factory, settings)
         application.state.resources = resources
-        application.state.database_engine = (
-            resources.database.primary if resources.database is not None else None
-        )
+        application.state.database_engine = resources.database
         application.state.cas_client = cas_client
         if settings.auth_mode == "mock" and cas_client is None:
             application.state.cas_client = MockCasClient(settings)
@@ -88,6 +88,8 @@ def create_app(
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-App-Instance"] = settings.instance_id
+        if settings.app_env != "production":
+            response.headers["X-App-Worker"] = str(getpid())
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             if settings.app_env != "production" and not request.url.path.startswith(
@@ -133,6 +135,7 @@ def create_app(
     application.include_router(config_router, prefix="/api/v1")
     if settings.auth_mode == "mock":
         application.include_router(auth_router, prefix="/api/v1")
+        application.include_router(identity_sync_router, prefix="/api/v1")
     # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
         # 每个 FastAPI 实例创建一份场景应用业务对象，路由从 request.app.state 取出并复用。

@@ -61,14 +61,14 @@ def test_login_publication_can_be_reviewed_with_admin_session(request):
     )
     assert saved.status_code == 201, saved.text
     record = saved.json()
-    assert client.get("/api/v1/admin/application-session").status_code == 401
+    assert client.get("/api/v1/admin/application-session").status_code == 403
     login(client, iam, subject="mock-admin", scope="admin")
     session = client.get("/api/v1/admin/application-session")
     assert session.status_code == 200, session.text
     assert session.json()["current"]["id"] == "mock-admin"
     assert session.json()["current"]["role"] == "admin"
-    # 管理端仅需自己的 Cookie，不依赖用户端会话。
-    client.cookies.delete("ach_session_user")
+    # 从管理端登录后，用户端沿用同一管理员身份。
+    assert client.get("/api/v1/application-session").json()["current"]["id"] == "mock-admin"
     assert client.get("/api/v1/admin/application-dependencies").status_code == 200
     reviewed = client.post(
         f"/api/v1/admin/application-publications/{record['id']}/review",

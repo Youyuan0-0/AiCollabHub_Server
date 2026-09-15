@@ -25,17 +25,24 @@ def include_object(obj, name, object_type, reflected, compare_to):
 
 
 def run_migrations():
-    """使用主库和独立版本表执行事务；锁等待有上限，失败不改写其他模块版本。"""
+    """使用同一数据库和独立版本表执行事务，提交仍等待本机 WAL 落盘。"""
     if context.is_offline_mode():
         raise RuntimeError("Conversation data migration requires an online database connection")
-    engine = create_engine(url, poolclass=pool.NullPool, hide_parameters=True)
+    connect_args = {}
+    if url.get_backend_name() == "postgresql":
+        connect_args = {
+            "connect_timeout": settings.db_connect_timeout,
+            "target_session_attrs": "read-write",
+            "options": (str(url.query.get("options", "")) + " -c synchronous_commit=local").strip(),
+        }
+    engine = create_engine(
+        url, poolclass=pool.NullPool, hide_parameters=True, connect_args=connect_args
+    )
     try:
         with engine.connect() as connection:
             # 显式事务使 PostgreSQL 的表变更、旧数据搬迁和模块版本写入一起提交。
             with connection.begin():
                 if connection.dialect.name == "postgresql":
-                    if connection.scalar(text("SELECT pg_is_in_recovery()")):
-                        raise RuntimeError("Conversation migrations require the primary database")
                     connection.execute(text("SET LOCAL lock_timeout = '5s'"))
                     connection.execute(text("SET LOCAL statement_timeout = '60s'"))
                 context.configure(

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProcessRecord,
-    [ValidateSet('All', 'A', 'B', 'nginx', 'iam')][string]$Role = 'All'
+    [ValidateSet('All', 'api', 'nginx', 'iam')][string]$Role = 'All'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -14,15 +14,27 @@ foreach ($record in $records) {
     if ($Role -ne 'All' -and $record.role -ne $Role) { continue }
     $launcher = $processes | Where-Object { $_.ProcessId -eq $record.pid }
     if (!$launcher) { continue }
-    # 同时核对启动时间与路径，防止进程号被复用后误停其他程序。
     $recordedStart = ([datetime]$record.started).ToUniversalTime()
     if ([Math]::Abs(($launcher.CreationDate.ToUniversalTime() - $recordedStart).TotalSeconds) -gt 2 -or
         !$launcher.ExecutablePath.StartsWith($projectRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw "Process identity changed for role $($record.role); left it running"
     }
-    foreach ($child in ($processes | Where-Object { $_.ParentProcessId -eq $launcher.ProcessId })) {
-        Stop-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
+    # 递归收集 worker 与 Python 启动器；父进程先停止，避免退出期间重新拉起 worker。
+    $targets = [Collections.Generic.List[object]]::new()
+    $targets.Add($launcher)
+    for ($index = 0; $index -lt $targets.Count; $index++) {
+        $parent = $targets[$index]
+        foreach ($child in ($processes | Where-Object {
+            $_.ParentProcessId -eq $parent.ProcessId -and $_.CreationDate -ge $parent.CreationDate
+        })) {
+            if ($child.ProcessId -notin $targets.ProcessId) { $targets.Add($child) }
+        }
     }
-    Stop-Process -Id $launcher.ProcessId -ErrorAction SilentlyContinue
+    foreach ($target in $targets) {
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($target.ProcessId)"
+        if ($current -and $current.CreationDate -eq $target.CreationDate) {
+            Stop-Process -Id $target.ProcessId -ErrorAction SilentlyContinue
+        }
+    }
     Write-Output "Stopped recorded role $($record.role)."
 }

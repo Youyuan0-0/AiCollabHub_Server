@@ -19,25 +19,13 @@ class Settings(BaseSettings):
     app_name: str = "AiCollabHub API"
     app_env: Literal["development", "test", "production"] = "development"
     instance_id: str = Field(default="api", pattern=r"^[A-Za-z0-9_-]{1,40}$")
-    db_require_sync_apply: bool = False
     db_statement_timeout_ms: int = Field(default=15000, ge=1000, le=120000)
-    db_commit_timeout_ms: int = Field(default=10000, ge=1000, le=120000)
-    # 推荐分字段填写；各连接独立配置，避免备库意外使用主库写账号。
+    # 单库运行；迁移可使用同一数据库的独立 DDL 账号。
     postgres_host: str | None = None
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str | None = None
     postgres_user: str | None = None
     postgres_password: SecretStr | None = None
-    postgres_read_host: str | None = None
-    postgres_read_port: int = Field(default=5432, ge=1, le=65535)
-    postgres_read_db: str | None = None
-    postgres_read_user: str | None = None
-    postgres_read_password: SecretStr | None = None
-    postgres_read_fallback_host: str | None = None
-    postgres_read_fallback_port: int = Field(default=5432, ge=1, le=65535)
-    postgres_read_fallback_db: str | None = None
-    postgres_read_fallback_user: str | None = None
-    postgres_read_fallback_password: SecretStr | None = None
     postgres_migration_host: str | None = None
     postgres_migration_port: int = Field(default=5432, ge=1, le=65535)
     postgres_migration_db: str | None = None
@@ -46,12 +34,7 @@ class Settings(BaseSettings):
     # 连接池和迁移继续读取这些统一属性；显式 URL 优先，兼容既有配置和 SQLite 测试。
     # 连接串及分字段密码均使用 SecretStr 隐藏展示，并非加密存储。
     database_url: SecretStr | None = None
-    database_read_url: SecretStr | None = None
-    database_read_fallback_url: SecretStr | None = None
     database_migration_url: SecretStr | None = None
-    db_read_enabled: bool = False
-    db_read_weight: int = Field(default=100, ge=0, le=100)
-    db_read_fallback_enabled: bool = False
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=5, ge=0)
     db_pool_timeout: float = Field(default=5, gt=0)
@@ -98,8 +81,6 @@ class Settings(BaseSettings):
         """组装并返回当前配置；显式 URL 优先，分项连接不继承其他账号凭证。"""
         for prefix, target in (
             ("postgres", "database_url"),
-            ("postgres_read", "database_read_url"),
-            ("postgres_read_fallback", "database_read_fallback_url"),
             ("postgres_migration", "database_migration_url"),
         ):
             if getattr(self, target) is not None:
@@ -180,8 +161,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "database_url",
-        "database_read_url",
-        "database_read_fallback_url",
         "database_migration_url",
         "redis_url",
         "minio_endpoint",
@@ -191,14 +170,6 @@ class Settings(BaseSettings):
         "postgres_db",
         "postgres_user",
         "postgres_password",
-        "postgres_read_host",
-        "postgres_read_db",
-        "postgres_read_user",
-        "postgres_read_password",
-        "postgres_read_fallback_host",
-        "postgres_read_fallback_db",
-        "postgres_read_fallback_user",
-        "postgres_read_fallback_password",
         "postgres_migration_host",
         "postgres_migration_db",
         "postgres_migration_user",
@@ -220,18 +191,6 @@ class Settings(BaseSettings):
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。
         if self.app_env == "production" and self.database_url is None:
             raise ValueError("POSTGRES_* or DATABASE_URL is required in production")
-        if self.db_read_enabled and (self.database_url is None or self.database_read_url is None):
-            raise ValueError(
-                "DB_READ_ENABLED requires primary and standby connections "
-                "(POSTGRES_* and POSTGRES_READ_*, or DATABASE_URL and DATABASE_READ_URL)"
-            )
-        if self.db_read_fallback_enabled and (
-            not self.db_read_enabled or self.database_read_fallback_url is None
-        ):
-            raise ValueError(
-                "DB_READ_FALLBACK_ENABLED requires DB_READ_ENABLED and a fallback connection "
-                "(POSTGRES_READ_FALLBACK_* or DATABASE_READ_FALLBACK_URL)"
-            )
         # 缺少部分凭证是配置错误，不能把原本启用的文件服务静默关闭。
         minio_parts = (self.minio_endpoint, self.minio_access_key, self.minio_secret_key)
         if any(part is not None for part in minio_parts) and not all(

@@ -14,7 +14,7 @@ def main():
     settings = Settings()
     if settings.database_url is None:
         raise SystemExit("DATABASE_URL is required")
-    engine = create_db_engine(settings.database_url.get_secret_value(), target_role="primary")
+    engine = create_db_engine(settings.database_url.get_secret_value())
     try:
         with Session(engine) as db:
             prepare_write(db, settings)

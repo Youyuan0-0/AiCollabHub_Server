@@ -37,16 +37,20 @@ def verify(settings, *, migrate, output):
     }
     checks = report["checks"]
     require(settings.database_url is not None, "database_not_configured")
-    primary = create_db_engine(settings.database_url.get_secret_value(), target_role="primary")
-    replica = None
+    database = create_db_engine(settings.database_url.get_secret_value())
     identifiers = []
     try:
-        with primary.connect() as connection:
+        with database.connect() as connection:
             require(connection.dialect.name == "postgresql", "postgresql_required")
             global_version = (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
             )
-            checks["primary"] = not connection.scalar(text("SELECT pg_is_in_recovery()"))
+            checks["database"] = connection.execute(
+                text(
+                    "SELECT current_setting('transaction_read_only'), "
+                    "current_setting('synchronous_commit')"
+                )
+            ).one() == ("off", "local")
             report["globalVersionBefore"] = global_version
             tables = inspect(connection).get_table_names()
             if migrate and "demo_conversations" in tables:
@@ -64,12 +68,12 @@ def verify(settings, *, migrate, output):
             config = Config(str(Path(__file__).resolve().parents[1] / "alembic.conversations.ini"))
             config.attributes["settings"] = settings
             command.upgrade(config, "head")
-        with primary.connect() as connection:
-            checks["independent_migration"] = (
-                connection.scalar(text("SELECT version_num FROM alembic_version_conversations"))
-                == "20260915_chat01"
+        with database.connect() as connection:
+            # 全量或独立迁移均可建立相同结构，不要求额外维护第二个迁移版本表。
+            checks["conversation_tables"] = {"conversations", "conversation_messages"}.issubset(
+                inspect(connection).get_table_names()
             )
-            require(checks["independent_migration"], "conversation_migration_required")
+            require(checks["conversation_tables"], "conversation_migration_required")
             checks["global_version_preserved"] = (
                 global_version
                 == connection.execute(text("SELECT version_num FROM alembic_version"))
@@ -88,12 +92,6 @@ def verify(settings, *, migrate, output):
                 types.get("attachments") == "jsonb"
                 and types.get("created_at") == "timestamp with time zone"
             )
-        if settings.database_read_url:
-            replica = create_db_engine(
-                settings.database_read_url.get_secret_value(), target_role="standby", readonly=True
-            )
-            with replica.connect() as connection:
-                checks["standby"] = connection.scalar(text("SELECT pg_is_in_recovery()"))
         # 不占用用户服务端口；附件使用临时目录，测试退出时自动移除自己的原文件。
         with TemporaryDirectory(prefix="aicollab-pg-probe-") as directory:
             probe_settings = settings.model_copy(
@@ -154,23 +152,22 @@ def verify(settings, *, migrate, output):
                     download.status_code == 200
                     and download.content == b"postgresql-attachment-probe"
                 )
-                if replica is not None:
-                    with replica.connect() as connection:
-                        positions = (
-                            connection.execute(
-                                select(StoredConversationMessage.position)
-                                .where(StoredConversationMessage.conversation_id == identifier)
-                                .order_by(StoredConversationMessage.position)
-                            )
-                            .scalars()
-                            .all()
+                with database.connect() as connection:
+                    positions = (
+                        connection.execute(
+                            select(StoredConversationMessage.position)
+                            .where(StoredConversationMessage.conversation_id == identifier)
+                            .order_by(StoredConversationMessage.position)
                         )
-                        checks["standby_sees_committed_messages"] = positions == [0, 1, 2, 3]
+                        .scalars()
+                        .all()
+                    )
+                    checks["committed_messages_visible"] = positions == [0, 1, 2, 3]
                 barrier = Barrier(2)
 
                 def race(index):
                     """两个独立连接读取同版本后同时提交，确认仅一方成功且无消息覆盖。"""
-                    with Session(primary) as session:
+                    with Session(database) as session:
                         store = SqlConversationStore(session)
                         current = store.get(identifier)
                         expected = current.version
@@ -195,7 +192,7 @@ def verify(settings, *, migrate, output):
                     removed.status_code == 204
                     and restarted.get(f"{root}/{identifier}/messages").status_code == 404
                 )
-                with primary.connect() as connection:
+                with database.connect() as connection:
                     checks["messages_deleted"] = (
                         connection.scalar(
                             select(StoredConversationMessage.id).where(
@@ -209,7 +206,7 @@ def verify(settings, *, migrate, output):
         try:
             if identifiers:
                 # API 删除保留墓碑；验证结束后只清理本次随机 ID，恢复测试前的会话数量。
-                with primary.begin() as connection:
+                with database.begin() as connection:
                     connection.execute(text("SET LOCAL statement_timeout = '15s'"))
                     connection.execute(
                         delete(StoredConversationMessage).where(
@@ -219,9 +216,7 @@ def verify(settings, *, migrate, output):
                     connection.execute(delete(Conversation).where(Conversation.id.in_(identifiers)))
                 checks["probe_data_cleaned"] = True
         finally:
-            primary.dispose()
-            if replica is not None:
-                replica.dispose()
+            database.dispose()
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
