@@ -21,11 +21,12 @@ class ApplicationSession(Protocol):
 
 
 class ApplicationRepository(Protocol):
-    def transaction(self) -> AbstractContextManager[ApplicationSession]:
+    def transaction(self, *, readonly: bool = False) -> AbstractContextManager[ApplicationSession]:
         """原子提交/回滚；须串行化同一应用/申请/配置的并发写入。
 
         数据库实现需事务、行锁/乐观锁和唯一约束，不能用普通 SELECT 后 UPDATE
         冒充本约定。审核结果、审核快照和已发布版本必须一起提交。
+        readonly 使用一致的只读快照，不获取写锁，也不提交业务修改。
         """
         ...
 

@@ -29,7 +29,15 @@ def submit(client, **data):
         API + "/application-publications",
         json={
             "submit": True,
-            "data": {"name": "流程验证", "owner": "研发单位", "summary": "验证场景应用", **data},
+            "data": {
+                "name": "流程验证",
+                "owner": "研发单位",
+                "summary": "验证场景应用",
+                "triggerType": "手动触发",
+                "communicationProtocol": "HTTP",
+                "deployment": "工具链托管",
+                **data,
+            },
         },
     )
     assert response.status_code == 201, response.text
@@ -335,7 +343,16 @@ def test_policy_presentation_revision_and_scope(client, app_id):
 def test_toolchain_development_enters_importable_catalog(client):
     response = client.post(
         API + "/application-toolchain/development-publications",
-        json={"data": {"name": "自建演练应用", "owner": "开发者", "summary": "模拟工具链开发"}},
+        json={
+            "data": {
+                "name": "自建演练应用",
+                "owner": "开发者",
+                "summary": "模拟工具链开发",
+                "triggerType": "手动触发",
+                "communicationProtocol": "HTTP",
+                "deployment": "工具链托管",
+            }
+        },
     )
     assert response.status_code == 200, response.text
     source = response.json()

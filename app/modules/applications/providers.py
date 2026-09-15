@@ -11,9 +11,10 @@ from app.modules.applications.dependencies import dependency_resources
 
 # 供业务类查询和校验关联资源；当前使用本地样例，不执行远程模型调用。
 class DemoApplicationProvider:
-    def __init__(self):
+    def __init__(self, marketplace=None):
         self._lock = RLock()
         self._developed = {}
+        self.marketplace = marketplace
 
     def dependencies(self):
         return dependency_resources()
@@ -33,6 +34,7 @@ class DemoApplicationProvider:
         }
 
     def toolchain_resources(self):
+        self._load_developments()
         base = [
             {
                 "externalId": external_id,
@@ -65,14 +67,27 @@ class DemoApplicationProvider:
         return base + custom
 
     def develop(self, data, actor_id):
+        if self.marketplace is not None:
+            reference = self.marketplace.save("development", {"data": data, "actorId": actor_id})
+            key = "tc-dev-" + reference.removeprefix("development-")
+            return {"externalId": key, "externalVersion": data["version"]}
         key = "tc-dev-" + str(uuid4())
         with self._lock:
             self._developed[key] = [{"data": data, "actorId": actor_id}]
         return {"externalId": key, "externalVersion": data["version"]}
 
+    def _load_developments(self):
+        if self.marketplace is not None:
+            with self._lock:
+                self._developed = {
+                    "tc-dev-" + key.removeprefix("development-"): [record]
+                    for key, record in self.marketplace.developments()
+                }
+
     def toolchain_resource(self, external_id, version):
         from app.modules.applications.publication_schemas import ApplicationDetails
 
+        self._load_developments()
         with self._lock:
             custom = next(
                 (

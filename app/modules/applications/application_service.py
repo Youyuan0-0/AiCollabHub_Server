@@ -9,8 +9,10 @@ from fastapi import HTTPException, Request
 from app.modules.applications.configuration import (
     SaveApplicationConfiguration,
     configuration_view,
+    effective_configuration,
     validate_submission,
 )
+from app.modules.applications.discovery import analyze
 from app.modules.applications.identity import (
     DEFAULT_ADMIN,
     DEFAULT_USER,
@@ -98,7 +100,7 @@ class ApplicationService:
     def resources(self, actor=DEFAULT_USER, *, admin=False):
         if admin:
             require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             return [
                 item
                 for item in session.list_resources()
@@ -110,14 +112,23 @@ class ApplicationService:
             ]
 
     def resource(self, application_id: str, actor=DEFAULT_USER):
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             resource = self.workflows.public_resource(session, application_id, actor)
-            return {**resource, "canPublishVersion": can_edit(actor, resource)}
+            connection = (
+                self.provider.connection(resource)
+                if hasattr(self.provider, "connection")
+                else {"mode": "simulation", "configured": True, "message": "当前使用模拟运行服务"}
+            )
+            return {
+                **resource,
+                "canPublishVersion": can_edit(actor, resource),
+                "runtimeConnection": connection,
+            }
 
     def publications(self, actor=DEFAULT_USER, *, admin=False):
         if admin:
             require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             return sorted(
                 [
                     item
@@ -131,7 +142,7 @@ class ApplicationService:
     def publication(self, publication_id: str, actor=DEFAULT_USER, *, admin=False):
         if admin:
             require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             record = self._publication(session, publication_id)
             if not (can_manage(actor, record) if admin else can_edit(actor, record)):
                 raise HTTPException(404, "申请不存在或当前账号无权查看")
@@ -162,14 +173,19 @@ class ApplicationService:
             data.summary = source["description"]
             data.version = ""
             data.version_notes = ""
-            record = self._save(session, SaveApplicationPublication(data=data), actor=actor)
-            for key in ("createdBy", "createdByName", "organizationId", "source", "securityLevel"):
-                if key in source:
-                    record[key] = deepcopy(source[key])
-            record["applicationId"] = application_id
-            record["baseVersionId"] = source["versionId"]
-            session.put_publication(record)
-            return record
+            # 旧演示目录使用中文密级；新版本沿用原密级并转换为表单枚举。
+            security_level = source.get("securityLevel", "internal")
+            security_level = {
+                "内部": "internal",
+                "公开": "public",
+                "机密": "confidential",
+            }.get(security_level, security_level)
+            return self._save(
+                session,
+                SaveApplicationPublication(data=data, security_level=security_level),
+                actor=actor,
+                base_resource=source,
+            )
 
     def _validate_version(self, session: ApplicationSession, data: dict, record: dict):
         source = session.get_resource(record["applicationId"])
@@ -200,13 +216,19 @@ class ApplicationService:
         payload: SaveApplicationPublication,
         publication_id: str | None = None,
         actor=DEFAULT_USER,
+        *,
+        base_resource: dict | None = None,
     ):
         if actor.role not in ("publisher", "org_admin", "admin"):
             raise HTTPException(403, "当前账号没有发布应用的权限")
         # 参数对象转成字典；by_alias=True 保持前端使用的 camelCase 字段名。
         data = payload.data.model_dump(by_alias=True)
+        if payload.auto_classify:
+            suggestion = analyze(data)["suggestedCategory"]
+            if suggestion:
+                data["category"] = suggestion
         self.provider.validate_dependencies(data["dependencies"])
-        configuration = session.get_configuration()
+        configuration = effective_configuration(session.get_configuration())
         if payload.submit:
             # 后端再次检查当前必填规则，不能只依赖浏览器中的表单校验。
             validate_submission(data, configuration)
@@ -237,6 +259,12 @@ class ApplicationService:
                 "organizationId": actor.organization_id,
                 "source": {"kind": "manual"},
             }
+            if base_resource is not None:
+                for key in ("createdBy", "createdByName", "organizationId", "source"):
+                    if key in base_resource:
+                        record[key] = deepcopy(base_resource[key])
+                record["applicationId"] = base_resource["id"]
+                record["baseVersionId"] = base_resource["versionId"]
         # 保存草稿为 draft，提交审核为 pending；每次成功保存都增加 revision。
         record.update(
             {
@@ -362,7 +390,7 @@ class ApplicationService:
         self, application_id: str, payload: ApplicationVisibility | None = None, actor=DEFAULT_ADMIN
     ):
         require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=payload is None) as session:
             resource = self._resource(session, application_id)
             if not can_manage(actor, resource):
                 raise HTTPException(403, "只能配置本单位应用")
@@ -382,7 +410,7 @@ class ApplicationService:
 
     def admin_resource(self, application_id: str, actor=DEFAULT_ADMIN):
         require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             resource = self._resource(session, application_id)
             if not can_manage(actor, resource):
                 raise HTTPException(403, "只能管理本单位应用")
@@ -392,8 +420,10 @@ class ApplicationService:
         ) or self.provider.runtime_status(application_id, resource["versionId"])
         return resource
 
-    def configuration(self, payload: SaveApplicationConfiguration | None = None, *, public=False):
-        with self.repository.transaction() as session:
+    def configuration(
+        self, payload: SaveApplicationConfiguration | None = None, *, public=False, actor=None
+    ):
+        with self.repository.transaction(readonly=payload is None) as session:
             current = session.get_configuration()
             if payload is not None:
                 if payload.revision != current["revision"]:
@@ -403,8 +433,12 @@ class ApplicationService:
                     "revision": current["revision"] + 1,
                     "updatedAt": timestamp(),
                 }
+                if actor is not None:
+                    current["updatedBy"] = actor.id
                 session.put_configuration(current)
-            return configuration_view(current, public=public)
+            return configuration_view(
+                {key: value for key, value in current.items() if key != "updatedBy"}, public=public
+            )
 
 
 # 取出启动时创建的业务实例；同一后端实例的多次请求共用它及其仓储。

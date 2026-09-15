@@ -3,7 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request
 
 from app.modules.applications.application_service import application_service
+from app.modules.applications.discovery import analyze, related
 from app.modules.applications.identity import current_actor
+from app.modules.applications.identity_directory import publication_defaults
+from app.modules.applications.precheck import ApplicationPrecheck, precheck
 from app.modules.applications.publication_schemas import SaveApplicationPublication
 from app.modules.common.catalog import query_resources
 from app.modules.common.schemas import CatalogQuery
@@ -11,6 +14,27 @@ from app.modules.common.schemas import CatalogQuery
 # 按“HTTP 方法 + 路径”接收请求；/api/v1 前缀由 app/api/router.py 添加。
 # FastAPI 把 JSON 正文解析为参数对象，再把函数返回的字典或列表转成 JSON 响应。
 router = APIRouter(tags=["applications (mock)"])
+
+
+@router.get("/application-publication-defaults")
+def publication_identity_defaults(request: Request):
+    return publication_defaults(request, current_actor(request))
+
+
+@router.post("/application-precheck")
+def check_application(payload: ApplicationPrecheck, request: Request):
+    current_actor(request)
+    svc = application_service(request)
+    with svc.repository.transaction(readonly=True) as session:
+        return precheck(payload, session.get_configuration(), svc.workflows.policy_in(session))
+
+
+@router.get("/applications/{application_id}/discovery")
+def application_discovery(application_id: str, request: Request):
+    svc, actor = application_service(request), current_actor(request)
+    source = svc.resource(application_id, actor)
+    # 先过滤访问权限，再分析推荐候选，避免推荐泄露不可见资源。
+    return {**analyze(source), "related": related(source, svc.resources(actor))}
 
 
 # 返回表单可选择的关联资源，供前端 ApplicationDependencies 组件展示。
@@ -65,7 +89,15 @@ def publication_detail(publication_id: str, request: Request):
 # payload 是 JSON 正文解析出的参数对象；保存后返回的记录由 FastAPI 转为 201 JSON 响应。
 @router.post("/application-publications", status_code=201)
 def create_publication(payload: SaveApplicationPublication, request: Request):
-    return application_service(request).save(payload, actor=current_actor(request))
+    actor = current_actor(request)
+    defaults = publication_defaults(request, actor)
+    data = payload.data.model_copy(
+        update={
+            "owner": payload.data.owner or defaults["owner"],
+            "contact": payload.data.contact or defaults["contact"],
+        }
+    )
+    return application_service(request).save(payload.model_copy(update={"data": data}), actor=actor)
 
 
 # 接收 PUT 修改：编号取自 URL，资料取自 JSON 正文；成功后返回 200 和最新记录。

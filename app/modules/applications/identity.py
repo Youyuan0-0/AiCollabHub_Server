@@ -60,6 +60,22 @@ class SessionIdentityProvider:
         identity = getattr(request.state, "business_identity", None)
         if not identity or identity["scope"] != audience:
             raise HTTPException(401, "authentication_required")
+        from app.modules.applications.identity_directory import configured_directory
+
+        directory = configured_directory(request)
+        if directory is not None:
+            member = next((item for item in directory.members if item.id == identity["id"]), None)
+            if member is None or not member.active:
+                raise HTTPException(403, "账号未同步或已停用，请联系管理员")
+            if audience == "admin" and member.role not in ("admin", "org_admin"):
+                raise HTTPException(403, "当前账号没有应用管理权限")
+            return Actor(
+                member.id,
+                member.name,
+                member.role,
+                member.organization_id,
+                tuple(member.project_ids),
+            )
         # 管理端会话已校验准入；普通登录用户可以发布自己的应用。
         # IAM 尚未提供组织和项目归属，不从浏览器字段或演示账号补出这些权限。
         return Actor(
@@ -109,7 +125,8 @@ def require_admin(actor: Actor):
 def can_manage(actor: Actor, record: dict):
     return actor.role == "admin" or (
         actor.role == "org_admin"
-        and record.get("organizationId", "org-research") == actor.organization_id
+        and bool(actor.organization_id)
+        and record.get("organizationId", "") == actor.organization_id
     )
 
 
