@@ -20,7 +20,14 @@ def pending(service):
     return service.save(
         SaveApplicationPublication.model_validate(
             {
-                "data": {"name": "事务测试", "summary": "测试审批原子性", "owner": "测试单位"},
+                "data": {
+                    "name": "事务测试",
+                    "summary": "测试审批原子性",
+                    "owner": "测试单位",
+                    "triggerType": "手动触发",
+                    "communicationProtocol": "HTTP",
+                    "deployment": "工具链托管",
+                },
                 "submit": True,
             }
         )
@@ -83,9 +90,9 @@ def test_factory_injects_storage_and_provider_without_route_changes():
             self.calls = 0
 
         @contextmanager
-        def transaction(self):
+        def transaction(self, *, readonly=False):
             self.calls += 1
-            with self.inner.transaction() as session:
+            with self.inner.transaction(readonly=readonly) as session:
                 yield session
 
     class SuppliedProvider(DemoApplicationProvider):

@@ -5,6 +5,7 @@ from pydantic import Field
 
 from app.modules.applications.application_service import application_service
 from app.modules.applications.identity import ACTORS, DIRECTORY, current_actor, require_admin
+from app.modules.applications.identity_directory import visible_directory
 from app.modules.applications.publication_schemas import (
     ApplicationPayload,
     SaveApplicationPublication,
@@ -24,7 +25,8 @@ router = APIRouter(tags=["application workflows (development)"])
 def session_view(request: Request, admin=False):
     authenticated = request.app.state.settings.auth_mode != "disabled"
     try:
-        current = current_actor(request, admin).public()
+        actor = current_actor(request, admin)
+        current = actor.public()
     except HTTPException as error:
         if authenticated or error.status_code != 401:
             raise
@@ -33,9 +35,7 @@ def session_view(request: Request, admin=False):
     return {
         "current": current,
         "actors": [] if authenticated else [item.public() for item in ACTORS],
-        "directory": {"organizations": [], "members": [], "projects": []}
-        if authenticated
-        else DIRECTORY,
+        "directory": visible_directory(request, actor) if authenticated else DIRECTORY,
     }
 
 

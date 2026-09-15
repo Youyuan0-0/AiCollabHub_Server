@@ -19,6 +19,22 @@ class Settings(BaseSettings):
     app_name: str = "AiCollabHub API"
     app_env: Literal["development", "test", "production"] = "development"
     instance_id: str = Field(default="api", pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    applications_storage: Literal["memory", "database"] = "memory"
+    applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
+    applications_agent_url: AnyHttpUrl | None = None
+    applications_agent_key: SecretStr | None = None
+    applications_agent_bindings: str | None = None
+    applications_agent_timeout: float = Field(default=20, gt=0, le=120)
+    applications_identity_directory: str | None = None
+    applications_market: Literal["disabled", "himarket"] = "disabled"
+    applications_market_url: AnyHttpUrl | None = None
+    applications_market_admin_token: SecretStr | None = None
+    applications_market_developer_tokens: dict[str, SecretStr] = Field(default_factory=dict)
+    applications_market_configuration: str | None = None
+    applications_market_timeout: float = Field(default=15, gt=0, le=120)
+    applications_demo_directory: str = Field(
+        default=".runtime/application-marketplace-demo", min_length=1
+    )
     db_require_sync_apply: bool = False
     db_statement_timeout_ms: int = Field(default=15000, ge=1000, le=120000)
     db_commit_timeout_ms: int = Field(default=10000, ge=1000, le=120000)
@@ -206,6 +222,13 @@ class Settings(BaseSettings):
         "redis_host",
         "redis_user",
         "redis_password",
+        "applications_market_url",
+        "applications_market_admin_token",
+        "applications_market_configuration",
+        "applications_agent_url",
+        "applications_agent_key",
+        "applications_agent_bindings",
+        "applications_identity_directory",
         mode="before",
     )
     @classmethod
@@ -217,6 +240,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_service_configuration(self) -> "Settings":
+        if self.applications_storage == "database" and self.database_url is None:
+            raise ValueError("APPLICATIONS_STORAGE=database requires a PostgreSQL connection")
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。
         if self.app_env == "production" and self.database_url is None:
             raise ValueError("POSTGRES_* or DATABASE_URL is required in production")

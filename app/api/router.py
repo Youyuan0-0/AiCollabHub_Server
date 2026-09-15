@@ -4,6 +4,7 @@ from app.api.conversations import router as conversations_router
 from app.api.health import router as health_router
 from app.api.overview import router as overview_router
 from app.modules.admin.router import router as admin_router
+from app.modules.applications.market_router import router as application_market_router
 from app.modules.applications.router import router as applications_router
 from app.modules.applications.workflow_router import router as application_workflow_router
 from app.modules.common.router import router as common_router
@@ -29,6 +30,7 @@ for router in (
     models_router,
     applications_router,
     application_workflow_router,
+    application_market_router,
     knowledge_router,
     tools_router,
     common_router,

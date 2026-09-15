@@ -4,6 +4,25 @@ from test_auth import auth as auth
 from test_auth import csrf, login
 
 
+def test_publication_defaults_use_login_name_without_inventing_organization(request):
+    client, _, iam, _ = request.getfixturevalue("auth")
+    path = "/api/v1/application-publication-defaults"
+    assert client.get(path).status_code == 401
+    login(client, iam, subject="mock-user")
+    defaults = client.get(path).json()
+    assert defaults == {
+        "contact": "模拟普通用户",
+        "owner": "",
+        "organizationId": "",
+        "ownerAvailable": False,
+    }
+    draft = client.post(
+        "/api/v1/application-publications", json={"data": {"name": "新建"}}, headers=csrf(client)
+    ).json()
+    assert draft["data"]["contact"] == defaults["contact"]
+    assert draft["data"]["owner"] == ""
+
+
 def test_publications_use_login_subject_and_reject_demo_identity(request):
     client, _, iam, _ = request.getfixturevalue("auth")
     path = "/api/v1/application-publications"
@@ -55,6 +74,9 @@ def test_login_publication_can_be_reviewed_with_admin_session(request):
                 "category": "文档创作",
                 "owner": "研发单位",
                 "summary": "验证统一登录后的发布和审核流程",
+                "triggerType": "手动触发",
+                "communicationProtocol": "HTTP",
+                "deployment": "工具链托管",
             },
         },
         headers=csrf(client),

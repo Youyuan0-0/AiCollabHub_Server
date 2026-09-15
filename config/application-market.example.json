@@ -1,0 +1,16 @@
+{
+  "profile": "himarket-test",
+  "developer_token_env": {
+    "replace-with-platform-owner-subject": "HIMARKET_DEVELOPER_TOKEN_OWNER"
+  },
+  "bindings": {
+    "replace-with-existing-platform-application-id": {
+      "owner_subject": "replace-with-platform-owner-subject",
+      "organization_id": "replace-with-platform-organization-id",
+      "resource_id": "replace-with-himarket-resource-id",
+      "listing_id": null,
+      "portal_id": null
+    }
+  },
+  "decision_status": {}
+}

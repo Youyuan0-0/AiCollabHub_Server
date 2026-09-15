@@ -36,6 +36,9 @@ def details():
         "category": "文档创作",
         "owner": "试验中心",
         "contact": "测试联系人",
+        "developmentTeam": "应用研发组",
+        "sharingAgreement": "限集团内共享，保留作者信息",
+        "toolList": ["报告生成", "数据核验"],
         "tags": ["报告", "写作"],
         "capabilities": ["结构化输出"],
         "baseModel": "示例模型",
@@ -253,8 +256,18 @@ def test_admin_configuration_changes_form_validation_without_breaking_pending(cl
     assert "managementColumns" not in public and "availableColumns" not in public
     contact = next(field for field in public["fields"] if field["key"] == "contact")
     assert contact["required"] and contact["helpText"] == payload["fieldHints"]["contact"]
-    assert client.post(BASE, json={"data": details}).status_code == 201
-    assert client.post(BASE, json={"data": details, "submit": True}).status_code == 422
+    draft = client.post(BASE, json={"data": details}).json()
+    created = client.post(BASE, json={"data": details, "submit": True})
+    assert created.status_code == 201
+    assert created.json()["data"]["contact"] == "研发发布者"
+    # 新建时带出登录资料；编辑时明确清空必填联系人仍会被拦截。
+    assert (
+        client.put(
+            f"{BASE}/{draft['id']}",
+            json={"data": details, "submit": True, "revision": draft["revision"]},
+        ).status_code
+        == 422
+    )
     approved = client.post(
         f"{ADMIN}/{pending['id']}/review",
         json={
@@ -307,11 +320,120 @@ def test_demo_records_are_isolated_between_application_instances(client, details
         assert other.get("/api/v1/applications").json() == original
 
 
-@pytest.mark.parametrize("schema", ['{"type":', "[]", "null", '{"value":NaN}'])
-def test_invalid_schema_does_not_save_a_partial_record(client, details, schema):
-    details["inputSchema"] = schema
+@pytest.mark.parametrize("field", ["inputSchema", "outputSchema"])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        '{"type":',
+        "[]",
+        "null",
+        '{"value":NaN}',
+        '{"type":"nonsense"}',
+        '{"required":"name"}',
+        '{"properties":[]}',
+        '{"$schema":"https://unknown.test/schema"}',
+    ],
+)
+def test_invalid_schema_does_not_save_a_partial_record(client, details, schema, field):
+    details[field] = schema
+    precheck = client.post("/api/v1/application-precheck", json={"data": details})
+    assert field in precheck.json()["fieldErrors"]
     assert client.post(BASE, json={"data": details}).status_code == 422
     assert client.get(BASE).json() == []
+
+
+@pytest.mark.parametrize("field", ["triggerType", "communicationProtocol", "deployment"])
+def test_technical_fields_required_for_submission_but_drafts_are_allowed(client, details, field):
+    path = "/api/v1/admin/application-configuration"
+    configuration = client.get(path).json()
+    descriptor = next(item for item in configuration["fields"] if item["key"] == field)
+    assert descriptor["required"] and descriptor["locked"]
+    override = [key for key in configuration["requiredFields"] if key != field]
+    assert (
+        client.put(
+            path,
+            json=configuration_payload(
+                configuration,
+                requiredFields=override,
+            ),
+        ).status_code
+        == 422
+    )
+    details[field] = ""
+    draft = client.post(BASE, json={"data": details}).json()
+    assert draft["status"] == "draft"
+    assert client.post(BASE, json={"data": details, "submit": True}).status_code == 422
+    assert (
+        client.put(
+            f"{BASE}/{draft['id']}",
+            json={
+                "data": details,
+                "submit": True,
+                "revision": draft["revision"],
+            },
+        ).status_code
+        == 422
+    )
+
+
+def test_legacy_configuration_keeps_custom_rules_and_enforces_new_mandatory_fields():
+    from app.modules.applications.configuration import configuration_view, default_configuration
+
+    stored = {
+        **default_configuration(),
+        "requiredFields": ["name", "summary", "contact"],
+        "fieldHints": {"contact": "负责人"},
+        "revision": 9,
+    }
+    view = configuration_view(stored)
+    assert {"triggerType", "communicationProtocol", "deployment", "contact"} <= set(
+        view["requiredFields"]
+    )
+    assert view["revision"] == 9 and view["fieldHints"] == stored["fieldHints"]
+    assert stored["requiredFields"] == ["name", "summary", "contact"]
+
+
+def test_already_pending_submission_keeps_its_frozen_rules(client, details):
+    record = client.post(BASE, json={"data": details, "submit": True}).json()
+    # 模拟升级前已提交的申请，避免审核时凭新规则锁死旧流程。
+    technical = {"triggerType", "communicationProtocol", "deployment"}
+    record["submissionRules"]["requiredFields"] = [
+        key for key in record["submissionRules"]["requiredFields"] if key not in technical
+    ]
+    for field in technical:
+        record["data"][field] = ""
+    with client.app.state.application_service.repository.transaction() as session:
+        session.put_publication(record)
+    response = client.post(
+        f"{ADMIN}/{record['id']}/review",
+        json={
+            "decision": "approved",
+            "revision": record["revision"],
+            "scores": {"completeness": 4, "usability": 4, "security": 4},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "dialect",
+    [
+        "http://json-schema.org/draft-07/schema#",
+        "https://json-schema.org/draft/2019-09/schema",
+        "https://json-schema.org/draft/2020-12/schema#",
+    ],
+)
+def test_schema_dialects_accept_structure_without_fetching_remote_refs(client, details, dialect):
+    details["inputSchema"] = json.dumps(
+        {
+            "$schema": dialect,
+            "type": "object",
+            "properties": {
+                "q": {"$ref": "https://unavailable.example.test/input.json"},
+            },
+        }
+    )
+    assert client.post(BASE, json={"data": details}).status_code == 201
 
 
 @pytest.mark.parametrize(
@@ -471,7 +593,13 @@ def test_new_version_preserves_download_and_favorite_statistics(client):
     pending = client.put(
         f"{BASE}/{draft['id']}",
         json={
-            "data": {**draft["data"], "version": "v99.0"},
+            "data": {
+                **draft["data"],
+                "version": "v99.0",
+                "triggerType": "手动触发",
+                "communicationProtocol": "HTTP",
+                "deployment": "工具链托管",
+            },
             "submit": True,
             "revision": draft["revision"],
         },

@@ -72,10 +72,11 @@ class InMemoryApplicationRepository:
         }
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, readonly=False):
         with self._lock:
             # 先在副本上处理；发生异常时不把部分修改写回正式状态。
             snapshot = deepcopy(self._state)
             yield MemorySession(snapshot)
             # 异常时不执行本行；防止审核和资源更新只完成一半。
-            self._state = snapshot
+            if not readonly:
+                self._state = snapshot

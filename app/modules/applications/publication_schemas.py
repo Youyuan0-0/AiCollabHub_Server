@@ -1,11 +1,11 @@
 """场景应用演示接口的数据约定；不是数据库表模型。"""
 
-import json
 from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import ConfigDict, Field, field_validator
 
+from app.modules.applications.schema_validation import parse_schema
 from app.modules.common.schemas import Payload
 
 APPLICATION_CATEGORIES = ("文档创作", "会议办公", "数据处理", "翻译沟通", "法律合规")
@@ -55,6 +55,9 @@ class ApplicationDetails(ApplicationPayload):
     category: str = Field(default="文档创作", max_length=80)
     owner: str = Field(default="", max_length=200)
     contact: str = Field(default="", max_length=200)
+    development_team: str = Field(default="", max_length=300)
+    sharing_agreement: str = Field(default="", max_length=5000)
+    tool_list: list[str] = Field(default_factory=list, max_length=40)
     tags: list[str] = Field(default_factory=list, max_length=20)
     capabilities: list[str] = Field(default_factory=list, max_length=20)
     base_model: str = Field(default="", max_length=200)
@@ -75,18 +78,16 @@ class ApplicationDetails(ApplicationPayload):
     def schema_document(cls, value: str):
         if not value:
             return value
-
-        def invalid_constant(_value):
-            raise ValueError("JSON 不支持 NaN 或 Infinity")
-
-        try:
-            # 只校验资料格式；不会据此执行协议或远程解析引用。
-            parsed = json.loads(value, parse_constant=invalid_constant)
-        except (ValueError, RecursionError) as error:
-            raise ValueError("输入/输出格式需要填写有效的 JSON 对象，或暂时留空") from error
-        if not isinstance(parsed, dict):
-            raise ValueError("输入/输出格式需要填写 JSON 对象")
+        parse_schema(value)
         return value
+
+    @field_validator("tool_list")
+    @classmethod
+    def clean_tools(cls, values: list[str]):
+        tools = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if any(len(value) > 200 for value in tools):
+            raise ValueError("单项工具说明不能超过 200 字")
+        return tools
 
     @field_validator("dependencies")
     @classmethod
@@ -113,6 +114,7 @@ class QualityScores(ApplicationPayload):
 
 # 前端保存申请的 JSON 在这里解析；字段格式不合规则由 FastAPI 返回 422。
 class SaveApplicationPublication(ApplicationPayload):
+    auto_classify: bool = False
     security_level: Literal["internal", "public", "confidential"] = "internal"
     priority: Literal["normal", "high", "urgent"] = "normal"
     # 前端 data：本次填写的应用资料。

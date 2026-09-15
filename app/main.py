@@ -12,7 +12,10 @@ from app.api.router import api_router, database_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
 from app.modules.applications.application_service import ApplicationService
-from app.modules.applications.demo_store import create_demo_application_service
+from app.modules.applications.demo_store import (
+    create_database_application_service,
+    create_demo_application_service,
+)
 from app.modules.applications.identity import DemoIdentityProvider, SessionIdentityProvider
 from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.router import config_router
@@ -32,7 +35,7 @@ def create_app(
     chat_provider: ChatProvider | None = None,
     attachment_store: AttachmentStore | None = None,
     cas_client=None,
-    applications_factory: Callable[[], ApplicationService] = create_demo_application_service,
+    applications_factory: Callable[[], ApplicationService] | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -43,6 +46,20 @@ def create_app(
         application.state.database_engine = (
             resources.database.primary if resources.database is not None else None
         )
+        if (
+            settings.app_env != "production"
+            and applications_factory is None
+            and settings.applications_storage == "database"
+        ):
+            application.state.application_service = create_database_application_service(
+                application.state.database_engine, settings
+            )
+        if settings.app_env != "production" and settings.applications_runtime == "agent_dev":
+            from app.modules.applications.runtime import AgentDevProvider
+
+            service = application.state.application_service
+            service.provider = AgentDevProvider(service.provider, settings)
+            service.workflows.provider = service.provider
         application.state.cas_client = cas_client
         if settings.auth_mode == "mock" and cas_client is None:
             application.state.cas_client = MockCasClient(settings)
@@ -98,6 +115,14 @@ def create_app(
                 response.headers["X-Data-Mode"] = (
                     "development" if database_path in (["overview"], ["conversations"]) else "mock"
                 )
+                scenario_path = request.url.path.removeprefix("/api/v1/").removeprefix("admin/")
+                if (
+                    scenario_path.startswith("application")
+                    and settings.applications_storage == "database"
+                ):
+                    response.headers["X-Data-Mode"] = "development"
+                    response.headers["X-Application-Storage"] = "postgresql"
+                    response.headers["X-Application-Provider"] = settings.applications_runtime
         if request.url.path.startswith("/api/v1/auth/"):
             response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -136,7 +161,9 @@ def create_app(
     # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
         # 每个 FastAPI 实例创建一份场景应用业务对象，路由从 request.app.state 取出并复用。
-        application.state.application_service = applications_factory()
+        application.state.application_service = (
+            applications_factory or create_demo_application_service
+        )()
         application.state.application_identity = (
             SessionIdentityProvider() if settings.auth_mode == "mock" else DemoIdentityProvider()
         )

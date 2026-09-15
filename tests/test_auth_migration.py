@@ -60,7 +60,9 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
         "20260914_02",
         "20260914_03",
         "20260915_01",
+        "20260915_02",
         "20260915_chat01",
+        "20260915_merge01",
         "legacy-auth",
         "legacy-combined",
     ],
@@ -188,7 +190,7 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "20260915_merge01"
+                == "20260915_merge02"
             )
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
@@ -220,12 +222,14 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_merge01"]
-    command.upgrade(config, "20260915_01", sql=True)
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_merge02"]
+    command.upgrade(config, "20260915_02", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
     assert "CREATE TABLE demo_conversations" in sql
+    for table in ("iam_identity_state", "iam_identity_role", "iam_sync_receipt"):
+        assert f"CREATE TABLE {table}" in sql
     with pytest.raises(RuntimeError, match="requires an online database connection"):
         command.upgrade(config, "head", sql=True)
 

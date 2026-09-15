@@ -1,0 +1,8 @@
+{
+  "replace-with-platform-application-id": {
+    "version_id": "replace-with-platform-version-id",
+    "agent_code": "replace-with-provider-agent-code",
+    "agent_version": "replace-with-provider-version-code",
+    "input_mode": "text"
+  }
+}

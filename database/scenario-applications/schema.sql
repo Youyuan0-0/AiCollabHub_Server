@@ -1,718 +1,477 @@
--- 场景应用数据库设计 V1，2026-09-14
--- 适用：PostgreSQL 16 / 17；UTF-8；沿用当前 SQLAlchemy / Alembic 框架。
--- 前提：协同平台管理本地目录、发布审批及个人互动，供应方提供工具链和运行服务。
--- 本文件是首次建表脚本，不是已接入代码的 Alembic 迁移；设计阶段不对现有库执行。
--- 在选定开发主库首次执行：psql -X -v ON_ERROR_STOP=1 -d <数据库名> -f schema.sql
--- 已有同名表时整笔失败，避免 IF NOT EXISTS 掩盖结构不一致；不含 DROP/TRUNCATE。
--- 不创建用户/组织/项目表，不修改 auth_session 等现有认证表。
--- *_subject 存可信 IAM subject（最多 200 字），不能关联会过期清理的 auth_session。
--- 组织/项目编号与其他资源编号暂作逻辑关联，正式公共目录确定后再补相应外键。
--- 本地业务 ID 由后端生成，兼容 app-/version-/publication- 加 UUID 的现有格式。
--- 时间均用 timestamptz，展示时转北京时间；updated_at 与 revision 由仓储显式更新。
--- JSONB 用于结构不固定且整体读取的内容；主关系、状态、筛选字段使用普通列。
+-- 场景应用数据库设计 V2.1：按已提供接口保存最少本地数据，2026-09-15
+-- PostgreSQL 16/17，UTF-8。共 8 张本地业务表，2 个统计视图。
+-- 目标：Agent Dev 提供智能体/版本/运行，HiMarket 提供分类/目录/草稿/发布/审核/资源包。
+-- 这是接入目标设计，不代表现场已开通 HiMarket；现有演示代码尚未使用这些表。
+-- 本地保存关联编号、平台扩展、权限、个人操作、补充审核和必要记录。
+-- 不建立外部资源版本库、模型库、知识库、数据集库，也不复制完整外部响应。
+-- 本版去掉目录缓存列、人员姓名副本和本地分类字典；本地扩展限定字段白名单。
+-- 原文字段归属与页码见 interface-evidence.md；功能代码仍需按此边界适配。
+-- 首次建表：psql -X -v ON_ERROR_STOP=1 -d <开发主库名> -f schema.sql
+-- 本文件不执行 DROP/TRUNCATE，不修改现有认证表；同名表存在时失败，不能覆盖 V1 库。
+-- V1 若已执行，须另写显式迁移，不能用本脚本冒充升级；当前场景业务尚未执行 V1。
+-- 所有 ID 由后端生成；*_subject 关联可信 IAM subject，不关联临时 auth_session。
+-- 组织/项目/用户主表由公共身份模块统一提供，本版不重复建，暂保存其编号。
+-- API 地址与凭证引用放后端配置，下面的 *_profile 只是配置项名称，不是密钥。
+-- updated_at 与 revision 由仓储在更新时显式维护；时间用 timestamptz。
 
 BEGIN;
 SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
--- 01 分类字典：前端名称仍显示中文，后端以稳定编号关联。
-CREATE TABLE scene_category (
-    id varchar(80) PRIMARY KEY,                       -- 分类编号
-    name varchar(80) NOT NULL UNIQUE,                 -- 分类名称
-    sort_order integer NOT NULL DEFAULT 0,            -- 分类导航顺序，越小越靠前
-    enabled boolean NOT NULL DEFAULT true,            -- 是否允许新提交选择
-    created_at timestamptz NOT NULL DEFAULT now()      -- 创建时间
-);
-COMMENT ON TABLE scene_category IS '场景应用分类字典';
-
--- 02 应用主表：从第一份草稿开始就有主记录；审核通过前不出现在公开目录。
+-- 01 应用关联与扩展：每个本地应用最多绑定一个 Agent Dev 资源、一个 HiMarket Listing。
+-- 一对多外部来源不是当前需要；未来确有此需求时再拆独立绑定表。
 CREATE TABLE scene_application (
-    id varchar(80) PRIMARY KEY,                       -- 本地应用编号，对应 applicationId
-    created_by_subject varchar(200) NOT NULL,         -- 原始发布者的可信用户编号
-    created_by_name varchar(200) NOT NULL DEFAULT '', -- 原始发布者姓名快照
-    organization_id varchar(200),                     -- 权限归属组织；未知为 NULL，不填演示组织
-    current_version_id varchar(80),                  -- 当前上架版本；首次通过审核前为空
-    visibility_scope varchar(20) NOT NULL DEFAULT 'all', -- all/organizations/members/projects
-    visibility_revision bigint NOT NULL DEFAULT 1,   -- 开放范围独立修订号
-    revision bigint NOT NULL DEFAULT 1,              -- 应用主记录乐观锁修订号
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_scene_application_scope CHECK (
-        visibility_scope IN ('all', 'organizations', 'members', 'projects')
-    ),
-    CONSTRAINT ck_scene_application_revision CHECK (revision > 0 AND visibility_revision > 0),
-    CONSTRAINT ck_scene_application_subject CHECK (btrim(created_by_subject) <> ''),
-    CONSTRAINT ck_scene_application_organization CHECK (
-        organization_id IS NULL OR btrim(organization_id) <> ''
-    ),
-    CONSTRAINT uq_scene_application_scope UNIQUE (id, visibility_scope)
-);
-CREATE INDEX ix_scene_application_owner ON scene_application (created_by_subject, updated_at DESC);
-CREATE INDEX ix_scene_application_org ON scene_application (organization_id, updated_at DESC);
-COMMENT ON TABLE scene_application IS '应用稳定身份、归属、当前上架版本和开放范围';
-
--- 03 供应方连接：区分系统、环境、租户；密钥仅引用后端配置，不存明文令牌。
-CREATE TABLE scene_provider_connection (
-    id varchar(80) PRIMARY KEY,
-    provider_code varchar(80) NOT NULL,               -- 供应方/系统代号，如 agent-dev
-    environment_code varchar(80) NOT NULL,            -- dev/test/prod 等明确环境
-    tenant_code varchar(200) NOT NULL DEFAULT '',     -- 供应方租户域；无租户时使用空串
-    name varchar(200) NOT NULL,
-    api_base_url varchar(2000),                       -- 对方实际 API 基地址；尚未取得可为空
-    credential_ref varchar(200),                      -- 后端环境变量/密钥服务引用名称
-    enabled boolean NOT NULL DEFAULT false,          -- 接入确认前默认关闭
+    id varchar(80) PRIMARY KEY,                     -- 本地稳定应用编号
+    created_by_subject varchar(200) NOT NULL,       -- 本地登记人的可信用户编号；姓名从公共 IAM 获取
+    organization_id varchar(200),                   -- 平台登记的责任组织编号；组织资料从公共 IAM 获取
+    agent_profile varchar(80),                      -- Agent Dev 系统/环境/租户对应的后端配置名
+    workspace_code varchar(200),                    -- Agent Dev 工作空间编号
+    agent_code varchar(200),                        -- Agent Dev agentCode
+    market_profile varchar(80),                     -- HiMarket 系统/环境/租户对应的后端配置名
+    market_resource_id varchar(200),                -- HiMarket resourceId，不能当成 agentCode
+    market_listing_id varchar(200),                 -- HiMarket listingId，可晚于 resourceId 取得
+    local_metadata jsonb NOT NULL DEFAULT '{}',     -- 仅已生效的平台补充项；白名单见下面约束
+    visibility_scope varchar(20) NOT NULL DEFAULT 'all',
+    visibility_revision bigint NOT NULL DEFAULT 1 CHECK (visibility_revision > 0),
     revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_provider_environment UNIQUE (provider_code, environment_code, tenant_code),
-    CONSTRAINT ck_scene_provider_names CHECK (
-        btrim(provider_code) <> '' AND btrim(environment_code) <> ''
+    CONSTRAINT uq_scene_application_scope UNIQUE (id, visibility_scope),
+    CONSTRAINT uq_scene_application_agent UNIQUE (agent_profile, workspace_code, agent_code),
+    CONSTRAINT uq_scene_application_listing UNIQUE (market_profile, market_listing_id),
+    CONSTRAINT ck_scene_application_agent CHECK (
+        num_nonnulls(agent_profile, workspace_code, agent_code) = 0
+        OR (num_nonnulls(agent_profile, workspace_code, agent_code) = 3
+            AND btrim(agent_profile) <> '' AND btrim(workspace_code) <> '' AND btrim(agent_code) <> '')
+    ),
+    CONSTRAINT ck_scene_application_market CHECK (
+        num_nonnulls(market_profile, market_resource_id, market_listing_id) = 0
+        OR (market_profile IS NOT NULL AND market_resource_id IS NOT NULL
+            AND btrim(market_profile) <> '' AND btrim(market_resource_id) <> ''
+            AND (market_listing_id IS NULL OR btrim(market_listing_id) <> ''))
+    ),
+    CONSTRAINT ck_scene_application_metadata CHECK (jsonb_typeof(local_metadata) = 'object'),
+    CONSTRAINT ck_scene_application_local_fields CHECK (
+        local_metadata - ARRAY['englishName','contact','tutorials','usageLimits','technicalStack',
+            'deployment','triggerType','dependencies','configOptions']::text[] = '{}'::jsonb
+    ),
+    CONSTRAINT ck_scene_application_scope CHECK (visibility_scope IN ('all','organizations','members','projects')),
+    CONSTRAINT ck_scene_application_owner CHECK (
+        btrim(created_by_subject) <> '' AND (organization_id IS NULL OR btrim(organization_id) <> '')
     )
 );
-COMMENT ON TABLE scene_provider_connection IS '供应方环境登记；地址与凭证由后端管理，不下发给浏览器';
+CREATE INDEX ix_scene_application_owner ON scene_application(created_by_subject, updated_at DESC);
+CREATE INDEX ix_scene_application_org ON scene_application(organization_id, updated_at DESC);
+COMMENT ON TABLE scene_application IS '外部应用对应关系和本地扩展；不维护另一套外部目录及版本状态';
+COMMENT ON COLUMN scene_application.local_metadata IS
+    '仅白名单补充字段；name/summary/descriptionMarkdown/category/tags/version/inputSchema/outputSchema 等由外部提供。教程只存链接，依赖只存编号，配置项只作说明。嵌套结构须经后端校验。待审修改存 submission_extension';
 
--- 04 外部应用绑定：外部编号可能跨环境/工作空间重复，不能单独设全局唯一。
-CREATE TABLE scene_external_binding (
-    id varchar(80) PRIMARY KEY,
-    application_id varchar(80) NOT NULL REFERENCES scene_application(id),
-    connection_id varchar(80) NOT NULL REFERENCES scene_provider_connection(id),
-    workspace_code varchar(200) NOT NULL,             -- 对方 workspaceCode，不等于平台组织编号
-    external_application_code varchar(200) NOT NULL,  -- 对方 agentCode / 资源编号
-    external_biz_type varchar(100),                   -- 对方 bizType，仅是技术类型
-    created_by_subject varchar(200) NOT NULL,
-    last_synced_at timestamptz,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_binding_source UNIQUE (
-        connection_id, workspace_code, external_application_code
-    ),
-    CONSTRAINT uq_scene_binding_application UNIQUE (application_id, id),
-    CONSTRAINT ck_scene_binding_codes CHECK (
-        btrim(workspace_code) <> '' AND btrim(external_application_code) <> ''
-    )
-);
-COMMENT ON TABLE scene_external_binding IS '本地应用与供应方应用的对应关系';
-
--- 05 版本资料：保存草稿和每个已发布版本，旧版本资料不被新版覆盖。
-CREATE TABLE scene_application_version (
-    id varchar(80) PRIMARY KEY,                       -- 本地版本 ID，对应 versionId
-    application_id varchar(80) NOT NULL REFERENCES scene_application(id),
-    version_label varchar(80) NOT NULL DEFAULT '',    -- 页面版本名，如 v1.0；草稿可留空
-    name varchar(200) NOT NULL DEFAULT '',
-    english_name varchar(200) NOT NULL DEFAULT '',
-    summary varchar(1000) NOT NULL DEFAULT '',
-    description_markdown text NOT NULL DEFAULT '',
-    category_id varchar(80) REFERENCES scene_category(id), -- 草稿可为空，发布时必须有效
-    owner_display_name varchar(200) NOT NULL DEFAULT '', -- 表单 owner，所属单位展示文字
-    contact varchar(200) NOT NULL DEFAULT '',
-    tags varchar(80)[] NOT NULL DEFAULT '{}',
-    capabilities varchar(80)[] NOT NULL DEFAULT '{}',
-    base_model varchar(200) NOT NULL DEFAULT '',
-    tutorials jsonb NOT NULL DEFAULT '[]',            -- [{title,kind:document|video,url}]
-    config_options jsonb NOT NULL DEFAULT '[]',       -- [{name,value,description}]
-    usage_limits text NOT NULL DEFAULT '',
-    technical_stack varchar(500) NOT NULL DEFAULT '',
-    deployment varchar(200) NOT NULL DEFAULT '',
-    trigger_type varchar(200) NOT NULL DEFAULT '',
-    communication_protocol varchar(200) NOT NULL DEFAULT '',
-    input_schema jsonb,                              -- JSON Schema 对象；表单空串映射为 NULL
-    output_schema jsonb,                             -- JSON Schema 对象；读取时转回 API 所需字符串
-    version_notes text NOT NULL DEFAULT '',
-    security_level varchar(20) NOT NULL DEFAULT 'internal', -- internal/public/confidential
-    creation_method varchar(30) NOT NULL DEFAULT 'manual', -- manual/toolchain_import
-    binding_id varchar(80),                          -- 手工创建且无外部来源时为空
-    external_version_code varchar(200),              -- agentVersion：调用使用的编码，必须按字符串保存
-    external_version_name varchar(200),              -- versionName：对方的显示名称
-    external_status varchar(100),                    -- agentStatus：不替代本地审批状态
-    external_created_at timestamptz,
-    external_updated_at timestamptz,
-    source_synced_at timestamptz,
-    source_snapshot jsonb,                           -- 脱敏后的来源字段快照，不保存凭证
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    released_at timestamptz,                         -- 首次审核通过的时间；为空表示未发布
-    CONSTRAINT uq_scene_version_application UNIQUE (application_id, id),
-    CONSTRAINT fk_scene_version_binding FOREIGN KEY (application_id, binding_id)
-        REFERENCES scene_external_binding(application_id, id),
-    CONSTRAINT ck_scene_version_source CHECK (
-        (binding_id IS NULL AND external_version_code IS NULL AND creation_method = 'manual')
-        OR (binding_id IS NOT NULL AND external_version_code IS NOT NULL
-            AND btrim(external_version_code) <> '')
-    ),
-    CONSTRAINT ck_scene_version_method CHECK (creation_method IN ('manual', 'toolchain_import')),
-    CONSTRAINT ck_scene_version_security CHECK (security_level IN ('internal','public','confidential')),
-    CONSTRAINT ck_scene_version_published_fields CHECK (
-        released_at IS NULL OR (
-            btrim(version_label) <> '' AND btrim(name) <> '' AND btrim(summary) <> ''
-            AND btrim(owner_display_name) <> '' AND category_id IS NOT NULL
-            AND security_level <> 'confidential'
-        )
-    ),
-    CONSTRAINT ck_scene_version_labels CHECK (
-        cardinality(tags) <= 20 AND cardinality(capabilities) <= 20
-        AND array_position(tags, NULL) IS NULL AND array_position(capabilities, NULL) IS NULL
-    ),
-    CONSTRAINT ck_scene_version_tutorials CHECK (
-        jsonb_typeof(tutorials) = 'array' AND jsonb_array_length(tutorials) <= 10
-    ),
-    CONSTRAINT ck_scene_version_options CHECK (
-        jsonb_typeof(config_options) = 'array' AND jsonb_array_length(config_options) <= 20
-    ),
-    CONSTRAINT ck_scene_version_schema CHECK (
-        (input_schema IS NULL OR jsonb_typeof(input_schema) = 'object')
-        AND (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object')
-    ),
-    CONSTRAINT ck_scene_version_source_snapshot CHECK (
-        source_snapshot IS NULL OR jsonb_typeof(source_snapshot) = 'object'
-    ),
-    CONSTRAINT ck_scene_version_text_lengths CHECK (
-        char_length(description_markdown) <= 30000 AND char_length(usage_limits) <= 5000
-        AND char_length(version_notes) <= 5000
-    )
-);
-CREATE UNIQUE INDEX uq_scene_version_released_label
-    ON scene_application_version(application_id, lower(btrim(version_label)))
-    WHERE released_at IS NOT NULL;
--- 同一外部版本只“导入”为一份申请；手工从该版本另建本地新版可复用外部运行版本。
-CREATE UNIQUE INDEX uq_scene_version_import
-    ON scene_application_version(binding_id, external_version_code)
-    WHERE creation_method = 'toolchain_import';
-CREATE INDEX ix_scene_version_category ON scene_application_version(category_id);
-CREATE INDEX ix_scene_version_tags ON scene_application_version USING gin(tags);
-CREATE INDEX ix_scene_version_binding ON scene_application_version(binding_id);
-ALTER TABLE scene_application ADD CONSTRAINT fk_scene_application_current_version
-    FOREIGN KEY (id, current_version_id) REFERENCES scene_application_version(application_id, id)
-    DEFERRABLE INITIALLY DEFERRED;
-COMMENT ON TABLE scene_application_version IS '每个应用的版本资料；released_at 非空后资料冻结';
-
--- 06 四类依赖：不复制对方模型/数据集/知识库/工具的底层数据。
-CREATE TABLE scene_version_dependency (
-    version_id varchar(80) NOT NULL REFERENCES scene_application_version(id),
-    resource_kind varchar(20) NOT NULL CHECK (resource_kind IN ('model','dataset','knowledge','tool')),
-    resource_id varchar(200) NOT NULL CHECK (btrim(resource_id) <> ''), -- 平台资源目录返回的 ID
-    resource_version_code varchar(200),               -- 预留版本锁定；现有 API 只关联资源 ID
-    resource_name_snapshot varchar(200),             -- 可选名称快照；实时权限由关联模块校验
-    sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
-    PRIMARY KEY (version_id, resource_kind, resource_id)
-);
-CREATE INDEX ix_scene_dependency_reverse ON scene_version_dependency(resource_kind, resource_id);
-COMMENT ON TABLE scene_version_dependency IS '应用版本关联的模型、数据集、知识库和 AI 工具';
-
--- 07 发布申请：同一申请驳回/补材料后继续修改、重提；一个应用只保留一个未完成申请。
-CREATE TABLE scene_publication (
-    id varchar(80) PRIMARY KEY,
-    application_id varchar(80) NOT NULL REFERENCES scene_application(id),
-    version_id varchar(80) NOT NULL UNIQUE,
-    base_version_id varchar(80),                      -- 创建新版时依据的当前已发布版本
-    status varchar(20) NOT NULL DEFAULT 'draft',
-    priority varchar(10) NOT NULL DEFAULT 'normal',
-    created_by_subject varchar(200) NOT NULL,         -- 沿用原始发布者归属
-    created_by_name varchar(200) NOT NULL DEFAULT '',
-    last_edited_by_subject varchar(200),              -- 实际编辑人，管理员代改不更换所有者
-    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-    form_revision bigint CHECK (form_revision > 0),
-    submission_rules jsonb,                          -- 提交时必填字段/提示等完整规则快照
-    submitted_at timestamptz,                        -- 最近一次提交时间
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_publication_application UNIQUE (application_id, id),
-    CONSTRAINT fk_scene_publication_version FOREIGN KEY (application_id, version_id)
-        REFERENCES scene_application_version(application_id, id),
-    CONSTRAINT fk_scene_publication_base FOREIGN KEY (application_id, base_version_id)
-        REFERENCES scene_application_version(application_id, id),
-    CONSTRAINT ck_scene_publication_base CHECK (base_version_id IS NULL OR base_version_id <> version_id),
-    CONSTRAINT ck_scene_publication_status CHECK (
-        status IN ('draft','pending','approved','rejected','needs_changes')
-    ),
-    CONSTRAINT ck_scene_publication_priority CHECK (priority IN ('normal','high','urgent')),
-    CONSTRAINT ck_scene_publication_rules CHECK (
-        submission_rules IS NULL OR jsonb_typeof(submission_rules) = 'object'
-    ),
-    CONSTRAINT ck_scene_publication_submitted CHECK (
-        status = 'draft' OR (submitted_at IS NOT NULL AND form_revision IS NOT NULL
-            AND submission_rules IS NOT NULL)
-    )
-);
-CREATE UNIQUE INDEX uq_scene_publication_open
-    ON scene_publication(application_id) WHERE status <> 'approved';
-CREATE INDEX ix_scene_publication_queue ON scene_publication(status, submitted_at DESC);
-CREATE INDEX ix_scene_publication_priority ON scene_publication(
-    status, (CASE priority WHEN 'urgent' THEN 2 WHEN 'high' THEN 1 ELSE 0 END) DESC,
-    submitted_at DESC
-);
-CREATE INDEX ix_scene_publication_owner ON scene_publication(created_by_subject, updated_at DESC);
-COMMENT ON TABLE scene_publication IS '草稿、提交及审核状态；一份申请对应一个版本，可多次提交审核';
-
--- 08 审核历史：每次审核新增一行，保存当时资料、规则、人工三项评分。
-CREATE TABLE scene_review (
-    id varchar(80) PRIMARY KEY,
-    publication_id varchar(80) NOT NULL REFERENCES scene_publication(id),
-    publication_revision bigint NOT NULL CHECK (publication_revision > 0), -- 审核前申请修订号
-    decision varchar(20) NOT NULL CHECK (decision IN ('approved','rejected','needs_changes')),
-    reason varchar(2000) NOT NULL DEFAULT '',
-    reviewer_subject varchar(200) NOT NULL,
-    reviewer_name varchar(200) NOT NULL DEFAULT '',
-    completeness_score smallint CHECK (completeness_score BETWEEN 1 AND 5),
-    usability_score smallint CHECK (usability_score BETWEEN 1 AND 5),
-    security_score smallint CHECK (security_score BETWEEN 1 AND 5),
-    minimum_score smallint NOT NULL CHECK (minimum_score BETWEEN 1 AND 5), -- 当时通过阈值
-    data_snapshot jsonb NOT NULL CHECK (jsonb_typeof(data_snapshot) = 'object'), -- 完整 ApplicationDetails
-    submission_rules_snapshot jsonb NOT NULL CHECK (jsonb_typeof(submission_rules_snapshot) = 'object'),
-    policy_snapshot jsonb NOT NULL CHECK (jsonb_typeof(policy_snapshot) = 'object'), -- 审核时规则
-    quality_report_snapshot jsonb CHECK (jsonb_typeof(quality_report_snapshot) = 'object'),
-    submitted_at timestamptz NOT NULL,
-    reviewed_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_review_revision UNIQUE (publication_id, publication_revision),
-    CONSTRAINT ck_scene_review_scores CHECK (
-        num_nonnulls(completeness_score, usability_score, security_score) IN (0,3)
-    ),
-    CONSTRAINT ck_scene_review_approval CHECK (
-        decision <> 'approved' OR (
-            completeness_score IS NOT NULL AND usability_score IS NOT NULL AND security_score IS NOT NULL
-            AND completeness_score >= minimum_score AND usability_score >= minimum_score
-            AND security_score >= minimum_score
-        )
-    ),
-    CONSTRAINT ck_scene_review_reason CHECK (decision = 'approved' OR btrim(reason) <> '')
-);
-CREATE INDEX ix_scene_review_history ON scene_review(reviewer_subject, reviewed_at DESC);
-CREATE INDEX ix_scene_review_decision ON scene_review(decision, reviewed_at DESC);
-COMMENT ON TABLE scene_review IS '不可覆盖的审核历史及快照；本地质量检查不是供应方 AI 效果评测';
-
--- 09 可见对象：all 不写目标；其他范围写组织/用户/项目编号，一种范围可以多个目标。
+-- 02 开放对象：复用 IAM 编号，补充 PRIVATE/PUBLIC 无法直接表达的本地范围。
 CREATE TABLE scene_visibility_target (
     application_id varchar(80) NOT NULL,
     scope varchar(20) NOT NULL CHECK (scope IN ('organizations','members','projects')),
     target_id varchar(200) NOT NULL CHECK (btrim(target_id) <> ''),
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (application_id, scope, target_id),
-    CONSTRAINT fk_scene_visibility_scope FOREIGN KEY (application_id, scope)
+    CONSTRAINT fk_scene_visibility_application FOREIGN KEY (application_id, scope)
         REFERENCES scene_application(id, visibility_scope) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX ix_scene_visibility_lookup ON scene_visibility_target(scope, target_id, application_id);
-COMMENT ON TABLE scene_visibility_target IS '应用开放的组织、成员或项目；实际鉴权由可信 IAM 归属与后端规则完成';
+COMMENT ON TABLE scene_visibility_target IS '本地应用可见的组织、成员或项目；外部使用授权仍须另行校验';
 
--- 10 个人互动：一人一应用一行；收藏/订阅/评分可同时存在，避免拆成三套重复接口。
+-- 03 个人互动：关注更新与 HiMarket 申请使用权限的 Subscription 分开。
 CREATE TABLE scene_interaction (
     application_id varchar(80) NOT NULL REFERENCES scene_application(id),
     actor_subject varchar(200) NOT NULL,
     favorite boolean NOT NULL DEFAULT false,
-    subscribed boolean NOT NULL DEFAULT false,
+    follow_updates boolean NOT NULL DEFAULT false,   -- 当前前端 subscribed 的含义：关注新版消息
     rating smallint CHECK (rating BETWEEN 1 AND 5),
-    comment varchar(1000) NOT NULL DEFAULT '',         -- 与该用户评分一起更新，不是独立讨论区
+    comment varchar(1000) NOT NULL DEFAULT '',
     favorited_at timestamptz,
-    subscribed_at timestamptz,                       -- 独立记录，之后评分不应改写订阅时间
+    followed_at timestamptz,
     rated_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (application_id, actor_subject),
     CONSTRAINT ck_scene_interaction_favorite CHECK (favorite = (favorited_at IS NOT NULL)),
-    CONSTRAINT ck_scene_interaction_subscription CHECK (subscribed = (subscribed_at IS NOT NULL)),
+    CONSTRAINT ck_scene_interaction_follow CHECK (follow_updates = (followed_at IS NOT NULL)),
     CONSTRAINT ck_scene_interaction_rating CHECK (
         (rating IS NULL AND rated_at IS NULL AND comment = '')
         OR (rating IS NOT NULL AND rated_at IS NOT NULL)
     )
 );
-CREATE INDEX ix_scene_interaction_favorites ON scene_interaction(actor_subject, favorited_at DESC)
-    WHERE favorite;
-CREATE INDEX ix_scene_interaction_subscriptions ON scene_interaction(actor_subject, subscribed_at DESC)
-    WHERE subscribed;
-CREATE INDEX ix_scene_interaction_subscribers ON scene_interaction(application_id, actor_subject)
-    WHERE subscribed;
-COMMENT ON TABLE scene_interaction IS '每个用户对每个应用的收藏、订阅、评分和评价';
+CREATE INDEX ix_scene_interaction_favorite ON scene_interaction(actor_subject, favorited_at DESC) WHERE favorite;
+CREATE INDEX ix_scene_interaction_follow ON scene_interaction(actor_subject, followed_at DESC) WHERE follow_updates;
+CREATE INDEX ix_scene_interaction_followers ON scene_interaction(application_id, actor_subject) WHERE follow_updates;
+COMMENT ON TABLE scene_interaction IS '本平台收藏、关注更新、五分评分与评价；不重复管理 HiMarket 授权订阅';
 
--- 11 运行记录：请求 ID 防重复；模拟数据与真实调用明确分开。
-CREATE TABLE scene_run (
-    id varchar(80) PRIMARY KEY,                       -- 新建稳定记录 ID，API 可继续组合原有显示 ID
+-- 04 发布补充资料：只保存平台特有内容及提交时规则，外部草稿/版本/状态由 HiMarket 管理。
+-- 首次编辑可暂缺外部审核单 ID；发起外部提交前冻结本地补充资料，返回 ID 后补登记。
+-- 补材料重提新增 round_no 行，保留上次内容；不是再建完整的资源版本表。
+CREATE TABLE scene_submission_extension (
+    id varchar(80) PRIMARY KEY,
     application_id varchar(80) NOT NULL REFERENCES scene_application(id),
-    version_id varchar(80) NOT NULL,
-    actor_subject varchar(200) NOT NULL,
-    request_id varchar(100) NOT NULL CHECK (char_length(request_id) BETWEEN 8 AND 100),
-    request_fingerprint char(64) NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
-    application_name_snapshot varchar(200) NOT NULL,
-    version_label_snapshot varchar(80) NOT NULL,
-    mode varchar(20) NOT NULL CHECK (mode IN ('simulation','live')), -- 不设置默认，必须显式指定
-    status varchar(20) NOT NULL DEFAULT 'running',
-    input_payload jsonb NOT NULL CHECK (jsonb_typeof(input_payload) = 'object'),
-    options jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(options) = 'object'),
-    output_payload jsonb,                            -- 输出对象/数组/文本，按实际接口适配
-    error_code varchar(100),
-    error_message text NOT NULL DEFAULT '',          -- 脱敏后的可展示错误
-    external_request_id varchar(300),
-    external_session_id varchar(300),                -- 预留对方运行会话编号
-    duration_ms bigint CHECK (duration_ms >= 0),
+    submission_key varchar(80) NOT NULL,             -- 同一次本地发布事项的稳定编号
+    round_no integer NOT NULL DEFAULT 1 CHECK (round_no > 0),
+    created_by_subject varchar(200) NOT NULL,
+    market_profile varchar(80),                      -- 提交当时的环境快照
+    external_submission_id varchar(200),             -- HiMarket submissionId；不是本地主键
+    external_version_id varchar(200),                -- HiMarket 本次审核的 versionId
+    agent_version_code varchar(200),                 -- 如有关联，保存 Agent Dev agentVersion
+    local_fields jsonb NOT NULL DEFAULT '{}',        -- 同 local_metadata 白名单；不保存完整外部草稿
+    form_rules_snapshot jsonb NOT NULL DEFAULT '{}', -- 必填/提示规则及版本
+    security_level varchar(20) NOT NULL DEFAULT 'internal',
+    priority varchar(10) NOT NULL DEFAULT 'normal',
+    frozen_at timestamptz,                          -- 准备提交的时刻；此后补充内容不可覆盖
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at timestamptz NOT NULL DEFAULT now(),
-    started_at timestamptz,
-    deadline_at timestamptz,                         -- 预留异步任务恢复/超时扫描
-    completed_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_run_request UNIQUE (actor_subject, application_id, request_id),
-    CONSTRAINT fk_scene_run_version FOREIGN KEY (application_id, version_id)
-        REFERENCES scene_application_version(application_id, id),
-    CONSTRAINT ck_scene_run_status CHECK (
-        status IN ('queued','running','succeeded','failed','timed_out','unknown')
+    CONSTRAINT uq_scene_extension_round UNIQUE (application_id, submission_key, round_no),
+    CONSTRAINT uq_scene_extension_external_round UNIQUE (market_profile, external_submission_id, round_no),
+    CONSTRAINT uq_scene_extension_application UNIQUE (application_id, id),
+    CONSTRAINT ck_scene_extension_json CHECK (
+        jsonb_typeof(local_fields) = 'object' AND jsonb_typeof(form_rules_snapshot) = 'object'
     ),
-    CONSTRAINT ck_scene_run_completion CHECK (
-        (status IN ('succeeded','failed','timed_out') AND completed_at IS NOT NULL)
-        OR (status IN ('queued','running','unknown') AND completed_at IS NULL)
+    CONSTRAINT ck_scene_extension_local_fields CHECK (
+        local_fields - ARRAY['englishName','contact','tutorials','usageLimits','technicalStack',
+            'deployment','triggerType','dependencies','configOptions']::text[] = '{}'::jsonb
     ),
-    CONSTRAINT ck_scene_run_time CHECK (completed_at IS NULL OR completed_at >= created_at)
+    CONSTRAINT ck_scene_extension_security CHECK (security_level IN ('internal','public','confidential')),
+    CONSTRAINT ck_scene_extension_priority CHECK (priority IN ('normal','high','urgent')),
+    CONSTRAINT ck_scene_extension_external CHECK (
+        external_submission_id IS NULL OR (market_profile IS NOT NULL AND btrim(market_profile) <> ''
+            AND btrim(external_submission_id) <> '' AND frozen_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_scene_extension_frozen_security CHECK (frozen_at IS NULL OR security_level <> 'confidential')
 );
-CREATE INDEX ix_scene_run_personal ON scene_run(actor_subject, created_at DESC);
-CREATE INDEX ix_scene_run_metrics ON scene_run(application_id, mode, status, created_at DESC);
-CREATE INDEX ix_scene_run_version ON scene_run(version_id);
-CREATE INDEX ix_scene_run_recovery ON scene_run(deadline_at)
-    WHERE status IN ('queued','running','unknown');
-COMMENT ON TABLE scene_run IS '体验调用与历史；unknown 表示外部结果待核对，不等同确定失败';
-COMMENT ON COLUMN scene_run.request_fingerprint IS
-    '规范化输入、配置、运行模式及模拟开关的 SHA-256；相同请求 ID 不同内容应返回 409';
+CREATE INDEX ix_scene_extension_external ON scene_submission_extension(market_profile, external_submission_id);
+CREATE UNIQUE INDEX uq_scene_extension_draft ON scene_submission_extension(application_id) WHERE frozen_at IS NULL;
+CREATE INDEX ix_scene_extension_owner ON scene_submission_extension(created_by_subject, updated_at DESC);
+COMMENT ON TABLE scene_submission_extension IS '本地发布补充项及重提快照；没有第二套权威审核或发布状态';
 
--- 12 下载记录：当前下载的是应用资料 JSON，保存同一次请求返回的脱敏快照。
-CREATE TABLE scene_download (
+-- 05 业务操作记录：运行、下载、同步和写入外部服务使用共同的请求/恢复字段。
+-- 类型相关内容只按需要保存到 detail/request_data/result_data，不整包持久化供应方内部配置。
+CREATE TABLE scene_activity (
     id varchar(80) PRIMARY KEY,
-    application_id varchar(80) NOT NULL REFERENCES scene_application(id),
-    version_id varchar(80) NOT NULL,
-    actor_subject varchar(200) NOT NULL,
-    request_id varchar(100) NOT NULL CHECK (char_length(request_id) BETWEEN 8 AND 100),
-    filename varchar(300) NOT NULL,
-    content_snapshot jsonb NOT NULL CHECK (jsonb_typeof(content_snapshot) = 'object'),
-    downloaded_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_scene_download_request UNIQUE (actor_subject, application_id, request_id),
-    CONSTRAINT fk_scene_download_version FOREIGN KEY (application_id, version_id)
-        REFERENCES scene_application_version(application_id, id)
-);
-CREATE INDEX ix_scene_download_app ON scene_download(application_id, downloaded_at DESC);
-CREATE INDEX ix_scene_download_actor ON scene_download(actor_subject, downloaded_at DESC);
-CREATE INDEX ix_scene_download_version ON scene_download(version_id);
-COMMENT ON TABLE scene_download IS '应用资料 JSON 下载记录，非模型文件或可执行程序包';
-
--- 13 工具链同步：即使未读到外部应用/绑定失败，也保留同步请求与失败原因。
-CREATE TABLE scene_sync_job (
-    id varchar(80) PRIMARY KEY,
-    connection_id varchar(80) NOT NULL REFERENCES scene_provider_connection(id),
-    workspace_code varchar(200) NOT NULL,
-    external_application_code varchar(200) NOT NULL,
-    external_version_code varchar(200) NOT NULL,
+    application_id varchar(80) REFERENCES scene_application(id), -- 同步未识别本地应用时允许为空
+    submission_extension_id varchar(80),             -- 发布/审核相关操作引用本地补充记录
+    operation varchar(20) NOT NULL,
     actor_subject varchar(200) NOT NULL,
     organization_id varchar(200),
     request_id varchar(100) NOT NULL CHECK (char_length(request_id) BETWEEN 8 AND 100),
+    idempotency_scope varchar(80) GENERATED ALWAYS AS
+        (CASE WHEN operation = 'sync' THEN '@sync' ELSE application_id END) STORED,
     request_fingerprint char(64) NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
-    application_id varchar(80),                       -- 成功确定本地归属后填写
-    publication_id varchar(80),                       -- 新导入或重复版本沿用的申请
-    status varchar(20) NOT NULL DEFAULT 'running',
-    message text NOT NULL DEFAULT '',
-    field_mapping jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(field_mapping) = 'array'),
-    source_snapshot jsonb CHECK (jsonb_typeof(source_snapshot) = 'object'),
-    retry_of_id varchar(80) REFERENCES scene_sync_job(id), -- 重试创建新请求，不覆盖原始失败记录
+    mode varchar(20) NOT NULL CHECK (mode IN ('simulation','live')),
+    status varchar(20) NOT NULL DEFAULT 'queued',
+    provider_profile varchar(80),                    -- 调用的后端环境配置名
+    workspace_code varchar(200),                     -- 同步的外部工作空间
+    agent_code varchar(200),                         -- 同步/调用的外部智能体编号
+    agent_version_code varchar(200),                 -- 发起时锁定的外部运行版本
+    market_version_id varchar(200),                  -- 发起时相关 HiMarket 版本编号
+    external_request_id varchar(300),
+    external_session_id varchar(300),
+    external_submission_id varchar(200),
+    request_data jsonb,                             -- 外部重试/历史需要时保存已脱敏输入；无需则 NULL
+    result_data jsonb,                              -- 个人历史或相同请求重放需要的结果，可设置保留期
+    detail jsonb NOT NULL DEFAULT '{}',             -- 同步字段映射/下载文件名等类型特有的少量字段
+    error_code varchar(100),
+    error_message text NOT NULL DEFAULT '',
+    duration_ms bigint CHECK (duration_ms >= 0),
+    retry_of_id varchar(80) REFERENCES scene_activity(id),
     created_at timestamptz NOT NULL DEFAULT now(),
+    started_at timestamptz,
+    deadline_at timestamptz,
     completed_at timestamptz,
-    CONSTRAINT uq_scene_sync_request UNIQUE (actor_subject, request_id),
-    CONSTRAINT fk_scene_sync_application FOREIGN KEY (application_id) REFERENCES scene_application(id),
-    CONSTRAINT fk_scene_sync_publication FOREIGN KEY (application_id, publication_id)
-        REFERENCES scene_publication(application_id, id) MATCH FULL,
-    CONSTRAINT ck_scene_sync_status CHECK (status IN ('running','succeeded','unchanged','failed')),
-    CONSTRAINT ck_scene_sync_result CHECK (
-        status NOT IN ('succeeded','unchanged') OR publication_id IS NOT NULL
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_scene_activity_request UNIQUE (actor_subject, operation, idempotency_scope, request_id),
+    CONSTRAINT fk_scene_activity_extension FOREIGN KEY (application_id, submission_extension_id)
+        REFERENCES scene_submission_extension(application_id, id),
+    CONSTRAINT ck_scene_activity_extension CHECK (submission_extension_id IS NULL OR application_id IS NOT NULL),
+    CONSTRAINT ck_scene_activity_operation CHECK (
+        operation IN ('run','download','sync','save_draft','submit_review','review_decision','publish','subscribe')
     ),
-    CONSTRAINT ck_scene_sync_completion CHECK ((status = 'running') = (completed_at IS NULL)),
-    CONSTRAINT ck_scene_sync_retry CHECK (retry_of_id IS NULL OR retry_of_id <> id),
-    CONSTRAINT ck_scene_sync_codes CHECK (
-        btrim(workspace_code) <> '' AND btrim(external_application_code) <> ''
-        AND btrim(external_version_code) <> ''
-    )
+    CONSTRAINT ck_scene_activity_application CHECK (operation = 'sync' OR application_id IS NOT NULL),
+    CONSTRAINT ck_scene_activity_sync_target CHECK (operation <> 'sync' OR (
+        provider_profile IS NOT NULL AND btrim(provider_profile) <> ''
+        AND workspace_code IS NOT NULL AND btrim(workspace_code) <> ''
+        AND agent_code IS NOT NULL AND btrim(agent_code) <> ''
+        AND agent_version_code IS NOT NULL AND btrim(agent_version_code) <> ''
+    )),
+    CONSTRAINT ck_scene_activity_status CHECK (
+        status IN ('queued','running','succeeded','failed','unchanged','timed_out','unknown')
+    ),
+    CONSTRAINT ck_scene_activity_unchanged CHECK (status <> 'unchanged' OR operation = 'sync'),
+    CONSTRAINT ck_scene_activity_completion CHECK (
+        (status IN ('succeeded','failed','unchanged','timed_out') AND completed_at IS NOT NULL)
+        OR (status IN ('queued','running','unknown') AND completed_at IS NULL)
+    ),
+    CONSTRAINT ck_scene_activity_json CHECK (
+        (request_data IS NULL OR jsonb_typeof(request_data) = 'object') AND jsonb_typeof(detail) = 'object'
+    ),
+    CONSTRAINT ck_scene_activity_retry CHECK (retry_of_id IS NULL OR retry_of_id <> id),
+    CONSTRAINT ck_scene_activity_time CHECK (completed_at IS NULL OR completed_at >= created_at)
 );
-CREATE INDEX ix_scene_sync_owner ON scene_sync_job(actor_subject, created_at DESC);
-CREATE INDEX ix_scene_sync_org ON scene_sync_job(organization_id, created_at DESC);
-CREATE INDEX ix_scene_sync_source ON scene_sync_job(
-    connection_id, workspace_code, external_application_code, external_version_code
-);
-CREATE INDEX ix_scene_sync_publication ON scene_sync_job(application_id, publication_id);
-CREATE INDEX ix_scene_sync_retry ON scene_sync_job(retry_of_id);
-COMMENT ON TABLE scene_sync_job IS '工具链导入、字段映射、重复同步与失败重试记录';
+CREATE INDEX ix_scene_activity_personal ON scene_activity(actor_subject, operation, created_at DESC);
+CREATE INDEX ix_scene_activity_application ON scene_activity(application_id, operation, mode, status, created_at DESC);
+CREATE INDEX ix_scene_activity_org ON scene_activity(organization_id, created_at DESC);
+CREATE INDEX ix_scene_activity_recovery ON scene_activity(deadline_at) WHERE status IN ('queued','running','unknown');
+CREATE INDEX ix_scene_activity_extension ON scene_activity(application_id, submission_extension_id);
+CREATE INDEX ix_scene_activity_retry ON scene_activity(retry_of_id);
+COMMENT ON TABLE scene_activity IS '本平台业务请求与任务记录；复用恢复机制但按操作类型执行各自规则';
+COMMENT ON COLUMN scene_activity.status IS '调用结果状态；外部提交成功不代表资源审核通过，后者应查询 HiMarket';
+COMMENT ON COLUMN scene_activity.idempotency_scope IS
+    '同步按用户和请求去重，其他操作按用户/类型/应用/请求去重；迟到的 application_id 不改变同步去重范围';
 
--- 14 通知事件：审核结果、订阅新版、运行失败报警；只包含站内消息。
+-- 06 审核补充留痕：记录本平台三项评分及建议，不把本地建议当作 HiMarket 最终审批状态。
+CREATE TABLE scene_review_note (
+    id varchar(80) PRIMARY KEY,
+    application_id varchar(80) NOT NULL,
+    submission_extension_id varchar(80) NOT NULL,
+    decision_activity_id varchar(80),                -- 如发起外部审批，关联持久化操作，结果查询 activity
+    reviewer_subject varchar(200) NOT NULL,
+    recommendation varchar(20) NOT NULL CHECK (recommendation IN ('approved','rejected','needs_changes')),
+    reason varchar(2000) NOT NULL DEFAULT '',
+    completeness_score smallint CHECK (completeness_score BETWEEN 1 AND 5),
+    usability_score smallint CHECK (usability_score BETWEEN 1 AND 5),
+    security_score smallint CHECK (security_score BETWEEN 1 AND 5),
+    minimum_score smallint NOT NULL CHECK (minimum_score BETWEEN 1 AND 5),
+    policy_snapshot jsonb NOT NULL CHECK (jsonb_typeof(policy_snapshot) = 'object'),
+    evidence_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(evidence_snapshot) = 'object'),
+    reviewed_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT fk_scene_review_extension FOREIGN KEY (application_id, submission_extension_id)
+        REFERENCES scene_submission_extension(application_id, id),
+    CONSTRAINT fk_scene_review_activity FOREIGN KEY (decision_activity_id) REFERENCES scene_activity(id),
+    CONSTRAINT uq_scene_review_round UNIQUE (submission_extension_id),
+    CONSTRAINT ck_scene_review_scores CHECK (num_nonnulls(completeness_score, usability_score, security_score) IN (0,3)),
+    CONSTRAINT ck_scene_review_approve CHECK (recommendation <> 'approved' OR (
+        completeness_score IS NOT NULL AND usability_score IS NOT NULL AND security_score IS NOT NULL
+        AND completeness_score >= minimum_score AND usability_score >= minimum_score AND security_score >= minimum_score
+    )),
+    CONSTRAINT ck_scene_review_reason CHECK (recommendation = 'approved' OR btrim(reason) <> '')
+);
+CREATE INDEX ix_scene_review_history ON scene_review_note(reviewer_subject, reviewed_at DESC);
+CREATE INDEX ix_scene_review_application ON scene_review_note(application_id, reviewed_at DESC);
+CREATE INDEX ix_scene_review_activity ON scene_review_note(decision_activity_id);
+COMMENT ON TABLE scene_review_note IS '本地质量评分、补材料意见及审计证据；不重建完整 HiMarket 审批状态机';
+COMMENT ON COLUMN scene_review_note.evidence_snapshot IS
+    '按审计需要保留当时相关字段及外部版本引用；不是每次查询都复制整份外部资源';
+
+-- 07 站内消息：每个接收人一行，read_at 在本行保存，不再建已读回执表。
 CREATE TABLE scene_notification (
     id varchar(80) PRIMARY KEY,
-    event_key varchar(500) NOT NULL UNIQUE,           -- 事件去重键，包含版本/审核/接收对象等编号
     application_id varchar(80) NOT NULL REFERENCES scene_application(id),
+    actor_subject varchar(200) NOT NULL,             -- 具体接收人，不使用 @system-admin 广播角色作用户
+    event_key varchar(300) NOT NULL,
     kind varchar(20) NOT NULL CHECK (kind IN ('review','new_version','run_failure')),
-    recipient_kind varchar(10) NOT NULL CHECK (recipient_kind IN ('user','role')),
-    recipient_id varchar(200) NOT NULL,               -- 用户 subject；角色通知用 admin
-    title varchar(1000) NOT NULL,
+    title text NOT NULL,
+    read_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_scene_notification_recipient CHECK (
-        btrim(recipient_id) <> '' AND (recipient_kind <> 'role' OR recipient_id = 'admin')
-    )
+    CONSTRAINT uq_scene_notification_recipient UNIQUE (actor_subject, event_key)
 );
-CREATE INDEX ix_scene_notification_recipient
-    ON scene_notification(recipient_kind, recipient_id, created_at DESC);
+CREATE INDEX ix_scene_notification_unread ON scene_notification(actor_subject, created_at DESC) WHERE read_at IS NULL;
 CREATE INDEX ix_scene_notification_application ON scene_notification(application_id);
-COMMENT ON TABLE scene_notification IS '站内消息；系统管理员广播按角色保存事件，个人阅读状态另存';
+COMMENT ON TABLE scene_notification IS '本平台个人站内通知；管理员消息发送时展开接收人，分别标记已读';
 
--- 15 阅读回执：同一条管理员广播由各管理员分别标记已读。
-CREATE TABLE scene_notification_receipt (
-    notification_id varchar(80) NOT NULL REFERENCES scene_notification(id),
-    actor_subject varchar(200) NOT NULL,
-    read_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (notification_id, actor_subject)
-);
-CREATE INDEX ix_scene_notification_receipt_actor ON scene_notification_receipt(actor_subject);
-COMMENT ON TABLE scene_notification_receipt IS '用户个人阅读状态；无回执即未读，后端校验消息接收权限';
-
--- 16 表单/管理列配置：结构与当前 configuration.py 保持一致。
-CREATE TABLE scene_form_configuration (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1), -- 单例
+-- 08 平台配置：仅表单、管理列、展示/本地评分/通知规则；分类走 HiMarket 分类接口。
+CREATE TABLE scene_configuration (
+    key varchar(80) PRIMARY KEY,                     -- form/workflow
+    value jsonb NOT NULL CHECK (jsonb_typeof(value) = 'object'),
     revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-    required_fields jsonb NOT NULL CHECK (jsonb_typeof(required_fields) = 'array'),
-    field_hints jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(field_hints) = 'object'),
-    management_columns jsonb NOT NULL CHECK (jsonb_typeof(management_columns) = 'array'),
     updated_by_subject varchar(200),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_scene_form_core_fields CHECK (
-        required_fields @> '["name","version","category","owner","summary"]'::jsonb
-    ),
-    CONSTRAINT ck_scene_form_columns CHECK (jsonb_array_length(management_columns) > 0)
-);
-COMMENT ON TABLE scene_form_configuration IS '发布表单必填字段、提示及管理列表列顺序；字段合法性沿用后端校验';
-
--- 17 业务规则配置：小型有序数组整体读写；保存前校验应用/分类存在与调用者权限。
-CREATE TABLE scene_workflow_policy (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-    toolchain_url varchar(2000) NOT NULL DEFAULT '',   -- 浏览器开发入口，非后台调用基地址
-    announcement varchar(1000) NOT NULL DEFAULT '',
-    recommended_ids varchar(80)[] NOT NULL DEFAULT '{}', -- 推荐应用按数组顺序显示，最多 12 个
-    hot_category_ids varchar(80)[] NOT NULL DEFAULT '{}', -- 分类编号，读取时还原当前 API 的中文名称
-    default_sort varchar(30) NOT NULL DEFAULT 'recommended',
-    page_size smallint NOT NULL DEFAULT 12 CHECK (page_size IN (6,12,24)),
-    sensitive_terms varchar(80)[] NOT NULL DEFAULT '{}', -- 正式词库由管理员配置，不植入演示词
-    minimum_quality_score smallint NOT NULL DEFAULT 3 CHECK (minimum_quality_score BETWEEN 1 AND 5),
-    notifications_enabled boolean NOT NULL DEFAULT true,
-    notification_template varchar(300) NOT NULL DEFAULT '{name}：{status}',
-    failure_threshold smallint NOT NULL DEFAULT 3 CHECK (failure_threshold BETWEEN 1 AND 100),
-    updated_by_subject varchar(200),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_scene_policy_sort CHECK (
-        default_sort IN ('recommended','recent_download','downloads','favorites')
-    ),
-    CONSTRAINT ck_scene_policy_arrays CHECK (
-        cardinality(recommended_ids) <= 12 AND cardinality(hot_category_ids) <= 5
-        AND cardinality(sensitive_terms) <= 100 AND array_position(recommended_ids, NULL) IS NULL
-        AND array_position(hot_category_ids, NULL) IS NULL AND array_position(sensitive_terms, NULL) IS NULL
+    CONSTRAINT ck_scene_configuration_key CHECK (key IN ('form','workflow')),
+    CONSTRAINT ck_scene_configuration_local_fields CHECK (
+        (key = 'form' AND value - ARRAY['requiredFields','fieldHints','managementColumns']::text[] = '{}'::jsonb)
+        OR (key = 'workflow' AND value - ARRAY['toolchainUrl','announcement','recommendedIds',
+            'hotCategoryRefs','defaultSort','pageSize','sensitiveTerms','minimumQualityScore',
+            'notificationsEnabled','notificationTemplate','failureThreshold']::text[] = '{}'::jsonb)
     )
 );
-COMMENT ON TABLE scene_workflow_policy IS '目录展示、发布规则、通知模板及开发入口；有序小数组由业务层校验引用';
+COMMENT ON TABLE scene_configuration IS '平台表单、列表、运营及补充审核配置；不存外部分类别名或分类字典。热门分类仅引用 marketProfile/categoryId；配置结构继续由后端校验';
 
--- 数据完整性：已发布资料与审核历史不可直接覆盖。
--- 这些触发器不实现审核流程；状态切换、权限、通知写入仍必须放在仓储事务中。
-CREATE FUNCTION scene_reject_review_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+-- 请求身份和已建立的关联不可被后续结果写入改掉；仅允许未识别的同步首次补本地应用。
+CREATE FUNCTION scene_guard_activity_identity() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION '审核历史只能新增，不能修改或删除' USING ERRCODE = '23514';
-END;
-$$;
-CREATE TRIGGER scene_review_append_only BEFORE UPDATE OR DELETE ON scene_review
-    FOR EACH ROW EXECUTE FUNCTION scene_reject_review_mutation();
-
-CREATE FUNCTION scene_freeze_released_version() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF OLD.released_at IS NOT NULL THEN
-        RAISE EXCEPTION '已发布版本不可覆盖，请创建新版本' USING ERRCODE = '23514';
-    END IF;
-    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    IF ROW(NEW.id,NEW.actor_subject,NEW.operation,NEW.request_id,NEW.request_fingerprint,NEW.mode)
+       IS DISTINCT FROM ROW(OLD.id,OLD.actor_subject,OLD.operation,OLD.request_id,OLD.request_fingerprint,OLD.mode)
+       OR (OLD.application_id IS NOT NULL AND NEW.application_id IS DISTINCT FROM OLD.application_id)
+       OR (OLD.submission_extension_id IS NOT NULL AND NEW.submission_extension_id IS DISTINCT FROM OLD.submission_extension_id)
+    THEN RAISE EXCEPTION '已登记请求的身份、指纹和归属不可改写' USING ERRCODE='23514'; END IF;
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER scene_version_freeze BEFORE UPDATE OR DELETE ON scene_application_version
-    FOR EACH ROW EXECUTE FUNCTION scene_freeze_released_version();
+CREATE TRIGGER scene_activity_identity BEFORE UPDATE ON scene_activity
+    FOR EACH ROW EXECUTE FUNCTION scene_guard_activity_identity();
 
-CREATE FUNCTION scene_freeze_released_dependency() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-    old_id varchar(80);
-    new_id varchar(80);
-    version_row record;
+-- 提交补充资料冻结；允许稍后登记/补齐外部审核编号，不允许替换已有外部归属。
+CREATE FUNCTION scene_freeze_submission_extension() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF TG_OP IN ('UPDATE','DELETE') THEN old_id := OLD.version_id; END IF;
-    IF TG_OP IN ('INSERT','UPDATE') THEN new_id := NEW.version_id; END IF;
-    -- 按稳定顺序锁住关联版本，避免“检查未发布后，另一事务已发布”的并发窗口。
-    FOR version_row IN SELECT id, released_at FROM scene_application_version
-        WHERE id IN (old_id, new_id) ORDER BY id FOR UPDATE
-    LOOP
-        IF version_row.released_at IS NOT NULL THEN
-            RAISE EXCEPTION '已发布版本的依赖不可修改' USING ERRCODE = '23514';
+    IF OLD.frozen_at IS NOT NULL THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION '已提交补充资料不可删除' USING ERRCODE = '23514';
         END IF;
-    END LOOP;
+        IF ROW(NEW.id,NEW.application_id,NEW.submission_key,NEW.round_no,NEW.created_by_subject,
+               NEW.local_fields,NEW.form_rules_snapshot,NEW.security_level,NEW.priority,NEW.frozen_at)
+           IS DISTINCT FROM ROW(OLD.id,OLD.application_id,OLD.submission_key,OLD.round_no,OLD.created_by_subject,
+               OLD.local_fields,OLD.form_rules_snapshot,OLD.security_level,OLD.priority,OLD.frozen_at)
+           OR (OLD.market_profile IS NOT NULL AND NEW.market_profile IS DISTINCT FROM OLD.market_profile)
+           OR (OLD.external_submission_id IS NOT NULL AND NEW.external_submission_id IS DISTINCT FROM OLD.external_submission_id)
+           OR (OLD.external_version_id IS NOT NULL AND NEW.external_version_id IS DISTINCT FROM OLD.external_version_id)
+           OR (OLD.agent_version_code IS NOT NULL AND NEW.agent_version_code IS DISTINCT FROM OLD.agent_version_code)
+        THEN RAISE EXCEPTION '已提交资料不可覆盖，补材料请新增轮次' USING ERRCODE = '23514'; END IF;
+    END IF;
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER scene_dependency_freeze BEFORE INSERT OR UPDATE OR DELETE ON scene_version_dependency
-    FOR EACH ROW EXECUTE FUNCTION scene_freeze_released_dependency();
+CREATE TRIGGER scene_extension_freeze BEFORE UPDATE OR DELETE ON scene_submission_extension
+    FOR EACH ROW EXECUTE FUNCTION scene_freeze_submission_extension();
 
--- 在提交时检查“当前版本已发布”和“非全部开放至少有一个目标”。
-CREATE FUNCTION scene_check_application_links() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-    target_application_id varchar(80);
-    app_row record;
+CREATE FUNCTION scene_guard_review_note() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE frozen_time timestamptz;
 BEGIN
-    IF TG_TABLE_NAME = 'scene_application' THEN
-        target_application_id := NEW.id;
-    ELSIF TG_OP = 'DELETE' THEN
-        target_application_id := OLD.application_id;
-    ELSE
-        target_application_id := NEW.application_id;
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION '审核补充记录只能新增' USING ERRCODE = '23514';
     END IF;
-    SELECT * INTO app_row FROM scene_application WHERE id = target_application_id FOR UPDATE;
-    IF NOT FOUND THEN RETURN NULL; END IF;
-    IF app_row.current_version_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM scene_application_version
-        WHERE id = app_row.current_version_id AND application_id = app_row.id AND released_at IS NOT NULL
-    ) THEN
-        RAISE EXCEPTION '当前上架版本必须属于本应用且已经发布' USING ERRCODE = '23514';
+    SELECT frozen_at INTO frozen_time FROM scene_submission_extension
+        WHERE id = NEW.submission_extension_id FOR UPDATE;
+    IF frozen_time IS NULL THEN
+        RAISE EXCEPTION '审核前必须冻结对应轮次的补充资料' USING ERRCODE = '23514';
     END IF;
-    IF app_row.visibility_scope <> 'all' AND NOT EXISTS (
-        SELECT 1 FROM scene_visibility_target
-        WHERE application_id = app_row.id AND scope = app_row.visibility_scope
-    ) THEN
-        RAISE EXCEPTION '指定开放范围时至少需要一个有效目标' USING ERRCODE = '23514';
-    END IF;
+    IF NEW.decision_activity_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM scene_activity WHERE id=NEW.decision_activity_id
+        AND application_id=NEW.application_id AND submission_extension_id=NEW.submission_extension_id
+        AND operation='review_decision'
+    ) THEN RAISE EXCEPTION '审批操作必须关联本申请的 review_decision 记录' USING ERRCODE = '23514'; END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER scene_review_guard BEFORE INSERT OR UPDATE OR DELETE ON scene_review_note
+    FOR EACH ROW EXECUTE FUNCTION scene_guard_review_note();
+
+-- 开放范围在事务提交时核对，允许一个事务中切换类型并替换目标。
+CREATE FUNCTION scene_check_visibility() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE app_id varchar(80); scope_value varchar(20);
+BEGIN
+    IF TG_TABLE_NAME='scene_application' THEN app_id:=NEW.id;
+    ELSIF TG_OP='DELETE' THEN app_id:=OLD.application_id;
+    ELSE app_id:=NEW.application_id; END IF;
+    SELECT visibility_scope INTO scope_value FROM scene_application WHERE id=app_id FOR UPDATE;
+    IF FOUND AND scope_value <> 'all' AND NOT EXISTS (
+        SELECT 1 FROM scene_visibility_target WHERE application_id=app_id AND scope=scope_value
+    ) THEN RAISE EXCEPTION '指定开放范围至少需要一个目标' USING ERRCODE='23514'; END IF;
     RETURN NULL;
 END;
 $$;
-CREATE CONSTRAINT TRIGGER scene_application_links AFTER INSERT OR UPDATE ON scene_application
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION scene_check_application_links();
-CREATE CONSTRAINT TRIGGER scene_visibility_links AFTER INSERT OR DELETE ON scene_visibility_target
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION scene_check_application_links();
--- 范围目标的更改按“删除旧行 + 新增行”进行，避免 UPDATE 移走另一应用的最后一个目标。
-CREATE FUNCTION scene_reject_target_update() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION '可见对象请在同一事务中删除旧项再新增' USING ERRCODE = '23514';
-END;
+CREATE CONSTRAINT TRIGGER scene_application_visibility AFTER INSERT OR UPDATE ON scene_application
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION scene_check_visibility();
+CREATE CONSTRAINT TRIGGER scene_target_visibility AFTER INSERT OR DELETE ON scene_visibility_target
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION scene_check_visibility();
+CREATE FUNCTION scene_reject_visibility_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION '范围目标请在同一事务中删除旧项再新增' USING ERRCODE='23514'; END;
 $$;
 CREATE TRIGGER scene_visibility_no_update BEFORE UPDATE ON scene_visibility_target
-    FOR EACH ROW EXECUTE FUNCTION scene_reject_target_update();
+    FOR EACH ROW EXECUTE FUNCTION scene_reject_visibility_update();
 
--- 最小初始化：只有真实字典和空配置，不写假账号、假应用或模拟统计。
-INSERT INTO scene_category(id, name, sort_order) VALUES
-    ('document', '文档创作', 10), ('meeting', '会议办公', 20), ('data', '数据处理', 30),
-    ('translation', '翻译沟通', 40), ('legal', '法律合规', 50);
-INSERT INTO scene_form_configuration(required_fields, management_columns) VALUES
-    ('["name","version","category","owner","summary"]',
-     '["category","owner","version","usage","updatedAt"]');
-INSERT INTO scene_workflow_policy(id) VALUES (1);
+-- 只有平台配置，不插入分类字典、演示用户、应用或统计。
+-- HiMarket P418/P422 提供分类查询/保存。hotCategoryRefs 只保存
+-- {"marketProfile":"配置名","categoryId":"对方编号"} 引用；名称和分类详情通过接口取。
+INSERT INTO scene_configuration(key,value) VALUES
+('form','{"requiredFields":["name","version","category","owner","summary"],"fieldHints":{},"managementColumns":["category","owner","version","usage","updatedAt"]}'),
+('workflow','{"toolchainUrl":"","announcement":"","recommendedIds":[],"hotCategoryRefs":[],"defaultSort":"recommended","pageSize":12,"sensitiveTerms":[],"minimumQualityScore":3,"notificationsEnabled":true,"notificationTemplate":"{name}：{status}","failureThreshold":3}');
 
--- 视图 1：调用统计按 simulation/live 分组，不把演示次数混进真实业务指标。
-CREATE VIEW scene_application_run_metrics AS
+-- 视图只汇总本平台实际发生的操作，不充当对方全局计量。
+CREATE VIEW scene_run_metrics AS
 SELECT application_id, mode,
-    count(*) AS request_count,
-    count(*) FILTER (WHERE status = 'succeeded') AS success_count,
+    count(*) FILTER (WHERE status='succeeded') AS success_count,
     count(*) FILTER (WHERE status IN ('failed','timed_out')) AS failure_count,
     count(*) FILTER (WHERE status IN ('queued','running','unknown')) AS unresolved_count,
-    round(avg(duration_ms) FILTER (WHERE status IN ('succeeded','failed','timed_out')), 2)
-        AS average_duration_ms,
-    round(100.0 * count(*) FILTER (WHERE status = 'succeeded')
-        / NULLIF(count(*) FILTER (WHERE status IN ('succeeded','failed','timed_out')), 0), 2)
-        AS success_rate_percent
-FROM scene_run GROUP BY application_id, mode;
-COMMENT ON VIEW scene_application_run_metrics IS '按模拟/真实模式分别汇总调用；无完成样本时成功率和耗时为空';
+    round(avg(duration_ms) FILTER (WHERE status IN ('succeeded','failed','timed_out')),2) AS average_duration_ms,
+    round(100.0 * count(*) FILTER (WHERE status='succeeded')
+        / NULLIF(count(*) FILTER (WHERE status IN ('succeeded','failed','timed_out')),0),2) AS success_rate_percent
+FROM scene_activity WHERE operation='run' GROUP BY application_id,mode;
+COMMENT ON VIEW scene_run_metrics IS '仅运行操作；模拟/真实分开，unknown 不计作确定失败，无完成样本时指标为空';
 
--- 视图 2：每个来源先分组再关联，防止收藏×下载×运行笛卡尔积导致数量重复。
 CREATE VIEW scene_application_metrics AS
 SELECT a.id AS application_id,
-    coalesce(i.favorite_count, 0) AS favorite_count,
-    coalesce(i.subscription_count, 0) AS subscription_count,
-    coalesce(i.rating_count, 0) AS rating_count,
-    i.rating_average,
-    coalesce(d.download_count, 0) AS download_count,
-    d.last_downloaded_at,
-    coalesce(live.success_count, 0) AS live_usage_count,
-    coalesce(simulation.success_count, 0) AS simulation_usage_count
+    coalesce(i.favorite_count,0) AS favorite_count, coalesce(i.follower_count,0) AS follower_count,
+    coalesce(i.rating_count,0) AS rating_count, i.rating_average,
+    coalesce(d.download_count,0) AS download_count, d.last_downloaded_at,
+    coalesce(r.success_count,0) AS live_usage_count, coalesce(s.success_count,0) AS simulation_usage_count
 FROM scene_application a
 LEFT JOIN (
     SELECT application_id, count(*) FILTER (WHERE favorite) AS favorite_count,
-        count(*) FILTER (WHERE subscribed) AS subscription_count,
-        count(rating) AS rating_count, round(avg(rating), 2) AS rating_average
+        count(*) FILTER (WHERE follow_updates) AS follower_count,
+        count(rating) AS rating_count,round(avg(rating),2) AS rating_average
     FROM scene_interaction GROUP BY application_id
-) i ON i.application_id = a.id
+) i ON i.application_id=a.id
 LEFT JOIN (
-    SELECT application_id, count(*) AS download_count, max(downloaded_at) AS last_downloaded_at
-    FROM scene_download GROUP BY application_id
-) d ON d.application_id = a.id
-LEFT JOIN scene_application_run_metrics live ON live.application_id = a.id AND live.mode = 'live'
-LEFT JOIN scene_application_run_metrics simulation
-    ON simulation.application_id = a.id AND simulation.mode = 'simulation';
-COMMENT ON VIEW scene_application_metrics IS '从明细推导收藏/订阅/评分/下载/使用量；没有预置业务计数';
+    SELECT application_id,count(*) AS download_count,max(completed_at) AS last_downloaded_at
+    FROM scene_activity WHERE operation='download' AND status='succeeded' AND mode='live' GROUP BY application_id
+) d ON d.application_id=a.id
+LEFT JOIN scene_run_metrics r ON r.application_id=a.id AND r.mode='live'
+LEFT JOIN scene_run_metrics s ON s.application_id=a.id AND s.mode='simulation';
+COMMENT ON VIEW scene_application_metrics IS '平台互动/真实资料下载/分别统计的使用量；先聚合后关联，避免数量乘算';
 
 COMMIT;
 
--- ================= 常用 SQL 示例（全在注释中，不随建表执行） =================
--- 示例中的 :xxx 是 SQLAlchemy 绑定参数；传参不能用字符串拼接。
--- 用户权限须在分页前加入 WHERE；管理员角色和组织归属来自服务端验证身份。
---
--- A. 目录查询、分类、关键词、最近下载排序。LIMIT/OFFSET 前完成权限筛选。
--- SELECT a.id, v.id AS version_id, v.name, v.summary, v.version_label, c.name AS category,
---        m.favorite_count, m.download_count, m.rating_average, m.live_usage_count
--- FROM scene_application a
--- JOIN scene_application_version v ON v.id = a.current_version_id AND v.application_id = a.id
--- JOIN scene_category c ON c.id = v.category_id
--- JOIN scene_application_metrics m ON m.application_id = a.id
--- WHERE v.released_at IS NOT NULL
---   AND (:category_id IS NULL OR v.category_id = :category_id)
---   AND (strpos(lower(v.name || ' ' || v.summary || ' ' || array_to_string(v.tags, ' ')),
---               lower(:keyword)) > 0)
---   AND (
---     :is_system_admin OR a.visibility_scope = 'all'
---     OR (:is_org_admin AND a.organization_id = :organization_id)
---     OR EXISTS (SELECT 1 FROM scene_visibility_target t WHERE t.application_id = a.id
---       AND ((t.scope = 'members' AND t.target_id = :actor_subject)
---         OR (t.scope = 'organizations' AND t.target_id = :organization_id)
---         OR (t.scope = 'projects' AND t.target_id = ANY(CAST(:project_ids AS varchar[])))))
+-- ================== 常用查询及实现约定（以下均为说明，不自动执行） ==================
+-- 1. 基础名称/版本/发布状态优先查询 HiMarket/Agent Dev；授权状态每次按可信身份校验。
+--    不能拿 scene_application 存在或本地评分通过，就判断已发布、已授权。
+--    分类增删改查、Markdown 说明和资源包下载使用 HiMarket，不维护第二份分类/正文/资源包。
+--    缓存按后续性能需求放缓存服务，并设有效期；本版业务表不保存外部目录投影。
+-- 2. 本地范围校验示例（:xxx 为 SQLAlchemy 参数，不是字符串拼接；管理员规则另用可信身份加入）：
+-- SELECT a.id FROM scene_application a WHERE a.id=:application_id AND (
+--   a.visibility_scope='all' OR EXISTS (
+--     SELECT 1 FROM scene_visibility_target t WHERE t.application_id=a.id AND (
+--       (t.scope='members' AND t.target_id=:actor_subject)
+--       OR (t.scope='organizations' AND t.target_id=:organization_id)
+--       OR (t.scope='projects' AND t.target_id=ANY(CAST(:project_ids AS varchar[])))
+--     )
 --   )
--- ORDER BY m.last_downloaded_at DESC NULLS LAST, a.id LIMIT :page_size OFFSET :offset;
--- 下载量/收藏数排序分别改为 m.download_count / m.favorite_count DESC，再加 a.id 稳定排序。
--- 综合排序按当前配置推荐顺序和原业务评分规则在仓储查询中实现，不接受任意前端 SQL 字段。
--- strpos 保持当前“不区分大小写的字面子串”语义；中文包含搜索不会被普通 B-tree 加速。
--- 当前无扩展依赖；真实数据量需要时再选 pg_trgm/检索服务，并用 EXPLAIN 验证。
+-- );
+-- 有本地限制/收藏排序时必须在最终分页前处理全体候选，不能过滤上游一页后冒充完整分页。
+-- 优先使用外部筛选/排序；本地收藏排序仍需组合完整候选，规模化投影须另行设计，不隐式整包入库。
 --
--- B. 收藏写入前检查当前用户的应用访问权限，再原子写入；一人一应用不会重复计数。
--- INSERT INTO scene_interaction(application_id, actor_subject, favorite, favorited_at)
--- VALUES (:application_id, :actor_subject, true, now())
--- ON CONFLICT (application_id, actor_subject)
--- DO UPDATE SET favorite = true,
---   favorited_at = coalesce(scene_interaction.favorited_at, EXCLUDED.favorited_at), updated_at = now();
--- 取消收藏：UPDATE ... SET favorite = false, favorited_at = NULL, updated_at = now() WHERE ...;
+-- 3. 收藏（先检查访问权限）：
+-- INSERT INTO scene_interaction(application_id,actor_subject,favorite,favorited_at)
+-- VALUES (:application_id,:actor_subject,true,now())
+-- ON CONFLICT (application_id,actor_subject) DO UPDATE SET favorite=true,
+--   favorited_at=coalesce(scene_interaction.favorited_at,EXCLUDED.favorited_at),updated_at=now();
+-- 取消收藏时同时设 favorite=false、favorited_at=NULL。关注与评分分别更新，不互相覆盖。
 --
--- C. 草稿/规则修改必须匹配 revision；更新 0 行即冲突，后端返回 409。
--- UPDATE scene_publication SET revision = revision + 1, updated_at = now(),
---   last_edited_by_subject = :actor_subject
--- WHERE id = :publication_id AND revision = :expected_revision
---   AND status IN ('draft','rejected','needs_changes') RETURNING revision;
--- 版本资料、依赖更新必须与此语句同一事务；无返回行则整体回滚。
+-- 4. revision 乐观锁（返回 0 行则业务返回 409，不继续写入同一事务的其他内容）：
+-- UPDATE scene_configuration SET value=CAST(:value AS jsonb),revision=revision+1,
+--   updated_by_subject=:actor_subject,updated_at=now()
+-- WHERE key=:key AND revision=:expected_revision RETURNING revision;
+-- JSON 结构、必填字段、分类、推荐引用、敏感词和配置权限仍沿用 Python 业务校验。
 --
--- D. 审核通过事务顺序（不是单独执行一个状态 UPDATE）：
--- BEGIN -> 锁 scene_application -> 锁 scene_publication -> 检查 pending/revision/base_version_id
--- -> 校验依赖、资料、权限、三项评分、当前阈值 -> INSERT scene_review
--- -> UPDATE scene_publication SET status='approved', revision=revision+1
--- -> UPDATE scene_application_version SET released_at=now(), updated_at=now()
--- -> UPDATE scene_application SET current_version_id=:version_id, revision=revision+1, updated_at=now()
--- -> INSERT scene_notification（审核结果及订阅新版消息） -> COMMIT。
--- 审核拒绝/补材料也写审核快照与通知，但不改当前上架版本。
+-- 5. 写外部服务：本地事务登记 activity(queued)+必要补充/审核记录 -> COMMIT
+--    -> 工作执行者用条件 UPDATE queued->running 领取 -> 调用外部服务 -> 更新最终结果。
+--    不保持数据库事务等待网络；只有成功登记/领取的执行者可以发起调用。
+--    相同请求先比较规范化 SHA-256，不同内容返回 409；mode 纳入指纹，不可跨演示/真实重用。
+--    同步填入 application_id 后去重范围仍是 @sync，防止身份关联改变导致重复导入。
+--    超时/断线结果不明用 unknown，先查询外部状态，不盲目重新执行发布/审批/扣费请求。
+--    正式接入仍需供应方幂等支持、worker 领取/恢复、超时和响应映射代码。
 --
--- E. 运行幂等：先 INSERT ... ON CONFLICT DO NOTHING RETURNING id 并提交 running 记录。
--- 只有插入成功的工作者调用供应方；冲突时读取原记录，比较 fingerprint，不能重复调用。
--- 外部请求放在数据库事务之外；拿到结果再按原状态条件更新，完成后不可重复结算。
--- 请求 SHA-256 不含“重试时的当前版本 ID”；复用请求 ID 应返回最初那次绑定的版本和结果。
--- unknown/running 超时需查询供应方结果或利用供应方幂等键恢复，不得直接重放扣费请求。
+-- 6. 审核：先冻结本轮补充资料，校验分数，记本地 recommendation 和外部操作请求。
+--    recommendation='approved' 只是本地建议通过；以 HiMarket 确认的审核/发布状态决定上架。
+--    HiMarket 的 needs_changes 映射未明确时，本地补充闸门应阻止继续发布，不能伪造上游状态。
+--    补材料创建新 round_no；旧评分与快照保留。普通已发布资料变更仍应走新的外部版本/审核。
 --
--- F. 我的未读消息：角色判断由可信身份提供；不存在个人回执就算未读。
--- SELECT n.* FROM scene_notification n
--- LEFT JOIN scene_notification_receipt r
---   ON r.notification_id = n.id AND r.actor_subject = :actor_subject
--- WHERE r.notification_id IS NULL
---   AND ((n.recipient_kind='user' AND n.recipient_id=:actor_subject)
---     OR (:is_system_admin AND n.recipient_kind='role' AND n.recipient_id='admin'));
--- 返回前继续按应用开放范围过滤；属于本人的审核通知允许在应用尚未上架时查看。
--- 标记已读先验证接收权限，再 INSERT receipt ... ON CONFLICT DO NOTHING。
+-- 7. 未读消息：SELECT * FROM scene_notification
+--    WHERE actor_subject=:actor_subject AND read_at IS NULL ORDER BY created_at DESC;
+-- 标记：UPDATE scene_notification SET read_at=coalesce(read_at,now())
+--    WHERE id=:notification_id AND actor_subject=:actor_subject;
+-- 读取/标记还应校验应用可见权限，本人的审核结果在尚未发布时可以查看。
 --
--- 生产接入事项：此脚本通过后仍需 ORM、仓储适配与 Alembic 迁移。
--- 所有审计/版本关联默认 NO ACTION，不随删除应用级联清空历史；当前没有删除业务入口。
--- 批量归档/脱敏另做受控维护迁移。主备共用这套表，由 PostgreSQL 复制；Redis 不做事实来源。
+-- 8. 外部输入输出只保存历史/幂等/审计所需部分；按保留期清理载荷仍应保留请求幂等标记。
+--    清理后重复旧请求不得重新调用，只能返回已处理状态/结果已过期。
+--    不存 API 密钥、模型权重、知识正文、向量索引、完整工具链内部定义。
+-- 9. 本脚本是首次建表设计，不包含 ORM/仓储/HiMarket 适配实现；主备复制同一套表。
+--    如果现场不启用 HiMarket，应重新确定本地目录/版本/发布存储，不能直接套用本接口优先方案。
+-- 10. 范式：主体按应用、个人互动、补充提交、审核和操作拆开；用户资料复用公共身份模块。
+--     范围类型用于复合外键，规则/证据快照用于历史追溯，JSON 用于有限扩展；不宣称严格全表三范式。
+--     此文件只用于尚未创建场景表的库；若已执行 V2，须先做显式数据迁移，不可直接重跑。
