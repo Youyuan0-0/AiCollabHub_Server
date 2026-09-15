@@ -19,7 +19,12 @@ def conversation_settings(tmp_path, monkeypatch):
     url = f"sqlite:///{(tmp_path / 'conversations.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", url)
     command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
-    return Settings(app_env="test", database_url=url, _env_file=None)
+    return Settings(
+        app_env="test",
+        database_url=url,
+        conversation_attachment_dir=tmp_path / "attachments",
+        _env_file=None,
+    )
 
 
 def test_conversation_round_trip_and_fixed_history(conversation_settings):
@@ -81,6 +86,8 @@ def test_invalid_inputs_and_production_disabled(conversation_settings):
             ("post", f"{root}/new"),
             ("get", f"{root}/demo-chat-1/messages"),
             ("post", f"{root}/demo-chat-1/messages"),
+            ("post", f"{root}/demo-chat-1/attachments"),
+            ("get", f"{root}/demo-chat-1/attachments/example/content"),
         ):
             response = getattr(client, method)(path)
             assert response.status_code == 503
@@ -205,3 +212,172 @@ def test_legacy_record_and_stale_update(conversation_settings):
             assert store.get("legacy") is None
     finally:
         engine.dispose()
+
+
+def test_attachment_round_trip_restart_and_scope(conversation_settings):
+    """验证原文件下载、消息与后续上下文关联、重启保留，以及跨会话和删除后的访问限制。"""
+    root = "/api/v1/conversations"
+    contexts = []
+
+    class RecordingProvider:
+        """记录附件元信息，确保上下文不会只保留问题文字。"""
+
+        def reply(self, messages, **options):
+            contexts.append(messages)
+            return ChatReply(text="收到问题")
+
+    with TestClient(create_app(conversation_settings, chat_provider=RecordingProvider())) as client:
+        identifier = client.post(f"{root}/new", json={}).json()["id"]
+        uploaded = client.post(
+            f"{root}/{identifier}/attachments", files={"file": ("资料.txt", "附件正文".encode())}
+        )
+        assert uploaded.status_code == 201
+        attachment = uploaded.json()
+        assert attachment["status"] == "stored"
+        data = {
+            "question": "请查收附件",
+            "model": "test",
+            "knowledgeBase": "",
+            "attachmentIds": [attachment["id"]],
+        }
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 200
+        data["attachmentIds"] = []
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 200
+        assert contexts[-1][0].attachments[0].id == attachment["id"]
+        other = client.post(f"{root}/new", json={}).json()["id"]
+        data["attachmentIds"] = [attachment["id"]]
+        assert client.post(f"{root}/{other}/messages", json=data).status_code == 404
+        assert (
+            client.get(f"{root}/{other}/attachments/{attachment['id']}/content").status_code == 404
+        )
+        data["attachmentIds"] *= 2
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 422
+    with TestClient(create_app(conversation_settings)) as client:
+        record = client.get(f"{root}/{identifier}/messages").json()
+        assert record["messages"][0]["attachments"] == [attachment]
+        download_url = f"{root}/{identifier}/attachments/{attachment['id']}/content"
+        downloaded = client.get(download_url)
+        assert downloaded.content == "附件正文".encode()
+        assert downloaded.headers["content-disposition"].startswith("attachment;")
+        assert downloaded.headers["x-content-type-options"] == "nosniff"
+        assert client.delete(f"{root}/{identifier}").status_code == 204
+        assert client.get(download_url).status_code == 404
+
+
+def test_attachment_validation_and_failed_turn_retry(conversation_settings):
+    """坏文件不能落盘；回答失败不关联半轮消息，修复提供器后可复用原附件编号。"""
+    from app.services.chat_provider import EchoChatProvider
+
+    class FailingProvider:
+        """模拟上传已完成但模型调用失败。"""
+
+        def reply(self, messages, **options):
+            raise RuntimeError("failed")
+
+    app = create_app(conversation_settings, chat_provider=FailingProvider())
+    with TestClient(app) as client:
+        root = "/api/v1/conversations"
+        identifier = client.post(f"{root}/new", json={}).json()["id"]
+        upload_url = f"{root}/{identifier}/attachments"
+        for name, content, status in (
+            ("empty.txt", b"", 422),
+            ("program.exe", b"test", 415),
+            ("big.txt", b"x" * (10 * 1024 * 1024 + 1), 413),
+            ("huge.txt", b"x" * (11 * 1024 * 1024), 413),
+        ):
+            assert client.post(upload_url, files={"file": (name, content)}).status_code == status
+        assert not list(conversation_settings.conversation_attachment_dir.glob("*"))
+        attachment = client.post(upload_url, files={"file": ("ok.md", b"content")}).json()
+        data = {
+            "question": "测试",
+            "model": "test",
+            "knowledgeBase": "",
+            "attachmentIds": [attachment["id"]],
+        }
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 502
+        assert client.get(f"{root}/{identifier}/messages").json()["messages"] == []
+        app.state.chat_provider = EchoChatProvider()
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 200
+
+
+def test_attachment_and_new_conversation_owner_isolation(conversation_settings):
+    """模拟认证依赖已验证的身份，确认新历史和附件不会被其他用户查看、追加或删除。"""
+    app = create_app(conversation_settings)
+
+    @app.middleware("http")
+    async def test_identity(request, call_next):
+        # 仅测试注入可信状态，生产代码仍只能从登录依赖获取身份。
+        request.state.business_identity = {"id": request.headers.get("x-test-user", "alice")}
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        root = "/api/v1/conversations"
+        identifier = client.post(f"{root}/new", json={}).json()["id"]
+        attachment = client.post(
+            f"{root}/{identifier}/attachments", files={"file": ("private.txt", b"private")}
+        ).json()
+        forbidden = {"x-test-user": "bob"}
+        assert identifier not in [item["id"] for item in client.get(root, headers=forbidden).json()]
+        for path in (
+            f"{root}/{identifier}",
+            f"{root}/{identifier}/messages",
+            f"{root}/{identifier}/attachments/{attachment['id']}/content",
+        ):
+            assert client.get(path, headers=forbidden).status_code == 404
+        assert client.delete(f"{root}/{identifier}", headers=forbidden).status_code == 404
+        assert (
+            client.post(
+                f"{root}/{identifier}/attachments",
+                files={"file": ("a.txt", b"a")},
+                headers=forbidden,
+            ).status_code
+            == 404
+        )
+        data = {
+            "question": "test",
+            "model": "test",
+            "knowledgeBase": "",
+            "attachmentIds": [attachment["id"]],
+        }
+        assert (
+            client.post(f"{root}/{identifier}/messages", json=data, headers=forbidden).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                f"{root}/demo-chat-1/attachments", files={"file": ("a.txt", b"a")}
+            ).status_code
+            == 409
+        )
+
+
+def test_attachment_message_limits_and_unavailable_storage(conversation_settings, tmp_path):
+    """单文件符合上限不代表整轮可提交；超限、过多编号和磁盘故障均不保存消息。"""
+    root = "/api/v1/conversations"
+    with TestClient(create_app(conversation_settings)) as client:
+        identifier = client.post(f"{root}/new", json={}).json()["id"]
+        attachments = [
+            client.post(
+                f"{root}/{identifier}/attachments",
+                files={"file": (f"{index}.txt", b"x" * (7 * 1024 * 1024))},
+            ).json()["id"]
+            for index in range(3)
+        ]
+        data = {
+            "question": "合计超限",
+            "model": "test",
+            "knowledgeBase": "",
+            "attachmentIds": attachments,
+        }
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 413
+        data["attachmentIds"] = [f"attachment-{index:032x}" for index in range(11)]
+        assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 422
+        assert client.get(f"{root}/{identifier}/messages").json()["messages"] == []
+    # 用文件占据目录位置模拟存储配置不可写，错误不包含本地绝对路径。
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_bytes(b"blocked")
+    settings = conversation_settings.model_copy(update={"conversation_attachment_dir": blocked})
+    with TestClient(create_app(settings)) as client:
+        response = client.post(f"{root}/{identifier}/attachments", files={"file": ("a.txt", b"a")})
+        assert response.status_code == 503
+        assert response.json() == {"detail": "attachment_storage_unavailable"}

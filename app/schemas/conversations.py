@@ -17,6 +17,10 @@ class ChatInput(OverviewModel):
     model: ShortText
     knowledge_base: str = Field(max_length=200)
     tools: list[ShortText] = Field(default_factory=list, max_length=20)
+    # 消息只引用已上传的附件编号；元信息由后端仓库读取，不能信任前端文件名或大小。
+    attachment_ids: list[Annotated[str, Field(pattern=r"^attachment-[0-9a-f]{32}$")]] = Field(
+        default_factory=list, max_length=10
+    )
 
 
 class AnswerSource(OverviewModel):
@@ -56,6 +60,15 @@ class NewConversationInput(OverviewModel):
     tools: list[ShortText] = Field(default_factory=list, max_length=20)
 
 
+class ConversationAttachment(OverviewModel):
+    """已保存原文件的展示信息；stored 不代表文档已解析或模型已读取。"""
+
+    id: str
+    name: str
+    size: int = Field(gt=0)
+    status: Literal["stored"] = "stored"
+
+
 class ConversationMessage(OverviewModel):
     """一条用户或助手消息；保留时间及引用，供第三方 API 组装上下文。"""
 
@@ -67,6 +80,8 @@ class ConversationMessage(OverviewModel):
     knowledge_base: str
     tools: list[str] = Field(default_factory=list)
     sources: list[AnswerSource] = Field(default_factory=list)
+    # 缺省为空以兼容旧 JSON 历史，后续正式消息表仍可沿用此对外契约。
+    attachments: list[ConversationAttachment] = Field(default_factory=list)
 
 
 class ConversationRecord(OverviewModel):
@@ -81,6 +96,8 @@ class ConversationRecord(OverviewModel):
     updated_at: datetime
     messages: list[ConversationMessage] = Field(default_factory=list)
     version: int = Field(default=0, ge=0)
+    # 新记录绑定可信登录身份；旧记录为空，维持旧共享演示数据的可读性。
+    owner_id: str = ""
 
 
 class ChatReply(OverviewModel):

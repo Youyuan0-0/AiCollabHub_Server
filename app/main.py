@@ -18,6 +18,7 @@ from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
+from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
@@ -29,6 +30,7 @@ def create_app(
     *,
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
     chat_provider: ChatProvider | None = None,
+    attachment_store: AttachmentStore | None = None,
     cas_client=None,
     applications_factory: Callable[[], ApplicationService] = create_demo_application_service,
 ) -> FastAPI:
@@ -71,6 +73,12 @@ def create_app(
         chat_provider if chat_provider is not None else EchoChatProvider()
     )
     application.state.settings = settings
+    # 注入点隔离开发文件仓库，测试及未来 PostgreSQL/MinIO 适配器共用此合同。
+    application.state.attachment_store = (
+        attachment_store
+        if attachment_store is not None
+        else LocalAttachmentStore(settings.conversation_attachment_dir)
+    )
     application.state.database_engine = None
     application.state.resources = None
 

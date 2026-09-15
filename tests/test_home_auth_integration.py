@@ -15,6 +15,9 @@ from test_auth import csrf, login
         ("POST", "/conversations/new"),
         ("POST", "/conversations/example/messages"),
         ("DELETE", "/conversations/example"),
+        # 新附件端点必须与已有首页业务共用登录依赖。
+        ("POST", "/conversations/example/attachments"),
+        ("GET", "/conversations/example/attachments/attachment-example/content"),
     ],
 )
 def test_home_endpoints_require_session(request, method, path):
@@ -32,6 +35,8 @@ def test_logged_in_home_conversation_and_csrf(request):
     created = client.post(root + "/new", json={}, headers=csrf(client))
     assert created.status_code == 201, created.text
     path = f"{root}/{created.json()['id']}"
+    # 上传即使携带有效登录 Cookie，也不能跳过写请求的 CSRF 验证。
+    assert client.post(path + "/attachments", files={"file": ("a.txt", b"a")}).status_code == 403
     data = {"question": "合并后保留多轮问答", "model": "测试模型", "knowledgeBase": ""}
     assert client.post(path + "/messages", json=data).status_code == 403
     sent = client.post(path + "/messages", json=data, headers=csrf(client))

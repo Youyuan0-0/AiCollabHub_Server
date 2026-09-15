@@ -52,6 +52,16 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+更新或切换分支后，在项目根目录重新同步依赖；Git 更新不会自动更新已有的 `.venv`：
+
+```powershell
+# 使用项目虚拟环境和锁定版本，补齐新分支新增的依赖。
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
+.\.venv\Scripts\python.exe -m fastapi dev app/main.py
+```
+
+若启动时报 `ModuleNotFoundError: No module named 'defusedxml'`，说明当前环境缺少认证模块使用的安全 XML 解析依赖，先执行上述安装命令再启动。该依赖已在 `pyproject.toml` 和 `requirements-dev.lock` 中声明，无需修改认证代码或补建 `__init__.py`。
+
 默认 `APP_ENV=development`。首页、会话与登录需要配置 `DATABASE_URL` 并执行迁移。正常登录联调设置 `AUTH_MODE=mock` 并启动独立 IAM，见 [认证联调说明](deploy/authentication.md)。`AUTH_MODE=disabled` 仅供显式匿名开发演示。真实凭据放在忽略的 `.env` 或环境变量。
 
 | 地址 | 用途 |
@@ -72,7 +82,8 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | --- | --- |
 | `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
 | `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
-| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 共享开发历史、新建、续聊和删除，持久化到数据库 |
+| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用临时 JSON 持久化 |
+| `/conversations/{id}/attachments`、`/conversations/{id}/attachments/{attachmentId}/content` | 上传原文件、按会话权限下载；独立临时文件仓库 |
 | `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
 | `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
 | `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入同实例的应用目录 |
@@ -84,7 +95,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
 | `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
 
-首页快照与多轮会话持久化到数据库，开发会话目前仍是共享历史。场景应用状态保存于当前后端实例，刷新保留、重启重置；发布与审核联调用一个 API 实例和一个 worker。看板 PUT 仍返回 503 `overview_publication_not_configured`，不能因为有登录会话而直接发布统计数据。其他模块写操作返回固定回执。详情见 [场景应用模块说明](app/modules/applications/README.md)。
+首页快照与多轮会话持久化到数据库；登录开启时新会话按用户隔离，旧共享样例保留。场景应用状态保存于当前后端实例，刷新保留、重启重置；发布与审核联调用一个 API 实例和一个 worker。看板 PUT 仍返回 503 `overview_publication_not_configured`，不能因为有登录会话而直接发布统计数据。其他模块写操作返回固定回执。详情见 [场景应用模块说明](app/modules/applications/README.md)。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -143,7 +154,9 @@ Python 测试覆盖首页和会话持久化、场景应用发布审核、CAS 登
 FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据库并执行迁移。
 也可使用 `fastapi dev`，入口由 `pyproject.toml` 声明。
 
-会话为共享开发记录，没有登录和用户隔离。`create_app(chat_provider=...)` 可注入
+登录开启时新会话绑定用户，旧共享样例仍可读取；匿名开发继续共享。`create_app(chat_provider=...)` 可注入
 第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
-附件仅由旧 multipart 提交入口兼容接收，不保存或参与回答；多轮 JSON 不支持附件。
+首页附件先通过独立接口上传，发送多轮 JSON 时携带 `attachmentIds`，历史可展示和下载原文件；暂不解析或参与回答。
+会话保留临时存储实现，附件默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
+详细契约、上限、临时文件保留规则及后续 PostgreSQL/MinIO 迁移边界见 [附件说明](ATTACHMENTS.md)。
 数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。

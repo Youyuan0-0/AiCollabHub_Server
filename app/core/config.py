@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
@@ -47,6 +48,10 @@ class Settings(BaseSettings):
     minio_timeout: float = Field(default=5, gt=0)
     minio_max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
     cors_origins: list[str] = []
+    # 临时附件目录必须由同一部署的 API 实例共享；后续替换仓库无需修改消息契约。
+    conversation_attachment_dir: Path = (
+        Path(__file__).resolve().parents[2] / ".runtime" / "attachments"
+    )
     # 本轮仅开放模拟 IAM；真实 CAS 签名规范确认前，不提供生产认证开关。
     auth_mode: Literal["disabled", "mock"] = "disabled"
     auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
