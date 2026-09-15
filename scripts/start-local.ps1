@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)][string]$NginxRoot,
-    [string]$ApplicationEnvFile,
     [int]$ApiPortA = 8000,
     [int]$ApiPortB = 8001,
     [int]$GatewayPort = 8080,
@@ -10,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $gatewayRoot = (Resolve-Path -LiteralPath $NginxRoot).Path
 $python = Join-Path $projectRoot '.venv/Scripts/python.exe'
-$environmentFile = if ($ApplicationEnvFile) { (Resolve-Path -LiteralPath $ApplicationEnvFile).Path } else { $null }
+# 两个 API 和模拟 IAM 均在项目根目录启动，由 Settings 统一读取 .env。
 $gateway = Join-Path $gatewayRoot 'nginx.exe'
 if (!(Test-Path -LiteralPath $gateway)) { throw 'Nginx executable was not found' }
 $ports = @($ApiPortA, $ApiPortB, $GatewayPort)
@@ -32,7 +31,6 @@ try {
     $processes = @()
     if ($MockIamPort -gt 0) {
         $arguments = @('-m','uvicorn','app.modules.common.auth.mock_iam:create_mock_iam','--factory','--host','127.0.0.1','--port',$MockIamPort,'--no-access-log')
-        if ($environmentFile) { $arguments += @('--env-file', ('"' + $environmentFile + '"')) }
         $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime 'iam.out.log') -RedirectStandardError (Join-Path $runtime 'iam.err.log') -PassThru
         $processes += [PSCustomObject]@{ role='iam'; pid=$process.Id; started=$process.StartTime.ToUniversalTime().ToString('o') }
     }
@@ -40,7 +38,6 @@ try {
         $env:INSTANCE_ID = $item[0]
         # 回调查询参数含一次性票据；访问日志统一由不记录查询串的 Nginx 输出。
         $arguments = @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',$item[1],'--no-access-log')
-        if ($environmentFile) { $arguments += @('--env-file', ('"' + $environmentFile + '"')) }
         $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime ($item[0] + '.out.log')) -RedirectStandardError (Join-Path $runtime ($item[0] + '.err.log')) -PassThru
         $processes += [PSCustomObject]@{ role=$item[0]; pid=$process.Id; started=$process.StartTime.ToUniversalTime().ToString('o') }
     }

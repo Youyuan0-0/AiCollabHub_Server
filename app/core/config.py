@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 # 配置优先级：初始化参数 > 环境变量 > .env 文件 > 字段默认值。
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_ignore_empty=True,  # 环境变量或 .env 中的空值不覆盖默认配置。
         extra="ignore",
+        hide_input_in_errors=True,  # 校验失败时也不把整份含密码的输入写入启动日志。
     )
 
     app_name: str = "AiCollabHub API"
@@ -19,7 +21,29 @@ class Settings(BaseSettings):
     db_require_sync_apply: bool = False
     db_statement_timeout_ms: int = Field(default=15000, ge=1000, le=120000)
     db_commit_timeout_ms: int = Field(default=10000, ge=1000, le=120000)
-    # 连接串可能包含密码；SecretStr 默认隐藏输出中的敏感值，并非加密存储。
+    # 推荐分字段填写；各连接独立配置，避免备库意外使用主库写账号。
+    postgres_host: str | None = None
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_db: str | None = None
+    postgres_user: str | None = None
+    postgres_password: SecretStr | None = None
+    postgres_read_host: str | None = None
+    postgres_read_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_read_db: str | None = None
+    postgres_read_user: str | None = None
+    postgres_read_password: SecretStr | None = None
+    postgres_read_fallback_host: str | None = None
+    postgres_read_fallback_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_read_fallback_db: str | None = None
+    postgres_read_fallback_user: str | None = None
+    postgres_read_fallback_password: SecretStr | None = None
+    postgres_migration_host: str | None = None
+    postgres_migration_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_migration_db: str | None = None
+    postgres_migration_user: str | None = None
+    postgres_migration_password: SecretStr | None = None
+    # 连接池和迁移继续读取这些统一属性；显式 URL 优先，兼容既有配置和 SQLite 测试。
+    # 连接串及分字段密码均使用 SecretStr 隐藏展示，并非加密存储。
     database_url: SecretStr | None = None
     database_read_url: SecretStr | None = None
     database_read_fallback_url: SecretStr | None = None
@@ -33,6 +57,12 @@ class Settings(BaseSettings):
     db_pool_recycle: int = Field(default=1800, ge=1)
     db_connect_timeout: int = Field(default=5, ge=1)
 
+    redis_host: str | None = None
+    redis_port: int = Field(default=6379, ge=1, le=65535)
+    redis_user: str | None = None
+    redis_password: SecretStr | None = None
+    redis_db: int = Field(default=0, ge=0)
+    redis_ssl: bool = False
     redis_url: SecretStr | None = None
     redis_key_prefix: str = Field(default="aicollabhub", pattern=r"^[A-Za-z0-9:_-]{1,64}$")
     redis_default_ttl: int = Field(default=300, ge=1)
@@ -59,6 +89,65 @@ class Settings(BaseSettings):
     auth_mock_admin_subjects: list[str] = ["mock-admin"]
 
     @model_validator(mode="after")
+    def assemble_service_urls(self) -> "Settings":
+        for prefix, target in (
+            ("postgres", "database_url"),
+            ("postgres_read", "database_read_url"),
+            ("postgres_read_fallback", "database_read_fallback_url"),
+            ("postgres_migration", "database_migration_url"),
+        ):
+            if getattr(self, target) is not None:
+                continue
+            parts = {
+                name: getattr(self, f"{prefix}_{name}")
+                for name in ("host", "db", "user", "password")
+            }
+            if all(value is None for value in parts.values()):
+                continue
+            missing = [f"{prefix}_{name}".upper() for name, value in parts.items() if value is None]
+            if missing:
+                raise ValueError(
+                    "Incomplete PostgreSQL configuration; missing " + ", ".join(missing)
+                )
+            # URL.create 处理 @、:、/、% 等字符，.env 中填写原始密码即可。
+            url = URL.create(
+                "postgresql+psycopg",
+                host=parts["host"],
+                port=getattr(self, f"{prefix}_port"),
+                database=parts["db"],
+                username=parts["user"],
+                password=parts["password"].get_secret_value(),
+                query={"connect_timeout": str(self.db_connect_timeout)},
+            )
+            setattr(self, target, SecretStr(url.render_as_string(hide_password=False)))
+        if self.redis_url is None:
+            if self.redis_host is None:
+                if self.redis_user is not None or self.redis_password is not None:
+                    raise ValueError("REDIS_HOST is required when Redis credentials are configured")
+            else:
+                password = (
+                    self.redis_password.get_secret_value()
+                    if self.redis_password is not None
+                    else None
+                )
+                # 仅密码认证需要保留空用户名，生成 redis://:password@host/db。
+                username = (
+                    self.redis_user
+                    if self.redis_user is not None
+                    else ("" if password is not None else None)
+                )
+                url = URL.create(
+                    "rediss" if self.redis_ssl else "redis",
+                    host=self.redis_host,
+                    port=self.redis_port,
+                    username=username,
+                    password=password,
+                    database=str(self.redis_db),
+                )
+                self.redis_url = SecretStr(url.render_as_string(hide_password=False))
+        return self
+
+    @model_validator(mode="after")
     def validate_authentication(self) -> "Settings":
         for url in (self.auth_public_origin, self.auth_mock_iam_url):
             if (
@@ -73,7 +162,9 @@ class Settings(BaseSettings):
             if self.app_env == "production":
                 raise ValueError("Mock IAM is prohibited in production")
             if not self.database_url:
-                raise ValueError("Mock authentication requires shared DATABASE_URL")
+                raise ValueError(
+                    "Mock authentication requires shared PostgreSQL (POSTGRES_* or DATABASE_URL)"
+                )
             if not self.auth_mock_secret or len(self.auth_mock_secret.get_secret_value()) < 32:
                 raise ValueError("AUTH_MOCK_SECRET must contain at least 32 characters")
             if self.auth_public_origin.scheme == "https" and not self.auth_cookie_secure:
@@ -89,6 +180,25 @@ class Settings(BaseSettings):
         "minio_endpoint",
         "minio_access_key",
         "minio_secret_key",
+        "postgres_host",
+        "postgres_db",
+        "postgres_user",
+        "postgres_password",
+        "postgres_read_host",
+        "postgres_read_db",
+        "postgres_read_user",
+        "postgres_read_password",
+        "postgres_read_fallback_host",
+        "postgres_read_fallback_db",
+        "postgres_read_fallback_user",
+        "postgres_read_fallback_password",
+        "postgres_migration_host",
+        "postgres_migration_db",
+        "postgres_migration_user",
+        "postgres_migration_password",
+        "redis_host",
+        "redis_user",
+        "redis_password",
         mode="before",
     )
     @classmethod
@@ -102,14 +212,18 @@ class Settings(BaseSettings):
     def validate_service_configuration(self) -> "Settings":
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。
         if self.app_env == "production" and self.database_url is None:
-            raise ValueError("DATABASE_URL is required in production")
+            raise ValueError("POSTGRES_* or DATABASE_URL is required in production")
         if self.db_read_enabled and (self.database_url is None or self.database_read_url is None):
-            raise ValueError("DB_READ_ENABLED requires DATABASE_URL and DATABASE_READ_URL")
+            raise ValueError(
+                "DB_READ_ENABLED requires primary and standby connections "
+                "(POSTGRES_* and POSTGRES_READ_*, or DATABASE_URL and DATABASE_READ_URL)"
+            )
         if self.db_read_fallback_enabled and (
             not self.db_read_enabled or self.database_read_fallback_url is None
         ):
             raise ValueError(
-                "DB_READ_FALLBACK_ENABLED requires DB_READ_ENABLED and DATABASE_READ_FALLBACK_URL"
+                "DB_READ_FALLBACK_ENABLED requires DB_READ_ENABLED and a fallback connection "
+                "(POSTGRES_READ_FALLBACK_* or DATABASE_READ_FALLBACK_URL)"
             )
         # 缺少部分凭证是配置错误，不能把原本启用的文件服务静默关闭。
         minio_parts = (self.minio_endpoint, self.minio_access_key, self.minio_secret_key)
