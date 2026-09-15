@@ -12,7 +12,7 @@ class AuthSession(Base):
     # 新会话共用 platform 范围；user/admin 仅兼容旧会话，slo 用于提前登出的撤销标记。
     scope: Mapped[str] = mapped_column(String(16))
     # 提前到达的登出通知也保留撤销标记，阻止随后完成验票的回调重新建立会话。
-    subject: Mapped[str | None] = mapped_column(String(200))
+    subject: Mapped[str | None] = mapped_column(String(200), index=True)
     display_name: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[int] = mapped_column(BigInteger)
     expires_at: Mapped[int] = mapped_column(BigInteger, index=True)

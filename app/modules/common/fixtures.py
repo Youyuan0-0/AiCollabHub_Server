@@ -13,7 +13,7 @@ def _load(module: str, name: str):
 
 
 def fixture(module: str, name: str):
-    # module/name 仅由模块代码提供；每次返回副本，A/B 实例及重复请求都使用同一份样例。
+    # module/name 仅由模块代码提供；每次返回副本，各 worker 及重复请求使用同一份样例。
     return deepcopy(_load(module, name))
 
 

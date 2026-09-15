@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.db.transactions import commit_write, prepare_write
 from app.modules.common.auth.models import AuthEventLog, AuthSession
 from app.modules.common.auth.security import csrf_token, digest
+from app.modules.common.identity_sync.access import can_access_admin, identity_enabled
 
 
 def now() -> int:
@@ -37,11 +38,6 @@ def login_cookie(scope: str) -> str:
     return "ach_login_" + scope
 
 
-def can_access_admin(settings: Settings, subject: str | None) -> bool:
-    # 用户端入口与管理端准入共用判断；真实 IAM 角色映射后在此替换模拟规则。
-    return settings.auth_mode == "mock" and subject in settings.auth_mock_admin_subjects
-
-
 def audit(
     db: Session, request: Request, scope: str, event: str, result: str, subject: str | None = None
 ) -> None:
@@ -65,6 +61,7 @@ def authenticated_session(db: Session, request: Request, scope: str) -> tuple[Au
     if cookie_name() in request.cookies:
         tokens = {cookie_name(): tokens[cookie_name()]} if cookie_name() in tokens else {}
     matches = []
+    blocked = False
     for name, raw in tokens.items():
         value = db.get(AuthSession, digest(raw))
         allowed_scopes = (
@@ -76,17 +73,19 @@ def authenticated_session(db: Session, request: Request, scope: str) -> tuple[Au
             value is not None
             and value.subject
             and value.scope in allowed_scopes
-            and value.revoked_at is None
             and value.expires_at > now()
         ):
-            matches.append((value, raw))
+            if not identity_enabled(db, value.subject):
+                blocked = True
+            elif value.revoked_at is None:
+                matches.append((value, raw))
     # 升级前两端若残留不同账号，不自动选择其中的管理员身份。
     if not matches or len({value.subject for value, _ in matches}) != 1:
-        raise HTTPException(401, "authentication_required")
+        raise HTTPException(401, "account_unavailable" if blocked else "authentication_required")
     value, raw = max(matches, key=lambda item: (item[0].created_at, item[0].token_hash))
     settings = request.app.state.settings
     # scope 表示本次访问的入口，管理员准入由服务端身份判断，不能由 Cookie 名决定。
-    if scope == "admin" and not can_access_admin(settings, value.subject):
+    if scope == "admin" and not can_access_admin(db, settings, value.subject):
         raise HTTPException(403, "admin_not_allowed")
     return value, raw
 
@@ -115,7 +114,7 @@ def revoke_browser_sessions(db: Session, request: Request) -> None:
 
 def require_business_identity(request: Request) -> None:
     scope = "admin" if request.url.path.startswith("/api/v1/admin/") else "user"
-    # 会话检查始终使用主库，不能因为备库或缓存延迟重新接受已撤销的会话。
+    # 所有 worker 查询同一数据库，撤销后不能从进程内缓存恢复旧会话。
     with Session(request.app.state.database_engine) as db:
         session, raw = authenticated_session(db, request, scope)
         # 场景应用复用已验证身份，保存记录时不再另选一个演示用户。

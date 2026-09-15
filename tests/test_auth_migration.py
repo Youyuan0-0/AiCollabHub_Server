@@ -137,7 +137,7 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         assert {table.name for table in tables}.issubset(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_01"
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260915_03"
             )
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
@@ -161,12 +161,54 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         engine.dispose()
 
 
+def test_repair_migration_restores_missing_conversations_without_losing_sessions(
+    tmp_path, monkeypatch
+):
+    """旧库版本已到身份同步但缺少历史表时，升级补表且不重建已有登录记录。"""
+    url = f"sqlite:///{tmp_path / 'repair.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "20260915_02")
+        DemoConversation.__table__.drop(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                AuthSession.__table__.insert().values(
+                    token_hash="existing-token",
+                    ticket_hash="existing-ticket",
+                    scope="user",
+                    subject="existing-user",
+                    created_at=1,
+                    expires_at=9999999999,
+                )
+            )
+        command.upgrade(config, "head")
+        command.check(config)
+        with engine.begin() as connection:
+            connection.execute(
+                DemoConversation.__table__.insert().values(
+                    id="repaired-chat",
+                    payload="{}",
+                    created_at=datetime.now(),
+                    deleted=False,
+                )
+            )
+        command.downgrade(config, "20260915_02")
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(select(AuthSession.subject)) == "existing-user"
+            assert connection.scalar(select(DemoConversation.id)) == "repaired-chat"
+    finally:
+        engine.dispose()
+
+
 def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monkeypatch):
     """离线生成 PostgreSQL SQL，不连接开发数据库，也不需要手工调整历史版本号。"""
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_01"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260915_03"]
     command.upgrade(config, "head", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):

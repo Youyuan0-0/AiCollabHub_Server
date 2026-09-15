@@ -1,4 +1,4 @@
-"""Read-only diagnostics by default; --write-probes uses uniquely named disposable test data."""
+"""默认只读检查单库、Redis 和 MinIO；写探测使用随机测试数据并清理。"""
 
 import argparse
 import json
@@ -6,15 +6,19 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.config import Settings
 from app.core.resources import create_resources
-from app.db.session import create_db_engine
+from app.db.base import Base
+from app.db.conversations import DemoConversation  # noqa: F401
+from app.db.overview import OverviewSnapshot  # noqa: F401
+from app.modules.common.auth import models  # noqa: F401
+from app.modules.common.identity_sync import models as identity_models  # noqa: F401
 
 
 def verify(settings, *, write_probes=False, create_bucket=False):
-    report = {"checks": {}, "scope": "service integration; not capacity or failover acceptance"}
+    report = {"checks": {}, "scope": "single-server service integration; not capacity acceptance"}
     checks = report["checks"]
 
     def check(name, action):
@@ -27,52 +31,35 @@ def verify(settings, *, write_probes=False, create_bucket=False):
             return None
 
     resources = create_resources(settings)
-    replica = None
     try:
-        if resources.database:
-            primary = resources.database.primary
+        if resources.database is not None:
+            engine = resources.database
 
-            def primary_status():
-                with primary.connect() as connection:
+            def database_status():
+                with engine.connect() as connection:
                     values = connection.execute(
                         text(
-                            "SELECT pg_is_in_recovery(), "
-                            "current_setting('synchronous_commit'), "
-                            "current_setting('synchronous_standby_names')"
+                            "SELECT current_setting('transaction_read_only'), "
+                            "current_setting('synchronous_commit')"
                         )
                     ).one()
-                    if values[0]:
-                        raise RuntimeError("Configured primary is a standby")
-                    return {
-                        "isPrimary": not values[0],
-                        "synchronousCommit": values[1],
-                        "synchronousStandbys": values[2],
-                    }
+                    if values != ("off", "local"):
+                        raise RuntimeError("Database must allow writes and local durable commits")
+                    return {"readOnly": False, "synchronousCommit": values[1]}
 
-            state = check("postgresql_primary", primary_status)
-            if settings.database_read_url:
-                replica = create_db_engine(
-                    settings.database_read_url.get_secret_value(),
-                    target_role="standby",
-                    readonly=True,
-                )
-                check("postgresql_standby", lambda: _standby_status(replica))
-            check("replication", lambda: _replication(primary))
+            check("postgresql", database_status)
+
+            def database_schema():
+                actual = set(inspect(engine).get_table_names())
+                return {"missingTables": sorted(set(Base.metadata.tables) - actual)}
+
+            schema = check("database_schema", database_schema)
+            if schema is not None:
+                checks["database_schema"]["ok"] = not schema["missingTables"]
             if write_probes:
-                check(
-                    "write_and_standby_visibility",
-                    lambda: _database_probe(
-                        primary,
-                        replica,
-                        bool(
-                            state
-                            and state["synchronousCommit"] == "remote_apply"
-                            and state["synchronousStandbys"]
-                        ),
-                    ),
-                )
+                check("database_write_read_delete", lambda: _database_probe(engine))
         else:
-            checks["postgresql_primary"] = {"ok": False, "errorType": "NotConfigured"}
+            checks["postgresql"] = {"ok": False, "errorType": "NotConfigured"}
         if resources.cache:
             check("redis_ping", resources.cache.probe)
             if write_probes:
@@ -115,69 +102,34 @@ def verify(settings, *, write_probes=False, create_bucket=False):
         else:
             checks["minio_bucket"] = {"ok": False, "errorType": "NotConfigured"}
     finally:
-        if replica is not None:
-            replica.dispose()
         resources.close()
     return report
 
 
-def _standby_status(engine):
-    with engine.connect() as connection:
-        row = connection.execute(
-            text(
-                "SELECT pg_is_in_recovery(), "
-                "current_setting('transaction_read_only'), pg_last_wal_replay_lsn()::text"
-            )
-        ).one()
-        if not row[0] or row[1] != "on":
-            raise RuntimeError("Configured standby is not a read-only recovery server")
-        return {"isStandby": row[0], "readOnly": row[1], "replayLsn": row[2]}
-
-
-def _replication(engine):
-    with engine.connect() as connection:
-        rows = (
-            connection.execute(
-                text(
-                    "SELECT application_name, state, sync_state, "
-                    "sent_lsn::text, replay_lsn::text FROM pg_stat_replication"
-                )
-            )
-            .mappings()
-            .all()
-        )
-        if not any(row["state"] == "streaming" and row["sync_state"] == "sync" for row in rows):
-            raise RuntimeError("A streaming synchronous standby has not been confirmed")
-        return [dict(row) for row in rows]
-
-
-def _database_probe(primary, replica, synchronous):
-    # 创建独立随机名测试表，提交后从备库读取，最后在新的事务中清理。
-    if replica is None or not synchronous:
-        raise RuntimeError("Synchronous standby must be configured before write probe")
+def _database_probe(engine):
+    # 一个连接提交，另一个连接立即查询，验证持久化而非进程内状态。
     name = "aicollab_probe_" + uuid4().hex
     try:
-        with primary.begin() as connection:
+        with engine.begin() as connection:
             connection.execute(text("SET LOCAL statement_timeout = '10s'"))
             connection.execute(text(f'CREATE TABLE "{name}" (id integer PRIMARY KEY)'))
             connection.execute(text(f'INSERT INTO "{name}" VALUES (1)'))
-        with replica.connect() as connection:
+        with engine.connect() as connection:
             return connection.execute(text(f'SELECT id FROM "{name}"')).scalar_one() == 1
     finally:
-        with primary.begin() as connection:
+        with engine.begin() as connection:
             connection.execute(text("SET LOCAL statement_timeout = '10s'"))
             connection.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default=".env")
     parser.add_argument("--write-probes", action="store_true")
     parser.add_argument("--create-bucket", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = verify(
-        Settings(_env_file=args.env),
+        Settings(),
         write_probes=args.write_probes,
         create_bucket=args.create_bucket,
     )

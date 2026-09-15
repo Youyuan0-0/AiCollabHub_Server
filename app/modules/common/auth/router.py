@@ -19,6 +19,7 @@ from app.modules.common.auth import service
 from app.modules.common.auth.cas import IAMUnavailable, TicketRejected
 from app.modules.common.auth.models import AuthLoginRequest, AuthSession
 from app.modules.common.auth.security import csrf_token, digest, safe_return_path
+from app.modules.common.identity_sync.access import lock_identity
 
 Scope = Literal["user", "admin"]
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -81,6 +82,8 @@ def login(
         try:
             value, raw = service.authenticated_session(db, request, scope)
         except HTTPException as error:
+            if error.detail == "account_unavailable":
+                return login_failure(request, db, scope, "account_unavailable", target)
             if error.status_code == 403:
                 return login_failure(request, db, scope, "admin_not_allowed", target)
             if error.status_code != 401:
@@ -151,10 +154,13 @@ def callback(
         return login_failure(request, db, scope, "invalid_ticket", target)
     except IAMUnavailable:
         return login_failure(request, db, scope, "iam_unavailable", target)
-    if scope == "admin" and not service.can_access_admin(settings, principal.subject):
+    prepare_write(db, settings)
+    identity = lock_identity(db, principal.subject)
+    if identity.status != "active":
+        return login_failure(request, db, scope, "account_unavailable", target)
+    if scope == "admin" and not service.can_access_admin(db, settings, principal.subject):
         return login_failure(request, db, scope, "admin_not_allowed", target)
     raw_token = secrets.token_urlsafe(32)
-    prepare_write(db, settings)
     try:
         with db.begin_nested():
             db.add(
@@ -191,7 +197,7 @@ def current_session(request: Request, db: SessionDependency, scope: Scope = "use
                 "id": value.subject,
                 "displayName": value.display_name,
                 "canAccessAdmin": service.can_access_admin(
-                    request.app.state.settings, value.subject
+                    db, request.app.state.settings, value.subject
                 ),
             },
             "expiresAt": datetime.fromtimestamp(value.expires_at, UTC).isoformat(),

@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import Engine, create_engine
@@ -15,18 +15,19 @@ def create_db_engine(
     pool_timeout: float = 5,
     pool_recycle: int = 1800,
     connect_timeout: int = 5,
-    target_role: Literal["primary", "standby"] | None = None,
-    readonly: bool = False,
 ) -> Engine:
     # 从连接池取出连接时检查存活状态，减少长时间闲置后使用失效连接的风险。
     options = {}
     if make_url(database_url).get_backend_name() == "postgresql":
-        connect_args = {"connect_timeout": connect_timeout}
-        if target_role is not None:
-            # libpq 在连接建立时校验目标角色，避免端点切换后连错主备。
-            connect_args["target_session_attrs"] = (
-                "standby" if target_role == "standby" else "primary" if readonly else "read-write"
-            )
+        connect_args = {
+            "connect_timeout": connect_timeout,
+            "target_session_attrs": "read-write",
+            # local 仍等待本机 WAL 落盘；连接级设置避免继承旧环境的远端确认策略。
+            "options": (
+                str(make_url(database_url).query.get("options", ""))
+                + " -c synchronous_commit=local"
+            ).strip(),
+        }
         options.update(
             pool_size=pool_size,
             max_overflow=max_overflow,
@@ -34,8 +35,6 @@ def create_db_engine(
             pool_recycle=pool_recycle,
             connect_args=connect_args,
         )
-        if readonly:
-            options["execution_options"] = {"postgresql_readonly": True}
     return create_engine(database_url, pool_pre_ping=True, **options)
 
 
