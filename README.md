@@ -56,6 +56,16 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
 ```
 
+更新或切换分支后，在项目根目录重新同步依赖；Git 更新不会自动更新已有的 `.venv`：
+
+```powershell
+# 使用项目虚拟环境和锁定版本，补齐新分支新增的依赖。
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
+.\.venv\Scripts\python.exe -m fastapi dev app/main.py
+```
+
+若启动时报 `ModuleNotFoundError: No module named 'defusedxml'`，说明当前环境缺少认证模块使用的安全 XML 解析依赖，先执行上述安装命令再启动。该依赖已在 `pyproject.toml` 和 `requirements-dev.lock` 中声明，无需修改认证代码或补建 `__init__.py`。
+
 默认 `APP_ENV=development`、`AUTH_MODE=disabled`。看板和会话需要配置数据库并执行迁移；其余匿名 Mock 接口不依赖外部服务。启用 `AUTH_MODE=mock` 后，看板、会话和其他业务接口都要求有效登录会话，写请求校验 CSRF；需要执行完整迁移并单独运行模拟 IAM。
 
 所有本地配置统一放在项目根目录 `.env`，包括 `POSTGRES_*`、`REDIS_*`、`MINIO_*` 和 `AUTH_*`；数据库和 Redis 支持分项账号密码，兼容显式连接 URL，显式 URL 优先。`.env.example` 是可提交的配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
@@ -87,7 +97,8 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | --- | --- |
 | `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
 | `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
-| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 共享开发历史、新建、续聊和删除，持久化到数据库 |
+| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用 PostgreSQL 会话表与消息表持久化 |
+| `/conversations/{id}/attachments`、`/conversations/{id}/attachments/{attachmentId}/content` | 上传原文件、按会话权限下载；独立临时文件仓库 |
 | `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
 | `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
 | `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入同实例的应用目录 |
@@ -99,9 +110,9 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
 | `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
 
-看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化，仍为共享开发历史，尚未实现用户数据隔离。
+看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化；登录开启时新会话按用户隔离，旧共享样例保留。
 
-场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制；会话兼容入口接收但不保存附件。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。后续关联表设计见 `database/scenario-applications/schema.sql`。
+场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。目录模块文件只传文件名、大小等元信息；会话附件支持原文件上传与下载，暂不解析或参与回答。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。后续关联表设计见 `database/scenario-applications/schema.sql`。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -131,13 +142,25 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）→ `20260915_01`（本地历史版本兼容标记）。
+基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后分为 `20260915_01`（历史兼容标记）与 `20260915_chat01`（会话分表），由空合并迁移 `20260915_merge01` 汇合为唯一 head；保留双方已使用的版本号，无需手工 stamp。
+
+历史认证迁移可执行 `alembic upgrade 20260915_01 --sql` 生成离线 SQL；会话数据搬迁需要读取旧记录，因此完整 `alembic upgrade head` 必须在线执行。合并迁移只汇合版本，不修改业务表。
 
 最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
 
 认证三表为 `auth_session`、`auth_login_request`、`auth_event_log`。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免误删历史测试表；确需删除表时手工编写并审核迁移。
 
 `compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备；主备、Redis 和 Nginx 模板位于 `deploy/`。详细部署笔记和需求资料保留在本地，按 `.gitignore` 不纳入仓库。
+
+后续 `20260915_chat01` 将旧 `demo_conversations` JSON 搬迁为 `conversations` 和
+`conversation_messages`，保留会话/消息编号、所属用户、顺序、附件元信息及删除标记。
+当前共享测试库的全局版本由其他模块维护，首页会话使用独立入口：
+`python -m alembic -c alembic.conversations.ini upgrade head`，
+只更新 `alembic_version_conversations`，不会覆盖共享库的 `alembic_version`。
+分项 `POSTGRES_*` / `POSTGRES_READ_*` 配置已支持，完整 `DATABASE_URL` 优先。
+功能分支记录了真实 PostgreSQL 主备及会话验证；复验入口为
+`python -m scripts.verify_conversations_postgresql --env .env`。
+配置、表结构与迁移边界见 [首页会话 PostgreSQL 说明](deploy/conversations-postgresql.md)。
 
 ## 验证
 
@@ -160,7 +183,9 @@ Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客�
 FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据库并执行迁移。
 也可使用 `fastapi dev`，入口由 `pyproject.toml` 声明。
 
-会话为共享开发记录，按配置校验登录，但尚无用户数据隔离。`create_app(chat_provider=...)` 可注入
+登录开启时新会话绑定用户，旧共享样例仍可读取；匿名开发继续共享。`create_app(chat_provider=...)` 可注入
 第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
-附件仅由旧 multipart 提交入口兼容接收，不保存或参与回答；多轮 JSON 不支持附件。
+首页附件先通过独立接口上传，发送多轮 JSON 时携带 `attachmentIds`，历史可展示和下载原文件；暂不解析或参与回答。
+会话与消息已适配 PostgreSQL 分表存储；附件原文件仍默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
+详细契约、上限、临时文件保留规则及后续附件仓库/MinIO 迁移边界见 [附件说明](ATTACHMENTS.md)。
 数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。

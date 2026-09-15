@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
@@ -77,6 +78,10 @@ class Settings(BaseSettings):
     minio_timeout: float = Field(default=5, gt=0)
     minio_max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
     cors_origins: list[str] = []
+    # 临时附件目录必须由同一部署的 API 实例共享；后续替换仓库无需修改消息契约。
+    conversation_attachment_dir: Path = (
+        Path(__file__).resolve().parents[2] / ".runtime" / "attachments"
+    )
     # 本轮仅开放模拟 IAM；真实 CAS 签名规范确认前，不提供生产认证开关。
     auth_mode: Literal["disabled", "mock"] = "disabled"
     auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
@@ -90,6 +95,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def assemble_service_urls(self) -> "Settings":
+        """组装并返回当前配置；显式 URL 优先，分项连接不继承其他账号凭证。"""
         for prefix, target in (
             ("postgres", "database_url"),
             ("postgres_read", "database_read_url"),
@@ -102,6 +108,7 @@ class Settings(BaseSettings):
                 name: getattr(self, f"{prefix}_{name}")
                 for name in ("host", "db", "user", "password")
             }
+            # 整组未配置时不启用；只填密码或缺少密码均报错，避免静默忽略配置。
             if all(value is None for value in parts.values()):
                 continue
             missing = [f"{prefix}_{name}".upper() for name, value in parts.items() if value is None]

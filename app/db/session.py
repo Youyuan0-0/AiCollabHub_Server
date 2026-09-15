@@ -3,8 +3,16 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import Engine, create_engine
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
+
+
+def normalize_database_url(database_url: str) -> URL:
+    """常见 PostgreSQL URL 统一使用已安装的 Psycopg 3，保留密码转义及查询参数。"""
+    url = make_url(database_url)
+    if url.drivername in {"postgres", "postgresql"}:
+        url = url.set(drivername="postgresql+psycopg")
+    return url
 
 
 def create_db_engine(
@@ -18,9 +26,11 @@ def create_db_engine(
     target_role: Literal["primary", "standby"] | None = None,
     readonly: bool = False,
 ) -> Engine:
+    """创建同步连接池；PostgreSQL 的主备选择和只读选项沿用现有部署配置。"""
     # 从连接池取出连接时检查存活状态，减少长时间闲置后使用失效连接的风险。
     options = {}
-    if make_url(database_url).get_backend_name() == "postgresql":
+    url = normalize_database_url(database_url)
+    if url.get_backend_name() == "postgresql":
         connect_args = {"connect_timeout": connect_timeout}
         if target_role is not None:
             # libpq 在连接建立时校验目标角色，避免端点切换后连错主备。
@@ -36,7 +46,7 @@ def create_db_engine(
         )
         if readonly:
             options["execution_options"] = {"postgresql_readonly": True}
-    return create_engine(database_url, pool_pre_ping=True, **options)
+    return create_engine(url, pool_pre_ping=True, **options)
 
 
 def get_engine(request: Request) -> Engine:

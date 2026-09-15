@@ -14,9 +14,11 @@ from app.schemas.conversations import (
     ChatReply,
     ConversationMessage,
     ConversationRecord,
+    ConversationSendResult,
     ConversationSummary,
     NewConversationInput,
 )
+from app.services.attachment_store import MAX_MESSAGE_ATTACHMENT_BYTES, AttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.services.conversation_store import (
     ConversationStore,
@@ -63,17 +65,32 @@ def fixed_history() -> dict[str, ChatAnswer]:
 class ConversationService:
     """存储和回复提供器由外部传入，第三方协议与数据库细节不进入路由。"""
 
-    def __init__(self, store: ConversationStore, provider: ChatProvider):
+    def __init__(
+        self,
+        store: ConversationStore,
+        provider: ChatProvider,
+        attachments: AttachmentStore | None = None,
+        owner_id: str = "",
+    ):
+        # owner_id 由已验证身份提供；附件仓库与会话存储分别注入，便于独立迁移。
         self.store = store
         self.provider = provider
+        self.attachments = attachments
+        self.owner_id = owner_id
 
     def get(self, identifier: str) -> ConversationRecord:
         """读取完整会话；旧固定样例只在没有实际记录或删除标记时补充。"""
+        return self._load(identifier)[0]
+
+    def _load(self, identifier: str) -> tuple[ConversationRecord, int | None]:
+        """返回会话和持久化版本；固定样例版本为 None，真实会话无需再查询是否存在。"""
         record = self.store.get(identifier)
         if record is not None:
-            return record
+            if record.owner_id and record.owner_id != self.owner_id:
+                raise HTTPException(404, "conversation_not_found")
+            return record, record.version
         if not self.store.contains(identifier) and identifier in (samples := fixed_history()):
-            return record_from_answer(samples[identifier], datetime(2026, 9, 14, tzinfo=UTC))
+            return record_from_answer(samples[identifier], datetime(2026, 9, 14, tzinfo=UTC)), None
         raise HTTPException(404, "conversation_not_found")
 
     def new(self, data: NewConversationInput) -> ConversationRecord:
@@ -87,12 +104,13 @@ class ConversationService:
             tools=data.tools,
             created_at=now,
             updated_at=now,
+            owner_id=self.owner_id,
         )
         self.store.save(record, expected_version=None)
         return record
 
-    def send(self, data: ChatInput, identifier: str | None = None) -> ChatAnswer:
-        """追加一轮用户/助手消息；回复成功后一次保存，失败或冲突不写入半轮内容。"""
+    def send(self, data: ChatInput, identifier: str | None = None) -> ConversationSendResult:
+        """追加并保存完整一轮后返回会话快照；identifier 为空时新建，失败或冲突不返回成功结果。"""
         if identifier is None:
             now = datetime.now(UTC)
             record = ConversationRecord(
@@ -103,13 +121,23 @@ class ConversationService:
                 tools=data.tools,
                 created_at=now,
                 updated_at=now,
+                owner_id=self.owner_id,
             )
             expected = None
         else:
-            record = self.get(identifier)
-            expected = record.version if self.store.contains(identifier) else None
+            record, expected = self._load(identifier)
         if len(record.messages) >= 200:
             raise HTTPException(409, "conversation_message_limit")
+        attachments = []
+        if data.attachment_ids:
+            if self.attachments is None:
+                raise HTTPException(503, "attachment_storage_unavailable")
+            if len(set(data.attachment_ids)) != len(data.attachment_ids):
+                raise HTTPException(422, "duplicate_attachment_ids")
+            # 附件先归属于会话，再随成功的一轮写入消息；失败重试可以复用已上传编号。
+            attachments = [self.attachments.get(record.id, item) for item in data.attachment_ids]
+            if sum(item.size for item in attachments) > MAX_MESSAGE_ATTACHMENT_BYTES:
+                raise HTTPException(413, "conversation_files_too_large")
         user_message = ConversationMessage(
             id=f"message-{uuid4().hex}",
             role="user",
@@ -118,6 +146,7 @@ class ConversationService:
             model=data.model,
             knowledge_base=data.knowledge_base,
             tools=list(data.tools),
+            attachments=attachments,
         )
         # 传入独立副本，供应方适配器不能修改已保存历史；密钥与供应方地址不接受前端传入。
         context = [message.model_copy(deep=True) for message in record.messages] + [
@@ -159,7 +188,10 @@ class ConversationService:
         record.updated_at = now
         record.version += 1
         self.store.save(record, expected_version=expected)
-        return self.latest_answer(record)
+        # 复用已提交的内存记录，避免前端为展示回复额外往返查询；保留旧摘要字段兼容旧客户端。
+        return ConversationSendResult(
+            **self.latest_answer(record).model_dump(), conversation=record
+        )
 
     @staticmethod
     def latest_answer(record: ConversationRecord) -> ChatAnswer:
@@ -178,16 +210,8 @@ class ConversationService:
         )
 
     def list(self) -> list[ConversationSummary]:
-        """返回最近更新的 100 个对话，再补充尚未覆盖或删除的固定历史。"""
-        summaries = [
-            ConversationSummary(
-                id=record.id,
-                title=record.title,
-                model=record.model,
-                time=record.updated_at.isoformat(),
-            )
-            for record in self.store.list()[:100]
-        ]
+        """数据库先按可信用户过滤并返回最近 100 条摘要，再补充尚未删除的固定样例。"""
+        summaries = self.store.list(self.owner_id)
         summaries.extend(
             ConversationSummary(
                 id=sample.id, title=sample.question, model=sample.model, time="固定演示历史"
@@ -203,10 +227,18 @@ class ConversationService:
         self.store.delete(identifier)
 
 
-def service(session: Session, provider: ChatProvider | None = None) -> ConversationService:
-    """默认临时 JSON 数据库存储和回显回复；将来只需替换对应适配器。"""
+def service(
+    session: Session,
+    provider: ChatProvider | None = None,
+    attachments: AttachmentStore | None = None,
+    owner_id: str = "",
+) -> ConversationService:
+    """默认使用关系型会话/消息存储和回显回复，第三方提供器仍可独立替换。"""
     return ConversationService(
-        SqlConversationStore(session), provider if provider is not None else EchoChatProvider()
+        SqlConversationStore(session),
+        provider if provider is not None else EchoChatProvider(),
+        attachments,
+        owner_id,
     )
 
 

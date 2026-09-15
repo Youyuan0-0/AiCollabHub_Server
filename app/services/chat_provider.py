@@ -6,7 +6,7 @@ from app.schemas.conversations import ChatReply, ConversationMessage
 
 
 class ChatProvider(Protocol):
-    """实现 reply 即可接入第三方；messages 包含历史及当前问题，返回统一回复结构。"""
+    """messages 包含历史、问题及附件元信息；原文件解析需另行适配，返回统一回复结构。"""
 
     def reply(
         self,

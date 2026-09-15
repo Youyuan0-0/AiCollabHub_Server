@@ -1,7 +1,43 @@
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
+
+
+def test_postgresql_component_env_builds_primary_and_replica(tmp_path):
+    """使用与部署一致的分项 .env，确认主备地址独立、特殊密码正确编码且输出脱敏。"""
+    path = tmp_path / "postgres.env"
+    path.write_text(
+        "APP_ENV=test\nAUTH_MODE=mock\nAUTH_MOCK_SECRET=" + "s" * 32 + "\n"
+        "POSTGRES_HOST=primary.example\nPOSTGRES_PORT=15433\nPOSTGRES_DB=platform\n"
+        "POSTGRES_USER=writer\nPOSTGRES_PASSWORD='p@ss:/%word'\n"
+        "POSTGRES_READ_HOST=replica.example\nPOSTGRES_READ_PORT=15434\n"
+        "POSTGRES_READ_DB=platform\nPOSTGRES_READ_USER=reader\n"
+        "POSTGRES_READ_PASSWORD='read@secret'\nDB_READ_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    settings = Settings(_env_file=path)
+    primary = make_url(settings.database_url.get_secret_value())
+    replica = make_url(settings.database_read_url.get_secret_value())
+    assert (primary.host, primary.port, primary.password) == (
+        "primary.example",
+        15433,
+        "p@ss:/%word",
+    )
+    assert (replica.host, replica.port, replica.username) == ("replica.example", 15434, "reader")
+    assert "p@ss:/%word" not in repr(settings) + settings.model_dump_json()
+
+
+def test_explicit_url_overrides_component_settings():
+    """已有完整 URL 优先，不因同时存在分项配置而切换目标或误报缺少字段。"""
+    settings = Settings(database_url="sqlite:///chosen.db", postgres_host="unused")
+    assert settings.database_url.get_secret_value() == "sqlite:///chosen.db"
+    # 未提供显式 URL 时，只有密码也属于不完整配置，不能静默关闭连接。
+    with pytest.raises(ValidationError, match="POSTGRES_HOST"):
+        Settings(postgres_password="compose-only")
+    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD"):
+        Settings(postgres_host="incomplete")
 
 
 def test_services_are_optional_and_replica_routing_is_off_by_default():
