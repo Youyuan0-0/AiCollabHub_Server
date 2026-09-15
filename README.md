@@ -6,7 +6,7 @@
 
 可选的 CAS 登录联调使用模拟 IAM 提供一次性票据，平台用 PostgreSQL 保存共享会话、登录请求与认证日志。未建设个人资料页、完整用户档案、身份同步或正式角色权限。
 
-场景应用业务使用单实例临时存储，可演示发布、审核、同步和调用等流程；这部分不连接数据库或供应方，认证模块按独立配置启用。
+场景应用支持两种存储方式：`memory` 为单实例临时演示，`database` 将平台自己的关联、权限、互动、审核补充项、消息和操作记录写入 PostgreSQL 的 8 张场景表。供应方目录、草稿、版本、发布和调用仍为开发模拟；认证模块按独立配置启用。
 
 启用 `AUTH_MODE=mock` 时，`require_business_identity()` 校验会话及写请求的 CSRF，并把可信身份交给 `SessionIdentityProvider`。场景应用据此保存发布者和审核者标识，用户端和管理端分别读取 `/application-session` 与 `/admin/application-session`。此时关闭演示账号切换，不使用演示组织或项目替代尚未接入的 IAM 归属信息。`AUTH_MODE=disabled` 时继续使用原有演示账号。
 
@@ -38,13 +38,13 @@ app/
       auth/              CAS 适配、共享会话、认证日志及独立模拟 IAM
     admin/               独立管理端的列表与处理样例
   main.py                应用工厂
-migrations/              Alembic 基线、看板、会话及认证三表迁移
+migrations/              Alembic 基线、看板、会话、认证及身份同步表迁移
 deploy/                  PostgreSQL、Redis、Nginx 配置模板
 scripts/                 启停、连接验证、主备验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
 ```
 
-模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。样例 JSON 按领域存放，读取时复制。场景应用由 `application_service.py` 处理业务规则、`memory_repository.py` 在每个 FastAPI 实例内单独暂存新增状态；`ports.py` 定义后续数据库/供应方替换合同；发布流程演示应直连单个实例、使用一个 worker，重启或代码热重载后重置，A/B 实例之间不共享记录。数据库持久化和多实例共享留待后续实现。
+模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。场景应用由 `application_service.py` 处理业务规则，`database_repository.py` 组合平台表和开发用外部资料快照。`memory_repository.py` 保留独立内存演示。`ports.py` 定义现有业务存储和运行适配边界，真实 HiMarket 的目录、草稿、版本和审批还需专门适配。
 
 ## 本地开发
 
@@ -59,6 +59,17 @@ py -3.13 -m venv .venv
 默认 `APP_ENV=development`、`AUTH_MODE=disabled`。看板和会话需要配置数据库并执行迁移；其余匿名 Mock 接口不依赖外部服务。启用 `AUTH_MODE=mock` 后，看板、会话和其他业务接口都要求有效登录会话，写请求校验 CSRF；需要执行完整迁移并单独运行模拟 IAM。
 
 所有本地配置统一放在项目根目录 `.env`，包括 `POSTGRES_*`、`REDIS_*`、`MINIO_*` 和 `AUTH_*`；数据库和 Redis 支持分项账号密码，兼容显式连接 URL，显式 URL 优先。`.env.example` 是可提交的配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
+
+场景应用使用已创建的表时，在 `.env` 设置：
+
+```dotenv
+APPLICATIONS_STORAGE=database
+APPLICATIONS_DEMO_DIRECTORY=D:/UGit/AiCollabHub_Server/.runtime/application-marketplace-demo
+```
+
+目录按实际机器调整；同机多个后端须指向同一绝对路径及数据库。数据库模式复用主库连接池，读写均走主库，不自动建表，不把缺表或连接失败降级为内存成功。新环境需先执行场景建表 SQL；已建环境不可重复执行。配置在后端下次启动时读取，已有内存演示记录不会自动迁移。
+
+外部模拟资料单独保存在上述目录，数据库仅保存引用和本地业务数据。模拟快照是开发持久化的一部分，清空目录会导致已有模拟草稿/版本无法读取；SQL 回滚可能留下未被引用的快照，不会提前发布。该方式支持同机重启及多进程共享，不代表不同服务器已共享外部资料。真实接入仍需 HiMarket/Agent Dev 适配及联调，不能只换地址。
 
 集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。配置 PostgreSQL、执行迁移并构建两套前端后，可使用以下脚本启动认证联调；生成器统一更新根目录 `.env`，保留已有服务凭据和联调密钥。
 
@@ -81,7 +92,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 ## HTTP Mock 契约
 
-默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例业务接口另带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。认证开关控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
+默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，样例业务接口另带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。场景数据库模式另标记 `X-Data-Mode: development`、`X-Application-Storage: postgresql`、`X-Application-Provider: simulation`。认证开关控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
 
 | 路由 | 当前行为 |
 | --- | --- |
@@ -89,8 +100,8 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
 | `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 共享开发历史、新建、续聊和删除，持久化到数据库 |
 | `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
-| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
-| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入同实例的应用目录 |
+| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交模拟审核；按存储模式保存 |
+| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入模拟目录；数据库模式持久化本地评分和操作 |
 | `GET /admin/applications` 及详情、`PUT .../{id}/visibility` | 应用管理与有效的范围限制；关闭登录时用预置身份，启用后复用公共会话 |
 | `GET /admin/application-review-queue` | 管理端审核查询、状态筛选、分页及数量 |
 | `GET /application-form-configuration`、`GET/PUT /admin/application-configuration` | 表单必填和提示配置、管理列配置；提交校验与页面生效 |
@@ -101,7 +112,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化，仍为共享开发历史，尚未实现用户数据隔离。
 
-场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制；会话兼容入口接收但不保存附件。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。后续关联表设计见 `database/scenario-applications/schema.sql`。
+场景应用在数据库模式下保留刷新、重启后的平台业务记录，目录 GET 不会自动把样例导入数据库；内存模式仍在重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制；会话兼容入口接收但不保存附件。场景应用按账号保存收藏、关注新版和评分；其他目录收藏仍是本机演示状态。场景表结构见 `database/scenario-applications/schema.sql`。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -109,7 +120,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 | 能力 | 项目已有内容 | 当前边界 |
 | --- | --- | --- |
-| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | 看板、会话和启用后的认证访问主库；其余 Mock 业务不持久化 |
+| PostgreSQL | 连接池、主库会话、显式只读路由、权重及受控连接回退 | 看板、会话、启用后的认证和场景数据库模式访问主库 |
 | 同步重放 | `remote_apply` 校验、提交期限和不确定结果处理；主备配置及测试脚本 | 只对显式使用数据库事务的调用生效；Mock 提交不会触发复制 |
 | Redis | 共享客户端、环境前缀、TTL、失败按未命中处理、Compose 模板 | 真实 Redis 服务待提供；没有业务缓存 |
 | MinIO | 对象上传、读取、删除、大小检查、连接回收 | 基础适配器及服务探测；没有业务文件 API |
@@ -120,7 +131,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 “写入等待备库重放”需要 PostgreSQL 同时配置指定同步备库与 `synchronous_commit=remote_apply`。`DB_REQUIRE_SYNC_APPLY=true` 检查有效策略；`DB_COMMIT_TIMEOUT_MS` 为提交等待设置独立期限。取消或断连可能发生在本地提交之后，调用方必须处理 `commit_outcome_unknown`，不能当作已回滚。正式业务的幂等和冲突处理留到业务开发。
 
-`CacheDependency` 未配置时返回 `None`，传输失败按缓存未命中处理；`StorageDependency` 未配置返回 503。适配器均为同步实现，应使用同步路由或工作线程。健康检查会实际访问服务；数据库看板、会话和认证也访问数据库，其余页面样例不会。
+`CacheDependency` 未配置时返回 `None`，传输失败按缓存未命中处理；`StorageDependency` 未配置返回 503。适配器均为同步实现，应使用同步路由或工作线程。健康检查会实际访问服务；数据库看板、会话、认证和场景数据库模式也访问数据库。
 
 ## 数据库迁移
 
@@ -131,11 +142,17 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）→ `20260915_01`（本地历史版本兼容标记）。
+迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）→ `20260915_01`（本地历史版本兼容标记）→ `20260915_02`（身份同步三表）。
 
 最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
 
 认证三表为 `auth_session`、`auth_login_request`、`auth_event_log`。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免误删历史测试表；确需删除表时手工编写并审核迁移。
+
+`20260915_02` 补回远端已经使用、当前代码此前缺失的迁移脚本，包含 `iam_identity_state`、`iam_identity_role`、`iam_sync_receipt`。已核对列类型、空值约束、主外键、检查约束和索引与远端一致。已经处于 02 的数据库执行 `upgrade head` 会直接完成，不重建表或改写版本号；01 的数据库正常创建这三张表。如果 01 的库已手工创建同名表，应先核对来源和结构，不能直接 stamp 跳过。该修复仅恢复迁移历史，不表示当前后端已接入真实 IAM 同步接口。
+
+2026-09-15 已在远端执行 `alembic upgrade head`，本地迁移、主库与只读副本均为 `20260915_02`。本次执行没有产生 DDL 或业务写入，原有 17 张表保留；记录见 `database/migration-alignment-20260915.json`。新增 6 项身份同步迁移测试，迁移专项共 18 项、完整测试共 246 项通过。
+
+场景 8 表及 2 视图已于 2026-09-15 通过独立 `database/scenario-applications/schema.sql` 在当前远端库创建，未修改 Alembic 版本。新库的 `alembic upgrade head` 不会创建场景表；后续纳入迁移链时须兼容已建结构，不能直接重复 CREATE 或用 stamp 冒充执行。
 
 `compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备；主备、Redis 和 Nginx 模板位于 `deploy/`。详细部署笔记和需求资料保留在本地，按 `.gitignore` 不纳入仓库。
 
@@ -153,6 +170,8 @@ node scripts/verify_auth_browser.mjs
 Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约，以及模拟 CAS、跨实例会话、单点登出、CSRF、迁移。匿名 Mock 契约测试禁止外部服务调用，看板、会话和认证使用独立临时库，迁移测试覆盖两个历史分支升级及数据保留。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关；框架脚本用于认证关闭的环境，认证脚本验证桌面/手机登录、原页面返回、管理端准入、Mock 写请求和 A/B 会话及登出一致性。
 
 验证范围是框架和演示联通，不包括真实业务、Redis 服务、两台物理服务器容灾或 2 万在线/5000 并发容量。
+
+`test_application_database_storage.py` 另有 10 项数据库集成测试，覆盖重启、重提历史、权限/配置共享、审核回滚、通知、运行/下载/同步去重、缺表报错和中断请求。只允许显式指定的本机 `55491` 端口 PGlite 隔离实例；测试会校验引擎并重置该实例，未配置时跳过，不读取项目远端连接。2026-09-15 在隔离实例下全套 **240 项通过**；PGlite 的多连接测试不等于真实 PostgreSQL 并发容量验证。另在远端真实表验证写入与新仓储读取，使用外层事务全部回滚，未提交测试业务记录。
 
 ## 数据库看板与多轮会话
 
