@@ -5,6 +5,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.conversations import DemoConversation  # noqa: F401
 from app.db.overview import OverviewSnapshot  # noqa: F401
+from app.modules.common.auth import models  # noqa: F401
 
 # 复用应用的数据库配置，不在 alembic.ini 中另外保存连接凭据。
 settings = Settings()
@@ -13,7 +14,7 @@ if database_setting is None:
     raise RuntimeError("DATABASE_URL or DATABASE_MIGRATION_URL is required for migrations")
 
 database_url = database_setting.get_secret_value()
-# 导入会话和看板模型以注册表定义；保留迁移专用账号与旧表删除保护。
+# 导入会话、看板和认证模型以注册表定义；保留迁移专用账号与旧表删除保护。
 target_metadata = Base.metadata
 
 

@@ -1,13 +1,7 @@
 from fastapi import HTTPException
 
 from app.modules.applications.schemas import ChatInput
-from app.modules.common.catalog import list_samples
-from app.modules.common.schemas import CatalogQuery
 from app.modules.common.service import receipt
-
-
-def list_resources(query: CatalogQuery):
-    return list_samples("applications", query)
 
 
 def answer(payload: ChatInput):

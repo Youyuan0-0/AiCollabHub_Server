@@ -9,6 +9,7 @@ certifi==2026.7.22
 cffi==2.1.1
 click==8.5.0
 colorama==0.4.6
+defusedxml==0.7.1
 fastapi==0.141.1
 greenlet==3.5.5
 h11==0.16.0
@@ -40,3 +41,9 @@ typing_extensions==4.16.0
 tzdata==2026.3; sys_platform == "win32"
 urllib3==2.7.0
 uvicorn==0.52.4
+
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.6.3

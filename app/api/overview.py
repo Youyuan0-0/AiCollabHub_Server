@@ -1,4 +1,4 @@
-"""首页和运营数据库接口；无登录阶段仅开放非生产读取，发布保持关闭。"""
+"""首页和运营数据库接口；按配置校验登录，仅开放非生产读取，发布保持关闭。"""
 
 from typing import Annotated
 
@@ -21,7 +21,7 @@ from app.schemas.overview import (
 )
 from app.services.overview import get_home, get_operations, save_snapshot
 
-# 不恢复已移除的身份体系；未来接入可信发布方后再替换发布依赖。
+# 登录由应用工厂统一校验；未来接入可信发布方后再替换发布依赖。
 router = APIRouter(
     prefix="/overview",
     tags=["overview"],

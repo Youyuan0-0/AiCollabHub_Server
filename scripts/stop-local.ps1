@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProcessRecord,
-    [ValidateSet('All', 'A', 'B', 'nginx')][string]$Role = 'All'
+    [ValidateSet('All', 'A', 'B', 'nginx', 'iam')][string]$Role = 'All'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

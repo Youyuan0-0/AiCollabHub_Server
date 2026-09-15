@@ -3,8 +3,7 @@
 import argparse
 from pathlib import Path
 
-from dotenv import dotenv_values, set_key
-from sqlalchemy.engine import URL
+from dotenv import dotenv_values, set_key, unset_key
 
 
 def main():
@@ -21,22 +20,23 @@ def main():
     if not values.get("POSTGRES_PASSWORD") or not values.get("MINIO_ROOT_PASSWORD"):
         parser.error("POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD are required")
     settings = {
-        "DATABASE_URL": URL.create(
-            "postgresql+psycopg",
-            username="aicollab",
-            password=values["POSTGRES_PASSWORD"],
-            host=args.host,
-            port=15433,
-            database="AiCollabHubTest",
-        ).render_as_string(hide_password=False),
-        "DATABASE_READ_URL": URL.create(
-            "postgresql+psycopg",
-            username="aicollab",
-            password=values["POSTGRES_PASSWORD"],
-            host=args.host,
-            port=15434,
-            database="AiCollabHubTest",
-        ).render_as_string(hide_password=False),
+        "POSTGRES_HOST": args.host,
+        "POSTGRES_PORT": values.get("POSTGRES_A_PORT") or values.get("POSTGRES_PORT") or "15433",
+        "POSTGRES_DB": values.get("POSTGRES_DB") or "AiCollabHubTest",
+        "POSTGRES_USER": values.get("POSTGRES_USER") or "aicollab",
+        "POSTGRES_PASSWORD": values["POSTGRES_PASSWORD"],
+        "POSTGRES_READ_HOST": values.get("POSTGRES_READ_HOST") or args.host,
+        "POSTGRES_READ_PORT": values.get("POSTGRES_READ_PORT")
+        or values.get("POSTGRES_B_PORT")
+        or "15434",
+        "POSTGRES_READ_DB": values.get("POSTGRES_READ_DB")
+        or values.get("POSTGRES_DB")
+        or "AiCollabHubTest",
+        "POSTGRES_READ_USER": values.get("POSTGRES_READ_USER")
+        or values.get("POSTGRES_USER")
+        or "aicollab",
+        "POSTGRES_READ_PASSWORD": values.get("POSTGRES_READ_PASSWORD")
+        or values["POSTGRES_PASSWORD"],
         "MINIO_ENDPOINT": f"http://{args.host}:19002",
         "MINIO_ACCESS_KEY": "aicollabadmin",
         "MINIO_SECRET_KEY": values["MINIO_ROOT_PASSWORD"],
@@ -46,17 +46,24 @@ def main():
         "DB_REQUIRE_SYNC_APPLY": "false",
         "DB_READ_FALLBACK_ENABLED": "false",
     }
+    replaced_urls = ["DATABASE_URL", "DATABASE_READ_URL"]
     if values.get("REDIS_PASSWORD"):
-        settings["REDIS_URL"] = URL.create(
-            "redis",
-            password=values["REDIS_PASSWORD"],
-            host=args.host,
-            port=int(values.get("REDIS_PORT") or 16379),
-            database="0",
-        ).render_as_string(hide_password=False)
+        settings.update(
+            REDIS_HOST=values.get("REDIS_HOST") or args.host,
+            REDIS_PORT=values.get("REDIS_PORT") or "16379",
+            REDIS_USER=values.get("REDIS_USER") or "",
+            REDIS_PASSWORD=values["REDIS_PASSWORD"],
+            REDIS_DB=values.get("REDIS_DB") or "0",
+            REDIS_SSL=values.get("REDIS_SSL") or "false",
+        )
+        replaced_urls.append("REDIS_URL")
     args.output_env.parent.mkdir(parents=True, exist_ok=True)
     for key, value in settings.items():
         set_key(args.output_env, key, value)
+    # 旧 URL 优先级更高，完成分字段写入后清除对应旧值，避免继续连接旧服务。
+    for key in replaced_urls:
+        if key in dotenv_values(args.output_env):
+            unset_key(args.output_env, key)
     print(f"Updated {len(settings)} application settings. Credentials were not printed.")
     print("Read routing remains disabled until synchronous standby verification succeeds.")
 

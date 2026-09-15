@@ -47,6 +47,8 @@ def access_request(resource_id: str, payload: AccessInput):
 
 @router.post("/publications", status_code=201)
 def publication(payload: PublicationInput):
+    if payload.kind == "application":
+        raise HTTPException(422, "请通过场景应用发布页面提交完整资料")
     if payload.submit and (not payload.name.strip() or not payload.summary.strip()):
         raise HTTPException(422, "name_and_summary_required")
     return service.receipt(payload.submit)

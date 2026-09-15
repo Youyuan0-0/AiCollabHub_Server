@@ -2,15 +2,22 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.router import api_router, mock_router
+from app.api.router import api_router, database_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
+from app.modules.applications.application_service import ApplicationService
+from app.modules.applications.demo_store import create_demo_application_service
+from app.modules.applications.identity import DemoIdentityProvider, SessionIdentityProvider
+from app.modules.common.auth.cas import MockCasClient
+from app.modules.common.auth.router import config_router
+from app.modules.common.auth.router import router as auth_router
+from app.modules.common.auth.service import require_business_identity
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
@@ -22,6 +29,8 @@ def create_app(
     *,
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
     chat_provider: ChatProvider | None = None,
+    cas_client=None,
+    applications_factory: Callable[[], ApplicationService] = create_demo_application_service,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
@@ -32,9 +41,14 @@ def create_app(
         application.state.database_engine = (
             resources.database.primary if resources.database is not None else None
         )
+        application.state.cas_client = cas_client
+        if settings.auth_mode == "mock" and cas_client is None:
+            application.state.cas_client = MockCasClient(settings)
         try:
             yield
         finally:
+            if settings.auth_mode == "mock" and cas_client is None:
+                application.state.cas_client.close()
             try:
                 await run_in_threadpool(resources.close)
             finally:
@@ -51,7 +65,7 @@ def create_app(
         redoc_url=None,
         openapi_url="/openapi.json" if development_docs else None,
     )
-    # 环境由服务端配置决定；会话回复提供器不依赖已移除的身份模块。
+    # 环境由服务端配置决定；回复提供器与登录校验分别注入。
     application.state.app_env = settings.app_env
     application.state.chat_provider = (
         chat_provider if chat_provider is not None else EchoChatProvider()
@@ -69,13 +83,15 @@ def create_app(
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             if settings.app_env != "production" and not request.url.path.startswith(
-                "/api/v1/health/"
+                ("/api/v1/health/", "/api/v1/auth/")
             ):
                 # 看板和会话包含持久化数据，不能标记为无状态 Mock；样例板块由响应元信息区分。
                 database_path = request.url.path.split("/")[3:4]
                 response.headers["X-Data-Mode"] = (
                     "development" if database_path in (["overview"], ["conversations"]) else "mock"
                 )
+        if request.url.path.startswith("/api/v1/auth/"):
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @application.exception_handler(SQLAlchemyError)
@@ -101,9 +117,25 @@ def create_app(
             ],
         )
     application.include_router(api_router)
-    # 本阶段没有登录或权限模块；样例接口只在开发/测试环境注册。
+    # 持久化接口与 Mock 业务共用认证开关，健康检查和登录入口保持独立。
+    business_dependencies = (
+        [Depends(require_business_identity)] if settings.auth_mode == "mock" else []
+    )
+    application.include_router(database_router, dependencies=business_dependencies)
+    application.include_router(config_router, prefix="/api/v1")
+    if settings.auth_mode == "mock":
+        application.include_router(auth_router, prefix="/api/v1")
+    # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
-        application.include_router(mock_router)
+        # 每个 FastAPI 实例创建一份场景应用业务对象，路由从 request.app.state 取出并复用。
+        application.state.application_service = applications_factory()
+        application.state.application_identity = (
+            SessionIdentityProvider() if settings.auth_mode == "mock" else DemoIdentityProvider()
+        )
+        application.include_router(
+            mock_router,
+            dependencies=business_dependencies,
+        )
     return application
 
 
