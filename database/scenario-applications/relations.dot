@@ -1,0 +1,31 @@
+digraph scene_v2_1 {
+  graph [rankdir=LR, bgcolor="white", pad="0.30", nodesep="0.28", ranksep="0.55",
+    fontname="Microsoft YaHei", fontsize=20, labelloc=t,
+    label="场景应用 V2.1 · 对方接口与本地补充（8 张表）\n虚线：接口或配置关联　实线：主要表关系", splines=polyline];
+  node [shape=box, style="rounded,filled", fontname="Microsoft YaHei", fontsize=12,
+    width=3.7, margin="0.22,0.15", fillcolor="#eef5ff", color="#5d83bd"];
+  edge [fontname="Microsoft YaHei", fontsize=10, color="#64748b", fontcolor="#475569", arrowsize=0.65];
+  agent [label="对方：Agent Dev\n智能体 · 版本 · 运行\n模型 / 知识库等数据由对方管理", fillcolor="#f3f4f6",color="#88919f"];
+  market [label="对方：HiMarket\n分类 · 目录 · 草稿 · 发布 · 审核\n说明正文 · 资源包 · 使用授权", fillcolor="#f3f4f6",color="#88919f"];
+  iam [label="公共身份模块：对接 IAM\n用户 · 组织 · 角色\n场景表仅引用可信编号", fillcolor="#f3f4f6",color="#88919f"];
+  app [label="① 应用关联与扩展\nscene_application\n双方编号 · 平台特有字段 · 组织",color="#2563eb",penwidth=1.5];
+  scope [label="② 开放对象\nscene_visibility_target\n组织 / 成员 / 项目编号"];
+  interaction [label="③ 个人互动\nscene_interaction\n收藏 · 关注新版 · 五分评分"];
+  submission [label="④ 发布补充资料\nscene_submission_extension\n本地补充项 · 提交规则 · 重提轮次"];
+  activity [label="⑤ 操作与任务记录\nscene_activity\n运行 / 下载 / 同步 / 外部写入"];
+  review [label="⑥ 审核补充留痕\nscene_review_note\n人工评分 · 补材料意见 · 审计\n最终审核状态以对方确认为准"];
+  notification [label="⑦ 个人站内通知\nscene_notification\n消息 · 接收人 · 已读时间"];
+  config [label="⑧ 平台配置\nscene_configuration\n表单 · 展示 · 本地评分 · 通知\n热门分类仅存外部编号"];
+  agent -> app [style=dashed,label="接口 / 编号"];
+  market -> app [style=dashed,label="接口 / 编号"];
+  iam -> app [style=dashed,label="用户 / 组织编号"];
+  app -> scope [label="1 对多"];
+  app -> interaction [label="每人一条"];
+  app -> submission [label="按事项和轮次"];
+  app -> activity [label="1 对多"];
+  app -> notification [label="每人单独已读"];
+  submission -> review [label="每轮一份"];
+  config -> submission [style=dashed,label="规则快照",constraint=false];
+  {rank=same; agent; market; iam; config;}
+  {rank=same; scope; interaction; submission; activity; notification;}
+}
