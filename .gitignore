@@ -1,15 +1,57 @@
+# Python 虚拟环境、字节码和构建产物
 .venv/
-.env
-.env.*
-.runtime/
-.pytest_cache/
-.ruff_cache/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
-build/
-dist/
+/build/
+/dist/
+
+# 检查缓存、测试报告和覆盖率
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
 .coverage
-htmlcov/
-docs
-.md
+.coverage.*
+/htmlcov/
+/coverage/
+/coverage.xml
+/test-results/
+/playwright-report/
+
+# 本地联调、截图、日志及浏览器验证工具依赖
+/.runtime/
+/logs/
+*.log
+node_modules/
+.pnpm-store/
+.cache/
+
+# 本地环境配置；示例模板需要纳入版本管理
+.env
+.env.*
+!.env.example
+
+# 本地需求资料目录沿用原有约定，包含非 Markdown 资料
+/docs/
+
+# 数据库设计的导出文件与历史备份；保留 SQL、图源和校验脚本
+/database/scenario-applications/relations.png
+/database/scenario-applications/relations.svg
+/database/scenario-applications/validation-result.json
+/database/scenario-applications/archive/
+
+# 编辑器与系统临时文件；保留团队使用的扩展推荐
+/.vscode/*
+!/.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.sw?
+
+# 本地 Markdown 文档不纳入版本管理；根目录 README 是打包所需文件
+*.md
+!/README.md

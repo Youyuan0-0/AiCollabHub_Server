@@ -1,6 +1,6 @@
 # AiCollabHub Server
 
-人工智能协同平台的 FastAPI + SQLAlchemy 后端。保留用户端、独立管理端、模块化后端及部署基础；首页/运营看板与多轮会话接入数据库，其余模块通过 HTTP Mock 接口联通。
+人工智能协同平台的 FastAPI + SQLAlchemy 后端，包含首页问答、运营看板、统一身份登录和场景应用发布审核。保留用户端、独立管理端、模块化后端及部署基础，其余模块通过 HTTP Mock 接口联通。
 
 看板读取数据库快照，未发布板块补充固定样例；会话支持空对话、追加消息、历史及删除并持久化，默认原样回显问题。不调用真实业务系统，服务连接和主备验证通过独立的健康检查与脚本执行。
 
@@ -39,7 +39,7 @@ app/
     admin/               独立管理端的列表与处理样例
   main.py                应用工厂
 migrations/              Alembic 基线、看板、会话及认证三表迁移
-deploy/                  PostgreSQL、Redis、Nginx 配置及部署说明
+deploy/                  PostgreSQL、Redis、Nginx 配置模板
 scripts/                 启停、连接验证、主备验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
 ```
@@ -53,14 +53,21 @@ tests/                   框架、Mock 契约及基础设施适配器测试
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
 ```
 
 默认 `APP_ENV=development`、`AUTH_MODE=disabled`。看板和会话需要配置数据库并执行迁移；其余匿名 Mock 接口不依赖外部服务。启用 `AUTH_MODE=mock` 后，看板、会话和其他业务接口都要求有效登录会话，写请求校验 CSRF；需要执行完整迁移并单独运行模拟 IAM。
 
 所有本地配置统一放在项目根目录 `.env`，包括 `POSTGRES_*`、`REDIS_*`、`MINIO_*` 和 `AUTH_*`；数据库和 Redis 支持分项账号密码，兼容显式连接 URL，显式 URL 优先。`.env.example` 是可提交的配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
 
-单点登录的配置、启动、验证及边界见 [认证联调说明](deploy/authentication.md)。集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。
+集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。配置 PostgreSQL、执行迁移并构建两套前端后，可使用以下脚本启动认证联调；生成器统一更新根目录 `.env`，保留已有服务凭据和联调密钥。
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.configure_mock_auth --gateway-port 18880 --iam-port 18002
+.\scripts\start-local.ps1 -NginxRoot <已解压的Nginx目录> -ApiPortA 18000 -ApiPortB 18001 -GatewayPort 18880 -MockIamPort 18002
+```
+
+用户端入口为 `http://127.0.0.1:18880/`，管理端为 `/admin/`。API 禁用带查询串的访问日志，避免记录 CAS 票据；停止服务使用 `scripts/stop-local.ps1 -ProcessRecord <启动输出的记录路径>`。
 
 | 地址 | 用途 |
 | --- | --- |
@@ -94,7 +101,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化，仍为共享开发历史，尚未实现用户数据隔离。
 
-场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制；会话兼容入口接收但不保存附件。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。应用字段、状态和后续关联表规划见 [场景应用模块说明](app/modules/applications/README.md)。
+场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。文件只传文件名、大小等元信息，不上传二进制；会话兼容入口接收但不保存附件。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。后续关联表设计见 `database/scenario-applications/schema.sql`。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -124,11 +131,13 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260915_01`（认证三表及历史分支兼容）。
+迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）→ `20260915_01`（本地历史版本兼容标记）。
 
-两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表。最后一项迁移补齐缺少的表并保留已有数据；空库、基线库、旧看板/会话库和旧认证库均执行完整的 `upgrade head`，无需手工 stamp 或删表。认证三表为 `auth_session`、`auth_login_request`、`auth_event_log`。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免误删历史测试表；确需删除表时手工编写并审核迁移。
+最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
 
-`compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备。现有局域网测试集群为 PostgreSQL 16.14，服务配置与既有验证记录见 [部署说明](deploy/README.md)。
+认证三表为 `auth_session`、`auth_login_request`、`auth_event_log`。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免误删历史测试表；确需删除表时手工编写并审核迁移。
+
+`compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备；主备、Redis 和 Nginx 模板位于 `deploy/`。详细部署笔记和需求资料保留在本地，按 `.gitignore` 不纳入仓库。
 
 ## 验证
 
@@ -144,10 +153,6 @@ node scripts/verify_auth_browser.mjs
 Python 测试覆盖配置、数据库路由及提交异常、缓存和对象客户端、各模块 Mock 契约，以及模拟 CAS、跨实例会话、单点登出、CSRF、迁移。匿名 Mock 契约测试禁止外部服务调用，看板、会话和认证使用独立临时库，迁移测试覆盖两个历史分支升级及数据保留。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的 18880 网关；框架脚本用于认证关闭的环境，认证脚本验证桌面/手机登录、原页面返回、管理端准入、Mock 写请求和 A/B 会话及登出一致性。
 
 验证范围是框架和演示联通，不包括真实业务、Redis 服务、两台物理服务器容灾或 2 万在线/5000 并发容量。
-
-- [部署与服务验证](deploy/README.md)
-- [当前阶段任务](docs/current-task-priorities.md)
-- [前端接口契约](../AiCollabHub_User/docs/api-contract-draft.md)
 
 ## 数据库看板与多轮会话
 

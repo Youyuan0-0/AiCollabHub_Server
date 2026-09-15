@@ -21,7 +21,7 @@ from app.schemas.overview import (
 )
 from app.services.overview import get_home, get_operations, save_snapshot
 
-# 登录由应用工厂统一校验；未来接入可信发布方后再替换发布依赖。
+# 会话检查在路由挂载时接入；统计发布仍须等待可信发布方，普通登录不能开放写入。
 router = APIRouter(
     prefix="/overview",
     tags=["overview"],

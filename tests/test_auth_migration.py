@@ -38,7 +38,15 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
 
 @pytest.mark.parametrize(
     "legacy_revision",
-    ["20260913_01", "20260914_01", "20260914_02", "legacy-auth", "legacy-combined"],
+    [
+        "20260913_01",
+        "20260914_01",
+        "20260914_02",
+        "20260914_03",
+        "20260915_01",
+        "legacy-auth",
+        "legacy-combined",
+    ],
 )
 def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch, legacy_revision):
     """两个分支的旧库均可直接 upgrade head，不能跳过看板或重建已有认证数据。"""
@@ -55,14 +63,20 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
         AuthEventLog.__table__,
     ]
     try:
-        if legacy_revision.startswith("legacy-"):
-            if legacy_revision == "legacy-combined":
-                command.upgrade(config, "20260914_02")
-            else:
+        if legacy_revision.startswith("legacy-") or legacy_revision in {
+            "20260914_03",
+            "20260915_01",
+        }:
+            if legacy_revision == "legacy-auth":
                 # 原认证分支使用同名编号，但从未执行看板建表迁移。
                 command.stamp(config, "20260914_01")
+            else:
+                command.upgrade(config, "20260914_02")
             for table in tables[2:]:
                 table.create(engine)
+            if not legacy_revision.startswith("legacy-"):
+                # 独立还原两次合并产生的等价旧库，不运行重排后的认证迁移来准备数据。
+                command.stamp(config, legacy_revision)
         else:
             command.upgrade(config, legacy_revision)
 
@@ -128,8 +142,15 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
         command.check(config)
+        # 两个已使用的认证版本结构相同，退回远端版本也必须保留全部认证记录。
+        command.downgrade(config, "20260914_03")
+        assert {table.name for table in tables}.issubset(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            for table, rows in preserved.items():
+                assert connection.execute(select(table)).mappings().all() == rows
         # 重复升级不重建数据；回退认证不应删除前序看板或会话。
         command.upgrade(config, "head")
+        command.check(config)
         command.downgrade(config, "20260914_02")
         assert {"overview_snapshots", "demo_conversations"}.issubset(
             inspect(engine).get_table_names()
@@ -151,3 +172,67 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
     assert "CREATE TABLE demo_conversations" in sql
+
+
+@pytest.mark.parametrize("legacy", ["auth", "overview", "conversations"])
+def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, monkeypatch, legacy):
+    """旧分支共用 01 版本，按已有表补齐新链，不能只验证空库成功。"""
+    url = f"sqlite:///{tmp_path / 'legacy.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_MIGRATION_URL", url)
+    engine = create_engine(url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    if legacy == "auth":
+        for model in (AuthSession, AuthLoginRequest, AuthEventLog):
+            model.__table__.create(engine)
+        table, key, value = "auth_session", "subject", "existing-user"
+        with engine.begin() as connection:
+            connection.execute(
+                AuthSession.__table__.insert().values(
+                    token_hash="old-token",
+                    ticket_hash="old-ticket",
+                    scope="user",
+                    subject=value,
+                    created_at=1,
+                    expires_at=9999999999,
+                )
+            )
+    else:
+        OverviewSnapshot.__table__.create(engine)
+        table, key, value = "overview_snapshots", "payload", '{"existing":true}'
+        with engine.begin() as connection:
+            connection.execute(
+                OverviewSnapshot.__table__.insert().values(
+                    section="home",
+                    variant="default",
+                    payload=value,
+                    updated_at=datetime(2026, 9, 14),
+                )
+            )
+        if legacy == "conversations":
+            DemoConversation.__table__.create(engine)
+            with engine.begin() as connection:
+                connection.execute(
+                    DemoConversation.__table__.insert().values(
+                        id="existing-chat",
+                        payload='{"messages":[]}',
+                        created_at=datetime(2026, 9, 14),
+                        deleted=False,
+                    )
+                )
+    command.stamp(config, "20260914_02" if legacy == "conversations" else "20260914_01")
+    command.upgrade(config, "head")
+    assert {
+        "overview_snapshots",
+        "demo_conversations",
+        "auth_session",
+        "auth_login_request",
+        "auth_event_log",
+    }.issubset(inspect(engine).get_table_names())
+    with engine.connect() as connection:
+        assert connection.scalar(text(f"SELECT {key} FROM {table}")) == value
+        if legacy == "conversations":
+            assert connection.scalar(text("SELECT id FROM demo_conversations")) == "existing-chat"
+    command.check(config)
+    command.upgrade(config, "head")
+    engine.dispose()

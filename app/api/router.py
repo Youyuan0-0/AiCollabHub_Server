@@ -15,8 +15,8 @@ from app.modules.tools.router import router as tools_router
 # 平台接口统一使用版本前缀，后续业务模块的路由在此集中挂载。
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router)
-# 看板与多轮会话统一走数据库实现；各自依赖限制开发环境，避免与模块 Mock 重复注册。
-# 应用工厂为数据库业务挂载与 Mock 相同的会话及 CSRF 校验，不影响健康探测。
+# 数据库业务单独挂载，create_app 为其接入与场景应用相同的登录和 CSRF 检查。
+# 健康检查不依赖登录；看板、会话仍保留各自的环境限制。
 database_router = APIRouter(prefix="/api/v1")
 database_router.include_router(overview_router)
 database_router.include_router(conversations_router)

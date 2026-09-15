@@ -65,7 +65,7 @@ def create_app(
         redoc_url=None,
         openapi_url="/openapi.json" if development_docs else None,
     )
-    # 环境由服务端配置决定；回复提供器与登录校验分别注入。
+    # 环境和回复提供器由服务端配置，业务登录在挂载路由时统一校验。
     application.state.app_env = settings.app_env
     application.state.chat_provider = (
         chat_provider if chat_provider is not None else EchoChatProvider()
