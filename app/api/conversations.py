@@ -17,6 +17,7 @@ from app.schemas.conversations import (
     ChatInput,
     ConversationAttachment,
     ConversationRecord,
+    ConversationSendResult,
     ConversationSummary,
     NewConversationInput,
 )
@@ -151,14 +152,16 @@ def conversation_messages(
     return request_service(request, session).get(identifier)
 
 
-@router.post("/{identifier}/messages", response_model=ChatAnswer, summary="向已有对话追加问题")
+@router.post(
+    "/{identifier}/messages", response_model=ConversationSendResult, summary="向已有对话追加问题"
+)
 def append_message(
     identifier: str,
     data: ChatInput,
     request: Request,
     session: SessionDependency,
-) -> ChatAnswer:
-    """JSON 追加问题并传递完整上下文，当前默认回显；冲突返回 409，回复失败返回 502。"""
+) -> ConversationSendResult:
+    """追加问题并返回已保存会话供立即展示；当前默认回显，冲突返回 409，回复失败返回 502。"""
     return request_service(request, session).send(data, identifier)
 
 

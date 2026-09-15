@@ -80,12 +80,12 @@ class ConversationMessage(OverviewModel):
     knowledge_base: str
     tools: list[str] = Field(default_factory=list)
     sources: list[AnswerSource] = Field(default_factory=list)
-    # 缺省为空以兼容旧 JSON 历史，后续正式消息表仍可沿用此对外契约。
+    # 缺省为空以兼容旧历史；关系型消息表保存相同元信息，原文件仍在附件仓库中。
     attachments: list[ConversationAttachment] = Field(default_factory=list)
 
 
 class ConversationRecord(OverviewModel):
-    """临时完整会话结构；version 用于拦截并发覆盖，不承担用户权限判断。"""
+    """完整会话的对外结构；version 对应数据库并发版本，不承担用户权限判断。"""
 
     id: str
     title: str
@@ -98,6 +98,12 @@ class ConversationRecord(OverviewModel):
     version: int = Field(default=0, ge=0)
     # 新记录绑定可信登录身份；旧记录为空，维持旧共享演示数据的可读性。
     owner_id: str = ""
+
+
+class ConversationSendResult(ChatAnswer):
+    """提交成功后附带已保存的完整会话，前端无需再次查询即可展示并继续对话。"""
+
+    conversation: ConversationRecord
 
 
 class ChatReply(OverviewModel):

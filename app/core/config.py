@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 # 配置优先级：初始化参数 > 环境变量 > .env 文件 > 字段默认值。
@@ -25,6 +26,17 @@ class Settings(BaseSettings):
     database_read_url: SecretStr | None = None
     database_read_fallback_url: SecretStr | None = None
     database_migration_url: SecretStr | None = None
+    # 支持部署 .env 的主备分项配置；密码作为 SecretStr 保存，禁止在日志中输出。
+    postgres_host: str | None = None
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_db: str | None = None
+    postgres_user: str | None = None
+    postgres_password: SecretStr | None = None
+    postgres_read_host: str | None = None
+    postgres_read_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_read_db: str | None = None
+    postgres_read_user: str | None = None
+    postgres_read_password: SecretStr | None = None
     db_read_enabled: bool = False
     db_read_weight: int = Field(default=100, ge=0, le=100)
     db_read_fallback_enabled: bool = False
@@ -64,6 +76,35 @@ class Settings(BaseSettings):
     auth_mock_admin_subjects: list[str] = ["mock-admin"]
 
     @model_validator(mode="after")
+    def build_postgresql_urls(self) -> "Settings":
+        """在认证及主备校验前组装连接串；显式 URL 优先，分项密码不需要手工编码。"""
+        for prefix, target in (
+            ("postgres", "database_url"),
+            ("postgres_read", "database_read_url"),
+        ):
+            if getattr(self, target) is not None:
+                continue
+            host, database, username = (
+                getattr(self, f"{prefix}_{suffix}") for suffix in ("host", "db", "user")
+            )
+            # Compose 模板可能只含密码和端口，此时不自动启用数据库。
+            if not any((host, database, username)):
+                continue
+            if not all((host, database, username)):
+                raise ValueError(f"{prefix.upper()} requires HOST, DB and USER together")
+            password = getattr(self, f"{prefix}_password")
+            url = URL.create(
+                "postgresql+psycopg",
+                host=host,
+                port=getattr(self, f"{prefix}_port"),
+                database=database,
+                username=username,
+                password=password.get_secret_value() if password is not None else None,
+            )
+            setattr(self, target, SecretStr(url.render_as_string(hide_password=False)))
+        return self
+
+    @model_validator(mode="after")
     def validate_authentication(self) -> "Settings":
         for url in (self.auth_public_origin, self.auth_mock_iam_url):
             if (
@@ -90,6 +131,14 @@ class Settings(BaseSettings):
         "database_read_url",
         "database_read_fallback_url",
         "database_migration_url",
+        "postgres_host",
+        "postgres_db",
+        "postgres_user",
+        "postgres_password",
+        "postgres_read_host",
+        "postgres_read_db",
+        "postgres_read_user",
+        "postgres_read_password",
         "redis_url",
         "minio_endpoint",
         "minio_access_key",

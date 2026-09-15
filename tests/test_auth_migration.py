@@ -1,9 +1,21 @@
+import json
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    inspect,
+    text,
+)
 
 
 def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monkeypatch):
@@ -34,7 +46,6 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
     """旧分支共用 01 版本，按已有表补齐新链，不能只验证空库成功。"""
     from datetime import datetime
 
-    from app.db.conversations import DemoConversation
     from app.db.overview import OverviewSnapshot
     from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthSession
 
@@ -71,12 +82,31 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
                 )
             )
         if legacy == "conversations":
-            DemoConversation.__table__.create(engine)
+            # 固定旧表定义，不能用已升级的 ORM 来伪造旧数据库。
+            old = Table(
+                "demo_conversations",
+                MetaData(),
+                Column("id", String(64), primary_key=True),
+                Column("payload", Text, nullable=False),
+                Column("created_at", DateTime, nullable=False),
+                Column("deleted", Boolean, nullable=False),
+            )
+            old.create(engine)
             with engine.begin() as connection:
                 connection.execute(
-                    DemoConversation.__table__.insert().values(
+                    old.insert().values(
                         id="existing-chat",
-                        payload='{"messages":[]}',
+                        payload=json.dumps(
+                            {
+                                "id": "existing-chat",
+                                "title": "原有空会话",
+                                "model": "test",
+                                "knowledgeBase": "",
+                                "createdAt": "2026-09-14T00:00:00Z",
+                                "updatedAt": "2026-09-14T00:00:00Z",
+                                "messages": [],
+                            }
+                        ),
                         created_at=datetime(2026, 9, 14),
                         deleted=False,
                     )
@@ -85,7 +115,8 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
     command.upgrade(config, "head")
     assert {
         "overview_snapshots",
-        "demo_conversations",
+        "conversations",
+        "conversation_messages",
         "auth_session",
         "auth_login_request",
         "auth_event_log",
@@ -93,7 +124,8 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
     with engine.connect() as connection:
         assert connection.scalar(text(f"SELECT {key} FROM {table}")) == value
         if legacy == "conversations":
-            assert connection.scalar(text("SELECT id FROM demo_conversations")) == "existing-chat"
+            # 新迁移将旧 JSON 搬到关系表，原有会话编号仍然可读。
+            assert connection.scalar(text("SELECT id FROM conversations")) == "existing-chat"
     command.check(config)
     command.upgrade(config, "head")
     engine.dispose()

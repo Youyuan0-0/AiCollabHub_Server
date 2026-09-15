@@ -82,7 +82,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | --- | --- |
 | `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
 | `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
-| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用临时 JSON 持久化 |
+| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用 PostgreSQL 会话表与消息表持久化 |
 | `/conversations/{id}/attachments`、`/conversations/{id}/attachments/{attachmentId}/content` | 上传原文件、按会话权限下载；独立临时文件仓库 |
 | `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
 | `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
@@ -127,6 +127,16 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 迁移链为 `20260913_01`（基线）→ `20260914_01`（看板）→ `20260914_02`（会话）→ `20260914_03`（认证与旧分支兼容）。旧认证分支也曾使用 `20260914_01`，末次迁移会识别现有表，补齐缺失的看板或认证表并保留现有数据；两种分支的数据库均可执行 `upgrade head`，不需要删库或重新 stamp。未登记的历史表不会被自动生成迁移删除。
 
+后续 `20260915_chat01` 将旧 `demo_conversations` JSON 搬迁为 `conversations` 和
+`conversation_messages`，保留会话/消息编号、所属用户、顺序、附件元信息及删除标记。
+当前共享测试库的全局版本由其他模块维护，首页会话使用独立入口：
+`python -m alembic -c alembic.conversations.ini upgrade head`，
+只更新 `alembic_version_conversations`，不会覆盖共享库的 `alembic_version`。
+分项 `POSTGRES_*` / `POSTGRES_READ_*` 配置已支持，完整 `DATABASE_URL` 优先。
+已使用本地 .env 完成真实 PostgreSQL 主备及会话验证；复验入口为
+`python -m scripts.verify_conversations_postgresql --env .env`。
+配置、表结构与迁移边界见 [首页会话 PostgreSQL 说明](deploy/conversations-postgresql.md)。
+
 `compose.dev.yaml` 是可选的 PostgreSQL 17 单库开发配置，不包含主备。现有局域网测试集群为 PostgreSQL 16.14，服务配置与既有验证记录见 [部署说明](deploy/README.md)。
 
 ## 验证
@@ -157,6 +167,6 @@ FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据�
 登录开启时新会话绑定用户，旧共享样例仍可读取；匿名开发继续共享。`create_app(chat_provider=...)` 可注入
 第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
 首页附件先通过独立接口上传，发送多轮 JSON 时携带 `attachmentIds`，历史可展示和下载原文件；暂不解析或参与回答。
-会话保留临时存储实现，附件默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
-详细契约、上限、临时文件保留规则及后续 PostgreSQL/MinIO 迁移边界见 [附件说明](ATTACHMENTS.md)。
+会话与消息已适配 PostgreSQL 分表存储；附件原文件仍默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
+详细契约、上限、临时文件保留规则及后续附件仓库/MinIO 迁移边界见 [附件说明](ATTACHMENTS.md)。
 数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。

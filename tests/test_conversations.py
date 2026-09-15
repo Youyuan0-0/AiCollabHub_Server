@@ -124,9 +124,14 @@ def test_empty_conversation_and_multiturn_context(conversation_settings):
             )
             assert response.status_code == 200
             assert response.json()["id"] == identifier
+            # 提交返回的快照与数据库读取一致，包含真实编号和版本，前端无需额外查询才能展示。
+            saved = response.json()["conversation"]
+            assert saved == client.get(f"{root}/{identifier}/messages").json()
+            assert saved["messages"][-1]["content"] == f"收到：{question}"
         assert contexts == [["第一问"], ["第一问", "收到：第一问", "第二问"]]
     with TestClient(create_app(conversation_settings)) as client:
         record = client.get(f"{root}/{identifier}/messages").json()
+        assert record == saved
         assert record["title"] == "第一问"
         assert record["version"] == 2
         assert [message["role"] for message in record["messages"]] == ["user", "assistant"] * 2
@@ -164,21 +169,23 @@ def test_provider_failure_does_not_persist_partial_turn(conversation_settings):
 
 
 def test_legacy_record_and_stale_update(conversation_settings):
-    """旧单轮 JSON 无需迁移；过时的版本不能覆盖更新或复活已删除的会话。"""
+    """旧单轮 JSON 经迁移仍可读；过时版本不能覆盖更新或复活已删除的会话。"""
     from datetime import UTC, datetime
 
     from fastapi import HTTPException
-    from sqlalchemy import create_engine
+    from sqlalchemy import MetaData, Table, create_engine
     from sqlalchemy.orm import Session
 
-    from app.db.conversations import DemoConversation
     from app.services.conversation_store import SqlConversationStore
 
     engine = create_engine(conversation_settings.database_url.get_secret_value())
     try:
-        with Session(engine) as session:
-            session.add(
-                DemoConversation(
+        config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        command.downgrade(config, "20260914_03")
+        legacy = Table("demo_conversations", MetaData(), autoload_with=engine)
+        with engine.begin() as connection:
+            connection.execute(
+                legacy.insert().values(
                     id="legacy",
                     created_at=datetime.now(UTC).replace(tzinfo=None),
                     deleted=False,
@@ -194,7 +201,8 @@ def test_legacy_record_and_stale_update(conversation_settings):
                     ),
                 )
             )
-            session.commit()
+        command.upgrade(config, "head")
+        with Session(engine) as session:
             store = SqlConversationStore(session)
             original = store.get("legacy")
             assert len(original.messages) == 2

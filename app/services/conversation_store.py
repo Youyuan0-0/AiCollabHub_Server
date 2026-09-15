@@ -1,4 +1,4 @@
-"""临时会话存储边界；复用现有 JSON 表，未来可替换为正式会话表与消息表。"""
+"""会话存储协议及 PostgreSQL 实现；业务层无需处理表结构或事务细节。"""
 
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -6,12 +6,17 @@ from typing import Protocol
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.db.conversations import DemoConversation
-from app.schemas.conversations import ChatAnswer, ConversationMessage, ConversationRecord
+from app.db.conversations import Conversation, StoredConversationMessage
+from app.schemas.conversations import (
+    ChatAnswer,
+    ConversationMessage,
+    ConversationRecord,
+    ConversationSummary,
+)
 
 
 class ConversationStore(Protocol):
@@ -19,13 +24,13 @@ class ConversationStore(Protocol):
 
     def get(self, identifier: str) -> ConversationRecord | None: ...
     def contains(self, identifier: str) -> bool: ...
-    def list(self) -> list[ConversationRecord]: ...
+    def list(self, owner_id: str = "") -> list[ConversationSummary]: ...
     def save(self, record: ConversationRecord, expected_version: int | None) -> None: ...
     def delete(self, identifier: str) -> None: ...
 
 
 def record_from_answer(answer: ChatAnswer, created_at: datetime) -> ConversationRecord:
-    """将旧单轮记录转换为完整会话，兼容已有数据，无需批量改写历史。"""
+    """将文件中的单轮固定样例转为完整会话；数据库内的旧记录由 Alembic 负责迁移。"""
     return ConversationRecord(
         id=answer.id,
         title=answer.question[:200],
@@ -56,6 +61,9 @@ def database_operation(session: Session):
     """数据库失败时回滚，隐藏连接串和 SQL；并发首次创建以 409 告知调用方。"""
     try:
         yield
+    except HTTPException:
+        session.rollback()
+        raise
     except IntegrityError:
         session.rollback()
         raise HTTPException(409, "conversation_write_conflict") from None
@@ -64,94 +72,228 @@ def database_operation(session: Session):
         raise HTTPException(503, "conversations_unavailable") from None
 
 
+def utc_time(value: datetime) -> datetime:
+    """统一返回 UTC；SQLite 读出的无时区时间按旧约定解释为 UTC。"""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 class SqlConversationStore:
-    """当前临时实现：一个会话一个 JSON 记录，删除保留标记，避免旧请求复活已删会话。"""
+    """会话与消息分表存储；先比较版本并锁定会话行，再原子追加整轮消息。"""
 
     def __init__(self, session: Session):
         self.session = session
+        # 仅保留本仓库实例最近一次读取的独立快照；用于校验旧消息，不能替代数据库版本条件更新。
+        self._loaded_record: ConversationRecord | None = None
 
     @staticmethod
-    def decode(row: DemoConversation) -> ConversationRecord:
-        """先读取新结构，再兼容旧 ChatAnswer；两种格式都无效时返回 503。"""
+    def decode(row: Conversation, messages: list[StoredConversationMessage]) -> ConversationRecord:
+        """组装独立的接口对象；损坏字段统一返回 503，不暴露 SQL 或数据库内容。"""
         try:
-            return ConversationRecord.model_validate_json(row.payload)
+            return ConversationRecord(
+                id=row.id,
+                title=row.title,
+                model=row.model,
+                knowledge_base=row.knowledge_base,
+                tools=row.tools,
+                owner_id=row.owner_id,
+                created_at=utc_time(row.created_at),
+                updated_at=utc_time(row.updated_at),
+                version=row.version,
+                messages=[
+                    ConversationMessage(
+                        id=item.id,
+                        role=item.role,
+                        content=item.content,
+                        created_at=utc_time(item.created_at),
+                        model=item.model,
+                        knowledge_base=item.knowledge_base,
+                        tools=item.tools,
+                        sources=item.sources,
+                        attachments=item.attachments,
+                    )
+                    for item in messages
+                ],
+            )
         except ValidationError:
-            try:
-                return record_from_answer(
-                    ChatAnswer.model_validate_json(row.payload), row.created_at.replace(tzinfo=UTC)
-                )
-            except ValidationError:
-                raise HTTPException(503, "conversation_record_invalid") from None
+            raise HTTPException(503, "conversation_record_invalid") from None
 
     def get(self, identifier: str) -> ConversationRecord | None:
-        """查询独立会话对象；读取后结束事务，避免第三方调用期间持有数据库事务。"""
+        """一次关联查询读取一致的摘要和消息；返回前释放事务，第三方调用不占锁。"""
         with database_operation(self.session):
-            row = self.session.get(DemoConversation, identifier)
-            result = self.decode(row) if row is not None and not row.deleted else None
+            # 单条 SQL 避免 READ COMMITTED 下两次查询之间续聊或删除，读到不同版本。
+            rows = self.session.execute(
+                select(Conversation, StoredConversationMessage)
+                .outerjoin(
+                    StoredConversationMessage,
+                    StoredConversationMessage.conversation_id == Conversation.id,
+                )
+                .where(Conversation.id == identifier, Conversation.deleted.is_(False))
+                .order_by(StoredConversationMessage.position)
+            ).all()
+            result = (
+                self.decode(rows[0][0], [item for _, item in rows if item is not None])
+                if rows
+                else None
+            )
             self.session.rollback()
+            self._loaded_record = result.model_copy(deep=True) if result is not None else None
             return result
 
     def contains(self, identifier: str) -> bool:
-        """检查是否已有记录或删除标记，供服务层决定是否使用固定历史样例。"""
+        """包含删除标记的存在性检查，避免固定样例在删除后再次出现。"""
         with database_operation(self.session):
-            exists = self.session.get(DemoConversation, identifier) is not None
+            exists = (
+                self.session.scalar(select(Conversation.id).where(Conversation.id == identifier))
+                is not None
+            )
             self.session.rollback()
             return exists
 
-    def list(self) -> list[ConversationRecord]:
-        """只读出未删除的会话，按更新时间排序；当前完整 JSON 存储适用于开发规模。"""
+    def list(self, owner_id: str = "") -> list[ConversationSummary]:
+        """在数据库按可信用户过滤、排序并限制 100 条；列表不加载消息正文。"""
         with database_operation(self.session):
-            rows = self.session.scalars(
-                select(DemoConversation).where(DemoConversation.deleted.is_(False))
+            rows = self.session.execute(
+                select(
+                    Conversation.id, Conversation.title, Conversation.model, Conversation.updated_at
+                )
+                .where(
+                    Conversation.deleted.is_(False),
+                    or_(Conversation.owner_id == "", Conversation.owner_id == owner_id),
+                )
+                .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+                .limit(100)
             ).all()
-            result = [self.decode(row) for row in rows]
+            result = [
+                ConversationSummary(
+                    id=row.id,
+                    title=row.title,
+                    model=row.model,
+                    time=utc_time(row.updated_at).isoformat(),
+                )
+                for row in rows
+            ]
             self.session.rollback()
-            return sorted(result, key=lambda record: (record.updated_at, record.id), reverse=True)
+            return result
 
     def save(self, record: ConversationRecord, expected_version: int | None) -> None:
-        """None 表示首次创建；更新比较旧版本和 JSON，拒绝并发覆盖及删除后的迟到结果。"""
+        """None 表示首次创建；续聊使用旧版本条件更新，只追加消息且不改写既有内容。"""
         with database_operation(self.session):
-            row = self.session.get(DemoConversation, record.id)
-            payload = record.model_dump_json(by_alias=True)
+            values = {
+                "title": record.title,
+                "model": record.model,
+                "knowledge_base": record.knowledge_base,
+                "tools": list(record.tools),
+                "updated_at": utc_time(record.updated_at),
+                "version": record.version,
+            }
+            existing_count = 0
             if expected_version is None:
-                if row is not None:
-                    raise HTTPException(409, "conversation_write_conflict")
                 self.session.add(
-                    DemoConversation(
+                    Conversation(
                         id=record.id,
-                        payload=payload,
-                        created_at=record.created_at.replace(tzinfo=None),
+                        owner_id=record.owner_id,
+                        created_at=utc_time(record.created_at),
                         deleted=False,
+                        **values,
                     )
                 )
+                # 先插入父表，确保 PostgreSQL 外键校验通过；后续失败会整体回滚。
+                self.session.flush()
             else:
-                if row is None or row.deleted or self.decode(row).version != expected_version:
+                if record.version != expected_version + 1:
                     raise HTTPException(409, "conversation_write_conflict")
-                # 条件更新同时抵御读取后发生的其他更新；失败时不保留半轮消息。
+                # 复用读取上下文时的快照，省去保存前重复读取摘要和全部消息的两次数据库往返。
+                # 独立调用 save 或版本不匹配时补查；深拷贝确保调用方修改旧消息仍能被发现。
+                previous = self._loaded_record
+                if (
+                    previous is None
+                    or previous.id != record.id
+                    or previous.version != expected_version
+                ):
+                    previous = self.get(record.id)
+                if (
+                    previous is None
+                    or previous.version != expected_version
+                    or previous.owner_id != record.owner_id
+                    or previous.messages != record.messages[: len(previous.messages)]
+                ):
+                    raise HTTPException(409, "conversation_write_conflict")
+                existing_count = len(previous.messages)
                 result = self.session.execute(
-                    update(DemoConversation)
+                    update(Conversation)
                     .where(
-                        DemoConversation.id == record.id,
-                        DemoConversation.payload == row.payload,
-                        DemoConversation.deleted.is_(False),
+                        Conversation.id == record.id,
+                        Conversation.owner_id == record.owner_id,
+                        Conversation.version == expected_version,
+                        Conversation.deleted.is_(False),
                     )
-                    .values(payload=payload)
+                    .values(**values)
                     .execution_options(synchronize_session=False)
                 )
                 if result.rowcount != 1:
-                    self.session.rollback()
                     raise HTTPException(409, "conversation_write_conflict")
+                # 版本匹配才追加并持有行锁到提交；其他请求续聊或删除后，旧快照仍返回 409。
+            for position, message in enumerate(
+                record.messages[existing_count:], start=existing_count
+            ):
+                self.session.add(
+                    StoredConversationMessage(
+                        conversation_id=record.id,
+                        position=position,
+                        id=message.id,
+                        role=message.role,
+                        content=message.content,
+                        created_at=utc_time(message.created_at),
+                        model=message.model,
+                        knowledge_base=message.knowledge_base,
+                        tools=list(message.tools),
+                        sources=[source.model_dump(mode="json") for source in message.sources],
+                        attachments=[
+                            attachment.model_dump(mode="json") for attachment in message.attachments
+                        ],
+                    )
+                )
             self.session.commit()
+            self._loaded_record = record.model_copy(deep=True)
 
     def delete(self, identifier: str) -> None:
-        """内容清空并保留删除标记，完整删除消息且防止固定历史重新出现。"""
+        """同一事务清除全部消息及摘要，保留空删除标记；固定样例首次删除也保存标记。"""
         with database_operation(self.session):
-            row = self.session.get(DemoConversation, identifier)
-            if row is None:
-                row = DemoConversation(
-                    id=identifier, created_at=datetime.now(UTC).replace(tzinfo=None)
+            now = datetime.now(UTC)
+            result = self.session.execute(
+                update(Conversation)
+                .where(Conversation.id == identifier)
+                .values(
+                    deleted=True,
+                    title="",
+                    model="",
+                    knowledge_base="",
+                    tools=[],
+                    updated_at=now,
+                    version=Conversation.version + 1,
                 )
-                self.session.add(row)
-            row.deleted = True
-            row.payload = "{}"
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount == 0:
+                self.session.add(
+                    Conversation(
+                        id=identifier,
+                        title="",
+                        model="",
+                        knowledge_base="",
+                        tools=[],
+                        owner_id="",
+                        created_at=now,
+                        updated_at=now,
+                        version=0,
+                        deleted=True,
+                    )
+                )
+                self.session.flush()
+            # 显式删除消息不依赖 SQLite 的外键开关；附件原文件仍遵循现有仓库生命周期。
+            self.session.execute(
+                delete(StoredConversationMessage).where(
+                    StoredConversationMessage.conversation_id == identifier
+                )
+            )
             self.session.commit()
