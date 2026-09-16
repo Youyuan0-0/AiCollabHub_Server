@@ -1,5 +1,7 @@
 """附件临时文件仓库；业务仅依赖协议，后续可替换为 PostgreSQL 元信息和对象存储。"""
 
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Iterator
@@ -36,15 +38,23 @@ ALLOWED_EXTENSIONS = {
 class AttachmentStore(Protocol):
     """conversation_id 限定文件归属；get 返回可信元信息，chunks 分块读取原始文件。"""
 
-    def save(self, conversation_id: str, name: str, stream: BinaryIO) -> ConversationAttachment: ...
-    def get(self, conversation_id: str, identifier: str) -> ConversationAttachment: ...
-    def chunks(self, conversation_id: str, identifier: str) -> Iterator[bytes]: ...
+    def save(self, conversation_id: str, name: str, stream: BinaryIO) -> ConversationAttachment:
+        """保存归属于指定会话的附件并返回可信元信息。"""
+        ...
+
+    def get(self, conversation_id: str, identifier: str) -> ConversationAttachment:
+        """校验会话归属后读取附件元信息。"""
+        ...
+
+    def chunks(self, conversation_id: str, identifier: str) -> Iterator[bytes]:
+        """校验会话归属后分块读取附件原始内容。"""
+        ...
 
 
 class LocalAttachmentStore:
     """开发阶段共享目录适配器：落盘保留重启数据，不依赖临时会话表的具体结构。"""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path) -> None:
         self.root = root.resolve()
 
     def _path(self, identifier: str, suffix: str) -> Path:

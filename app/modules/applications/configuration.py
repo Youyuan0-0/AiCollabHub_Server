@@ -1,5 +1,7 @@
 """有限的表单/管理列配置。字段结构稳定，不能由浏览器新增任意业务字段。"""
 
+from typing import Self
+
 from fastapi import HTTPException
 from pydantic import Field, model_validator
 
@@ -56,7 +58,8 @@ MANAGEMENT_COLUMNS = {
 }
 
 
-def default_configuration():
+def default_configuration() -> dict:
+    """生成默认表单和管理列配置，每次调用均返回独立容器。"""
     return {
         "revision": 1,
         "updatedAt": None,
@@ -66,7 +69,7 @@ def default_configuration():
     }
 
 
-def effective_configuration(configuration):
+def effective_configuration(configuration: dict) -> dict:
     """旧数据库配置同样遵循固定必填规则；读取时合并，不写入或重置原配置。"""
     return {
         **configuration,
@@ -75,13 +78,16 @@ def effective_configuration(configuration):
 
 
 class SaveApplicationConfiguration(ApplicationPayload):
+    """可编辑的表单配置，只允许已定义的字段和管理列。"""
+
     revision: int = Field(ge=1)
     required_fields: list[str] = Field(max_length=len(FIELD_LABELS))
     field_hints: dict[str, str] = Field(default_factory=dict, max_length=len(FIELD_LABELS))
     management_columns: list[str] = Field(min_length=1, max_length=len(MANAGEMENT_COLUMNS))
 
     @model_validator(mode="after")
-    def valid_configuration(self):
+    def valid_configuration(self) -> Self:
+        """校验固定必填项、字段白名单与重复配置，并清理空白说明。"""
         if not set(CORE_FIELDS).issubset(self.required_fields):
             raise ValueError("应用基本资料、触发方式、通信协议和部署方式必须保留为必填")
         if (
@@ -103,7 +109,8 @@ class SaveApplicationConfiguration(ApplicationPayload):
         return self
 
 
-def configuration_view(configuration: dict, *, public=False):
+def configuration_view(configuration: dict, *, public: bool = False) -> dict:
+    """生成前端配置视图；public 为真时省略管理专用配置。"""
     configuration = effective_configuration(configuration)
     result = {
         "revision": configuration["revision"],
@@ -127,8 +134,8 @@ def configuration_view(configuration: dict, *, public=False):
     return result
 
 
-def validate_submission(data: dict, configuration: dict, *, frozen=False):
-    # 新提交使用最新固定规则，既有待审核申请仍按当时冻结的规则检查。
+def validate_submission(data: dict, configuration: dict, *, frozen: bool = False) -> None:
+    """校验提交字段；frozen 为真时沿用申请冻结的必填规则，失败返回 422。"""
     if not frozen:
         configuration = effective_configuration(configuration)
     missing = [FIELD_LABELS[key] for key in configuration["requiredFields"] if not data.get(key)]

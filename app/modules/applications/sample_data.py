@@ -1,9 +1,12 @@
 """仅供开发实例初始化使用的场景应用样例。"""
 
+from __future__ import annotations
+
 from app.modules.common.fixtures import fixture
 
 
-def seed_applications():
+def seed_applications() -> list[dict]:
+    """生成应用目录初始样例及兼容当前接口的版本、统计与发布元数据。"""
     resources = fixture("applications", "resources")
     statistics = fixture("applications", "catalog-statistics")
     for resource in resources:

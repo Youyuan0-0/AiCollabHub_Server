@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -20,15 +22,21 @@ logger = logging.getLogger(__name__)
 
 
 class StorageUnavailable(RuntimeError):
+    """对象存储不可用或无法取得可信元信息。"""
+
     pass
 
 
 class ObjectNotFound(RuntimeError):
+    """指定对象不存在，供业务层转换为资源缺失响应。"""
+
     pass
 
 
 @dataclass(frozen=True)
 class ObjectInfo:
+    """对象的内部键、大小、摘要、内容类型及版本信息。"""
+
     key: str
     size: int
     etag: str | None
@@ -37,14 +45,19 @@ class ObjectInfo:
 
 
 class MinioStorage:
-    def __init__(self, client: Minio, *, bucket: str, http: PoolManager, max_upload_bytes: int):
+    """封装对象存储访问、大小限制、异常转换与连接释放。"""
+
+    def __init__(
+        self, client: Minio, *, bucket: str, http: PoolManager, max_upload_bytes: int
+    ) -> None:
         self.client = client
         self.bucket = bucket
         self.http = http
         self.max_upload_bytes = max_upload_bytes
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "MinioStorage":
+    def from_settings(cls, settings: Settings) -> MinioStorage:
+        """从受控配置创建存储客户端，初始化失败时释放连接池。"""
         if settings.minio_endpoint is None:
             raise ValueError("MINIO_ENDPOINT is required")
         check_bucket_name(settings.minio_bucket, strict=True)
@@ -96,6 +109,7 @@ class MinioStorage:
         length: int,
         content_type: str = "application/octet-stream",
     ) -> ObjectInfo:
+        """校验对象键和上传大小后写入原始数据并返回元信息。"""
         self._validate_key(key)
         if isinstance(length, bool) or not isinstance(length, int):
             raise ValueError("Object length must be an integer")
@@ -110,6 +124,7 @@ class MinioStorage:
             self._translate_error(error)
 
     def stat_object(self, key: str) -> ObjectInfo:
+        """读取对象元信息，缺失或无法确认大小时抛出明确异常。"""
         self._validate_key(key)
         try:
             result = self.client.stat_object(self.bucket, key)
@@ -121,6 +136,7 @@ class MinioStorage:
 
     @contextmanager
     def open_object(self, key: str) -> Iterator[HTTPResponse]:
+        """打开对象读取流，并确保读取结束或中断后归还连接。"""
         self._validate_key(key)
         try:
             response = self.client.get_object(self.bucket, key)
@@ -136,6 +152,7 @@ class MinioStorage:
                 response.release_conn()
 
     def remove_object(self, key: str) -> None:
+        """校验内部对象键后删除指定对象。"""
         self._validate_key(key)
         try:
             self.client.remove_object(self.bucket, key)
@@ -143,6 +160,7 @@ class MinioStorage:
             self._translate_error(error)
 
     def probe(self) -> bool:
+        """检查目标存储桶是否可访问，失败时返回不可用状态。"""
         try:
             return self.client.bucket_exists(self.bucket)
         except (MinioException, HTTPError, OSError) as error:
@@ -150,10 +168,12 @@ class MinioStorage:
             return False
 
     def close(self) -> None:
+        """释放对象存储 HTTP 连接池。"""
         self.http.clear()
 
 
 def get_storage(request: Request) -> MinioStorage:
+    """取得应用共享存储客户端，未配置时返回服务不可用。"""
     resources = request.app.state.resources
     if resources is None or resources.storage is None:
         raise HTTPException(503, detail="object_storage_not_configured")

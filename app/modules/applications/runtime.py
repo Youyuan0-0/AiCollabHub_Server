@@ -1,5 +1,7 @@
 """Agent Dev 普通智能体运行适配，依据开发指南 §1.4.1.1（P216–223）。"""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Literal
@@ -8,8 +10,13 @@ import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from app.core.config import Settings
+from app.modules.applications.ports import ApplicationProvider
+
 
 class AgentBinding(BaseModel):
+    """平台应用版本到实际智能体编号、版本及输入格式的可信映射。"""
+
     model_config = ConfigDict(extra="forbid")
     version_id: str = Field(min_length=1)
     agent_code: str = Field(min_length=1)
@@ -22,15 +29,23 @@ class AgentDevProvider:
 
     mode = "live"
 
-    def __init__(self, catalog_provider, settings, transport=None):
+    def __init__(
+        self,
+        catalog_provider: ApplicationProvider,
+        settings: Settings,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        """绑定目录适配器、实际服务配置和可替换的 HTTP 传输。"""
         self.catalog_provider = catalog_provider
         self.settings = settings
         self.transport = transport
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> object:
+        """将目录和发布能力委托给已有提供方。"""
         return getattr(self.catalog_provider, name)
 
-    def binding(self, resource):
+    def binding(self, resource: dict) -> AgentBinding:
+        """读取可信映射并匹配当前应用版本，缺少配置时返回 503。"""
         settings = self.settings
         if not (
             settings.applications_agent_url
@@ -49,14 +64,16 @@ class AgentDevProvider:
             raise HTTPException(503, "当前应用版本尚未配置实际智能体")
         return binding
 
-    def connection(self, resource):
+    def connection(self, resource: dict) -> dict:
+        """将实际运行配置的可用性转换为前端连接状态。"""
         try:
             self.binding(resource)
         except HTTPException as error:
             return {"mode": "live", "configured": False, "message": error.detail}
         return {"mode": "live", "configured": True, "message": "已配置实际运行服务"}
 
-    def runtime_status(self, application_id, version_id):
+    def runtime_status(self, application_id: str, version_id: str) -> dict:
+        """返回配置接入状态，运行统计交由平台实际任务记录提供。"""
         configured = self.connection({"id": application_id, "versionId": version_id})["configured"]
         return {
             "status": "configured" if configured else "not_connected",
@@ -66,7 +83,8 @@ class AgentDevProvider:
             "measuredAt": None,
         }
 
-    def invoke(self, resource, inputs, options, simulate_failure):
+    def invoke(self, resource: dict, inputs: dict, options: dict, simulate_failure: bool) -> dict:
+        """创建智能体会话并执行一次非流式请求，校验最终文本和图片结果。"""
         if simulate_failure:
             raise HTTPException(422, "实际服务不支持模拟失败选项")
         binding = self.binding(resource)
@@ -139,7 +157,8 @@ class AgentDevProvider:
         }
 
     @staticmethod
-    def post(client, path, payload):
+    def post(client: httpx.Client, path: str, payload: dict) -> dict:
+        """发送智能体请求并限制响应大小，不自动重试可能已执行的操作。"""
         try:
             with client.stream("POST", path, json=payload) as response:
                 if response.status_code != 200:

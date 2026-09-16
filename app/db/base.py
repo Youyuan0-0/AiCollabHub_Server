@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
 
 # 业务 ORM 模型统一继承此基类，Alembic 通过其 metadata 获取表结构。
 class Base(DeclarativeBase):
+    """项目 SQLAlchemy ORM 模型共用的声明基类。"""
+
     # 固定索引和约束名称，避免迁移与回退依赖各数据库自动生成的名称。
     metadata = MetaData(
         naming_convention={

@@ -11,10 +11,13 @@ from app.modules.common.identity_sync.models import IdentitySyncReceipt
 from app.modules.common.identity_sync.schemas import EventId, SyncBatch, SyncResult, request_schema
 
 router = APIRouter(prefix="/auth/mock/identity-sync", tags=["mock-identity-sync"])
-mock_key = APIKeyHeader(name="X-Mock-IAM-Key", auto_error=False)
+MOCK_IAM_KEY = APIKeyHeader(name="X-Mock-IAM-Key", auto_error=False)
 
 
-def require_mock_source(request: Request, key: Annotated[str | None, Depends(mock_key)]):
+def require_mock_source(
+    request: Request, key: Annotated[str | None, Depends(MOCK_IAM_KEY)]
+) -> None:
+    """限定为非生产模拟认证，并验证同步推送或回执查询的来源密钥。"""
     settings = request.app.state.settings
     if settings.auth_mode != "mock" or settings.app_env == "production":
         raise HTTPException(404, "not_found")
@@ -27,6 +30,7 @@ def require_mock_source(request: Request, key: Annotated[str | None, Depends(moc
 async def read_batch(
     request: Request, _: Annotated[None, Depends(require_mock_source)]
 ) -> SyncBatch:
+    """读取有大小限制的 JSON 批次，校验失败时仅返回字段位置和原因。"""
     if request.headers.get("content-type", "").split(";")[0].lower() != "application/json":
         raise HTTPException(415, "json_required")
     body = bytearray()
@@ -55,13 +59,13 @@ async def read_batch(
 )
 def receive(
     request: Request, batch: Annotated[SyncBatch, Depends(read_batch)], db: SessionDependency
-):
+) -> SyncResult:
     """接收平台内部模拟事件；集团的编号、状态及签名必须经正式适配后才能接入。"""
     return service.receive(db, request.app.state.settings, batch)
 
 
 @router.get("/{event_id}", response_model=SyncResult, dependencies=[Depends(require_mock_source)])
-def receipt(event_id: EventId, db: SessionDependency):
+def receipt(event_id: EventId, db: SessionDependency) -> SyncResult:
     """查询数据库中的处理回执；提交结果不确定时使用相同 eventId 和报文重试。"""
     value = db.get(IdentitySyncReceipt, event_id)
     if value is None:

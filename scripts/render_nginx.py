@@ -1,10 +1,13 @@
+"""根据前端产物路径与服务端口生成单机 Nginx 网关配置。"""
+
 import argparse
 import shutil
 import sys
 from pathlib import Path
 
 
-def main():
+def main() -> None:
+    """校验部署参数并生成网关配置，支持按平台设置 worker 数量。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--nginx-root", required=True, type=Path)
     parser.add_argument("--user-dist", type=Path, default=Path("../AiCollabHub_User/dist"))

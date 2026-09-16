@@ -1,13 +1,17 @@
 """场景应用的 PostgreSQL 仓储；复用单库连接池，不自动建表或导入样例。"""
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import RLock
 
 from fastapi import HTTPException
-from sqlalchemy import MetaData, text
+from sqlalchemy import Engine, MetaData, Table, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
 from app.db.transactions import commit_write, prepare_write
 from app.modules.applications.database_session import DatabaseApplicationSession
 from app.modules.applications.demo_marketplace import DemoMarketplaceStore
@@ -26,7 +30,12 @@ TABLE_NAMES = (
 
 
 class DatabaseApplicationRepository:
-    def __init__(self, engine, settings, marketplace: DemoMarketplaceStore):
+    """复用主库连接池的应用仓储，通过数据库事务保证申请与资源一致。"""
+
+    def __init__(
+        self, engine: Engine, settings: Settings, marketplace: DemoMarketplaceStore
+    ) -> None:
+        """保存连接配置和外部模拟存储，首次业务访问时才反射数据表。"""
         self.engine = engine
         self.settings = settings
         self.marketplace = marketplace
@@ -34,7 +43,8 @@ class DatabaseApplicationRepository:
         self._tables = None
         self._reflection_lock = RLock()
 
-    def tables(self):
+    def tables(self) -> dict[str, Table]:
+        """延迟反射已有业务表；缺表或连接失败时不回退到内存。"""
         # 延迟到业务首次访问；反射只读取已存在的表，缺表或连接失败时不回退内存。
         with self._reflection_lock:
             if self._tables is None:
@@ -51,19 +61,20 @@ class DatabaseApplicationRepository:
             return self._tables
 
     @contextmanager
-    def transaction(self, *, readonly=False):
+    def transaction(self, *, is_readonly: bool = False) -> Iterator[DatabaseApplicationSession]:
+        """提供应用事务；只读使用一致快照，写入发生并发冲突时返回 409。"""
         tables = self.tables()
         # 同一快照内组合资料、权限和统计，避免读请求之间互相加写锁。
         engine = (
             self.engine.execution_options(
                 isolation_level="REPEATABLE READ", postgresql_readonly=True
             )
-            if readonly
+            if is_readonly
             else self.engine
         )
         with Session(engine, autoflush=False, expire_on_commit=False) as database:
             try:
-                if readonly:
+                if is_readonly:
                     database.execute(
                         text(
                             "SELECT set_config('statement_timeout', :timeout, true), "
@@ -73,9 +84,11 @@ class DatabaseApplicationRepository:
                     )
                 else:
                     prepare_write(database, self.settings)
-                session = DatabaseApplicationSession(self, database, tables, readonly=readonly)
+                session = DatabaseApplicationSession(
+                    self, database, tables, is_readonly=is_readonly
+                )
                 yield session
-                if session.dirty:
+                if session.is_dirty:
                     commit_write(database)
                 else:
                     database.rollback()

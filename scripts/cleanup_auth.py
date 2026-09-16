@@ -10,7 +10,8 @@ from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthS
 from app.modules.common.auth.service import now
 
 
-def main():
+def main() -> None:
+    """按保留周期清理过期登录状态、会话和认证审计记录。"""
     settings = Settings()
     if settings.database_url is None:
         raise SystemExit("DATABASE_URL is required")

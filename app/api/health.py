@@ -13,31 +13,37 @@ router = APIRouter(prefix="/health", tags=["health"])
 
 
 class LivenessResponse(BaseModel):
+    """进程存活检查结果。"""
+
     status: Literal["ok"] = "ok"
 
 
 class ReadinessResponse(BaseModel):
+    """数据库连接就绪检查结果。"""
+
     status: Literal["ready"] = "ready"
 
 
 class DependencyHealthResponse(BaseModel):
+    """开发环境的外部依赖诊断结果。"""
+
     status: Literal["ready", "degraded"]
     dependencies: dict[str, Literal["available", "unavailable", "not_configured", "disabled"]]
 
 
-# 存活检查不依赖数据库，避免数据库故障被误判为应用进程故障。
 @router.get("/live", response_model=LivenessResponse)
 def liveness() -> LivenessResponse:
+    """仅检查应用进程存活，避免把数据库故障误判为进程故障。"""
     return LivenessResponse()
 
 
-# 就绪检查仅验证数据库连接，不代表业务表已迁移或外部 AI 服务可用。
 @router.get(
     "/ready",
     response_model=ReadinessResponse,
     responses={503: {"description": "Database is unconfigured or unavailable."}},
 )
 def readiness(engine: Annotated[Engine, Depends(get_engine)]) -> ReadinessResponse:
+    """验证数据库连接；不代表业务表已迁移或外部 AI 服务可用。"""
     try:
         with engine.connect() as connection:
             # 由当前数据库方言生成探测 SQL，避免硬编码特定数据库语法。
@@ -57,6 +63,7 @@ def readiness(engine: Annotated[Engine, Depends(get_engine)]) -> ReadinessRespon
     response_model=DependencyHealthResponse,
 )
 def dependency_health(request: Request) -> DependencyHealthResponse:
+    """诊断已配置依赖的可访问性；生产环境不开放此接口。"""
     if request.app.state.settings.app_env == "production":
         raise HTTPException(404, "not_found")
     resources = request.app.state.resources

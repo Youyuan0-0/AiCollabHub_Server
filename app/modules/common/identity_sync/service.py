@@ -14,7 +14,8 @@ from app.modules.common.identity_sync.models import IdentityRole, IdentityState,
 from app.modules.common.identity_sync.schemas import RoleChange, SyncBatch, SyncResult, UserChange
 
 
-def result_for(receipt: IdentitySyncReceipt, *, duplicate: bool = False) -> SyncResult:
+def result_for(receipt: IdentitySyncReceipt, *, is_duplicate: bool = False) -> SyncResult:
+    """将已保存回执转换为响应；重复请求沿用原处理统计。"""
     return SyncResult(
         event_id=receipt.event_id,
         resource_type=receipt.resource_type,
@@ -23,15 +24,16 @@ def result_for(receipt: IdentitySyncReceipt, *, duplicate: bool = False) -> Sync
         ignored=receipt.ignored,
         unchanged=receipt.unchanged,
         revoked_sessions=receipt.revoked_sessions,
-        duplicate=duplicate,
+        duplicate=is_duplicate,
     )
 
 
-def compare_version(previous: int, incoming: int, same_value: bool) -> str:
+def compare_version(previous: int, incoming: int, is_same_value: bool) -> str:
+    """按源版本识别过期、重复或新变化；相同版本携带不同值时拒绝处理。"""
     if incoming < previous:
         return "ignored"
     if incoming == previous:
-        if not same_value:
+        if not is_same_value:
             raise HTTPException(409, "sync_version_conflict")
         return "unchanged"
     return "applied"
@@ -40,6 +42,7 @@ def compare_version(previous: int, incoming: int, same_value: bool) -> str:
 def apply_user(
     db: Session, identity: IdentityState, change: UserChange, batch: SyncBatch
 ) -> tuple[str, int]:
+    """应用较新的用户状态，停用或删除时在同一事务内撤销已有会话。"""
     status = "disabled" if batch.action == "recycle" else change.status
     outcome = compare_version(identity.sync_time, batch.sync_time, identity.status == status)
     revoked = 0
@@ -59,24 +62,26 @@ def apply_user(
 
 
 def apply_role(db: Session, identity: IdentityState, change: RoleChange, batch: SyncBatch) -> str:
+    """按角色源版本更新授权；撤销管理员角色不撤销普通用户会话。"""
     grant = db.get(IdentityRole, (identity.subject, change.role_code))
-    authorized = batch.action == "push" and change.status == "authorized"
+    is_authorized = batch.action == "push" and change.status == "authorized"
     outcome = compare_version(
         grant.sync_time if grant else 0,
         batch.sync_time,
-        grant.authorized == authorized if grant else False,
+        grant.authorized == is_authorized if grant else False,
     )
     if outcome == "applied":
         if grant is None:
             grant = IdentityRole(subject=identity.subject, role_code=change.role_code)
             db.add(grant)
-        grant.authorized, grant.sync_time = authorized, batch.sync_time
+        grant.authorized, grant.sync_time = is_authorized, batch.sync_time
         grant.updated_at = int(time.time())
     # 撤管理员角色只收回管理端权限，普通用户端的有效会话仍可使用。
     return outcome
 
 
 def receive(db: Session, settings: Settings, batch: SyncBatch) -> SyncResult:
+    """原子处理身份批次和回执，按事件指纹幂等重试，冲突时整体回滚。"""
     canonical = json.dumps(
         batch.model_dump(mode="json", by_alias=True), sort_keys=True, separators=(",", ":")
     )
@@ -108,7 +113,7 @@ def receive(db: Session, settings: Settings, batch: SyncBatch) -> SyncResult:
         # 重试更新回执次数后提交，核对上次结果不确定的事件，不重复应用身份变化。
         existing.attempts += 1
         existing.last_received_at = current
-        result = result_for(existing, duplicate=True)
+        result = result_for(existing, is_duplicate=True)
         commit_write(db)
         return result
 

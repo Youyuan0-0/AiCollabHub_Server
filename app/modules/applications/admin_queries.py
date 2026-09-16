@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from datetime import date
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import model_validator
 
@@ -8,6 +10,8 @@ from app.modules.common.schemas import PageQuery
 
 
 class ApplicationReviewQuery(PageQuery):
+    """审核队列的状态、优先级排序与提交日期范围。"""
+
     status: Literal["", "draft", "pending", "approved", "rejected", "needs_changes"] = "pending"
     category: str = ""
     sort: Literal["updated", "submitted", "priority"] = "updated"
@@ -15,13 +19,15 @@ class ApplicationReviewQuery(PageQuery):
     end: date | None = None
 
     @model_validator(mode="after")
-    def dates(self):
+    def dates(self) -> Self:
+        """校验开始日期不晚于结束日期。"""
         if self.start and self.end and self.start > self.end:
             raise ValueError("开始日期不能晚于结束日期")
         return self
 
 
-def query_publications(publications: list[dict], query: ApplicationReviewQuery):
+def query_publications(publications: list[dict], query: ApplicationReviewQuery) -> dict:
+    """筛选审核申请并计算各状态数量，再对所选状态分页。"""
     keyword = query.q.strip().casefold()
     matched = [
         item
@@ -72,7 +78,7 @@ def query_publications(publications: list[dict], query: ApplicationReviewQuery):
         **paginate(
             [item for item in matched if not query.status or item["status"] == query.status],
             query.page,
-            query.pageSize,
+            query.page_size,
         ),
         "counts": counts,
     }

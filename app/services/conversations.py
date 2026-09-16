@@ -1,5 +1,7 @@
 """会话业务编排：管理完整消息历史，通过可替换存储和回复提供器执行对话。"""
 
+from __future__ import annotations
+
 import json
 from datetime import UTC, datetime
 from importlib.resources import files
@@ -71,7 +73,8 @@ class ConversationService:
         provider: ChatProvider,
         attachments: AttachmentStore | None = None,
         owner_id: str = "",
-    ):
+    ) -> None:
+        """使用会话仓库、回答提供方和附件仓库构造当前用户的服务。"""
         # owner_id 由已验证身份提供；附件仓库与会话存储分别注入，便于独立迁移。
         self.store = store
         self.provider = provider

@@ -46,4 +46,17 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = [
+    "E", "F", "I", "UP", "B",
+    # 业务代码的命名、公共说明及函数类型与代码规范保持一致。
+    "N801", "N802", "N803", "N806",
+    "D101", "D102", "D103",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN204", "ANN205", "ANN206",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 新增规则约束应用源码；迁移、运维脚本和测试保留原有检查范围。
+"tests/**" = ["ANN", "D", "N"]
+"migrations/**" = ["ANN", "D", "N"]
+"scripts/**" = ["ANN", "D", "N"]
+"checks/**" = ["ANN", "D", "N"]

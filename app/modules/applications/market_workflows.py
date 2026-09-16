@@ -1,5 +1,24 @@
 """受本地应用权限约束的外部发布流程；外部请求在本地事务提交后执行。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import httpx
+
+from app.core.config import Settings
+from app.modules.applications.identity import Actor
+from app.modules.applications.market_contract import (
+    MarketBinding,
+    MarketConfiguration,
+    MarketMutation,
+    MarketRecovery,
+)
+from app.modules.applications.ports import ApplicationSession
+
+if TYPE_CHECKING:
+    from app.modules.applications.application_service import ApplicationService
+
 import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -18,15 +37,18 @@ from app.modules.applications.market_contract import (
 )
 
 
-def digest(value):
+def digest(value: dict) -> str:
+    """对规范化 JSON 生成摘要，用于核对草稿和幂等请求内容。"""
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def now():
+def now() -> str:
+    """返回用于外部操作记录的 UTC 时间字符串。"""
     return datetime.now(UTC).isoformat()
 
 
-def listing_fingerprint(listing):
+def listing_fingerprint(listing: dict) -> str:
+    """对影响审核的条目资料生成摘要，识别审核后的内容变化。"""
     return digest(
         {
             key: listing.get(key)
@@ -44,13 +66,21 @@ def listing_fingerprint(listing):
 
 
 class MarketWorkflows:
-    def __init__(self, service, settings, transport=None):
+    """协调本地权限、幂等记录和外部发布，并支持不确定结果的核对。"""
+
+    def __init__(
+        self,
+        service: ApplicationService,
+        settings: Settings,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self.service = service
         self.settings = settings
         self.client = HiMarketClient(settings, transport)
 
-    def status(self, actor, *, admin=False):
-        if admin:
+    def status(self, actor: Actor, *, is_admin: bool = False) -> dict:
+        """返回外部发布配置状态及当前账号可操作的应用。"""
+        if is_admin:
             require_admin(actor)
         if self.settings.applications_market != "himarket":
             return {
@@ -62,10 +92,10 @@ class MarketWorkflows:
         config = self.client.configuration()
         applications = []
         # 仅对已在本平台登记的应用开放外部写入，不凭浏览器传来的资源编号代理管理权限。
-        with self.service.repository.transaction(readonly=True) as session:
+        with self.service.repository.transaction(is_readonly=True) as session:
             for resource in session.list_resources():
                 binding = config.bindings.get(resource["id"])
-                if binding and self.allowed(actor, resource, binding, admin=admin):
+                if binding and self.allowed(actor, resource, binding, is_admin=is_admin):
                     applications.append(
                         {
                             "id": resource["id"],
@@ -82,33 +112,47 @@ class MarketWorkflows:
         }
 
     @staticmethod
-    def allowed(actor, resource, binding, *, admin):
-        ownership_matches = (
+    def allowed(actor: Actor, resource: dict, binding: MarketBinding, *, is_admin: bool) -> bool:
+        """核对本地资源归属、外部绑定与当前账号的操作权限。"""
+        has_matching_ownership = (
             resource.get("createdBy") == binding.owner_subject
             and resource.get("organizationId") == binding.organization_id
         )
-        return ownership_matches and (
+        return has_matching_ownership and (
             can_manage(actor, resource)
-            if admin
+            if is_admin
             else can_edit(actor, resource) and actor.id == binding.owner_subject
         )
 
-    def context(self, application_id, actor, *, admin=False):
-        if admin:
+    def context(
+        self, application_id: str, actor: Actor, *, is_admin: bool = False
+    ) -> tuple[MarketConfiguration, MarketBinding]:
+        """检查外部服务和应用权限，返回可信配置与资源绑定。"""
+        if is_admin:
             require_admin(actor)
         if self.settings.applications_market != "himarket":
             raise HTTPException(503, "外部发布服务尚未启用")
         config = self.client.configuration()
         binding = config.bindings.get(application_id)
-        with self.service.repository.transaction(readonly=True) as session:
+        with self.service.repository.transaction(is_readonly=True) as session:
             resource = session.get_resource(application_id)
-        if not binding or not resource or not self.allowed(actor, resource, binding, admin=admin):
+        if (
+            not binding
+            or not resource
+            or not self.allowed(actor, resource, binding, is_admin=is_admin)
+        ):
             raise HTTPException(404, "未找到有权限操作的外部应用")
         return config, binding
 
-    def records(self, application_id, config, session=None):
+    def records(
+        self,
+        application_id: str,
+        config: MarketConfiguration,
+        session: ApplicationSession | None = None,
+    ) -> list[dict]:
+        """按时间读取当前应用在指定外部配置下的操作记录。"""
         if session is None:
-            with self.service.repository.transaction(readonly=True) as session:
+            with self.service.repository.transaction(is_readonly=True) as session:
                 return self.records(application_id, config, session)
         return sorted(
             (
@@ -119,7 +163,8 @@ class MarketWorkflows:
             key=lambda item: item["createdAt"],
         )
 
-    def listing_id(self, binding, records):
+    def listing_id(self, binding: MarketBinding, records: list[dict]) -> str | None:
+        """从绑定与成功回执推导唯一条目编号，发现冲突时停止操作。"""
         ids = {
             item["result"]["listingId"]
             for item in records
@@ -131,7 +176,10 @@ class MarketWorkflows:
             raise HTTPException(409, "外部条目对应关系发生冲突，请核对配置")
         return next(iter(ids), None)
 
-    def checked_listing(self, config, binding, listing_id):
+    def checked_listing(
+        self, config: MarketConfiguration, binding: MarketBinding, listing_id: str
+    ) -> dict:
+        """读取外部条目并核对资源、门户及发布状态。"""
         item = self.client.listing(config, listing_id)
         if (
             item.get("listingId") != listing_id
@@ -150,8 +198,9 @@ class MarketWorkflows:
             raise MarketFault("外部条目状态未识别，请先确认状态定义")
         return item
 
-    def detail(self, application_id, actor, *, admin=False):
-        config, binding = self.context(application_id, actor, admin=admin)
+    def detail(self, application_id: str, actor: Actor, *, is_admin: bool = False) -> dict:
+        """汇总条目资料、近期审核和操作记录，保留外部读取错误供界面提示。"""
+        config, binding = self.context(application_id, actor, is_admin=is_admin)
         records = self.records(application_id, config)
         listing_id = self.listing_id(binding, records)
         read_error = ""
@@ -185,16 +234,21 @@ class MarketWorkflows:
         }
 
     @staticmethod
-    def public_record(record):
+    def public_record(record: dict) -> dict:
+        """裁剪操作记录，仅向前端返回结果展示所需字段。"""
         return select_fields(record, ("id", "action", "status", "message", "createdAt", "result"))
 
-    def versions(self, application_id, actor, page, size):
+    def versions(self, application_id: str, actor: Actor, page: int, size: int) -> dict:
+        """校验应用权限后读取绑定资源的外部版本列表。"""
         config, binding = self.context(application_id, actor)
         return self.client.versions(config, binding, actor.id, page, size)
 
-    def execute(self, application_id, actor, payload, *, admin=False):
-        config, binding = self.context(application_id, actor, admin=admin)
-        if (payload.action in ("review_decision", "publish")) != admin:
+    def execute(
+        self, application_id: str, actor: Actor, payload: MarketMutation, *, is_admin: bool = False
+    ) -> dict:
+        """校验幂等请求与当前状态，执行外部操作并保存可核对的结果。"""
+        config, binding = self.context(application_id, actor, is_admin=is_admin)
+        if (payload.action in ("review_decision", "publish")) != is_admin:
             raise HTTPException(403, "请使用对应的发布或管理入口")
         fingerprint = digest(
             {
@@ -267,11 +321,11 @@ class MarketWorkflows:
                 else [],
             }
             session.put_entry("market_operations", key, record)
-        attempted = False
+        has_attempted_request = False
         try:
             current = self.checked_listing(config, binding, listing_id) if listing_id else None
             submitted = payload.draft.model_dump(by_alias=True) if payload.draft else current or {}
-            with self.service.repository.transaction(readonly=True) as session:
+            with self.service.repository.transaction(is_readonly=True) as session:
                 local = session.get_resource(application_id)
                 level = local.get("securityLevel", "internal")
                 level = {"内部": "internal", "公开": "public", "机密": "confidential"}.get(
@@ -356,7 +410,7 @@ class MarketWorkflows:
             # 凭证问题发生在实际请求之前，可以确认未写入。
             self.client.headers(config, subject=subject)
             self.store(record)
-            attempted = True
+            has_attempted_request = True
             value = self.client.request(config, "POST", path, subject=subject, body=body)
             if payload.action in ("submit_review", "review_decision"):
                 result = external_fields(value, REVIEW_FIELDS)
@@ -387,7 +441,7 @@ class MarketWorkflows:
         except HTTPException as error:
             record["status"] = (
                 "unknown"
-                if attempted
+                if has_attempted_request
                 and (
                     bool(record["result"])
                     or not isinstance(error, MarketFault)
@@ -399,7 +453,8 @@ class MarketWorkflows:
         self.finish(record)
         return self.public_record(record)
 
-    def confirm(self, config, binding, record):
+    def confirm(self, config: MarketConfiguration, binding: MarketBinding, record: dict) -> None:
+        """重新查询外部条目与审核回执，确认写入结果后标记操作成功。"""
         listing_id = record["listingId"] or binding.listing_id
         if not listing_id:
             raise MarketFault("未取得条目编号，请核实外部结果后补充对应关系", uncertain=True)
@@ -436,7 +491,8 @@ class MarketWorkflows:
             }[action],
         )
 
-    def store(self, record):
+    def store(self, record: dict) -> None:
+        """保存操作进度，拒绝覆盖已经确定的最终结果。"""
         with self.service.repository.transaction() as session:
             previous = session.entry("market_operations", record["id"])
             if previous and previous["status"] in ("succeeded", "failed"):
@@ -445,20 +501,30 @@ class MarketWorkflows:
                 return
             session.put_entry("market_operations", record["id"], record)
 
-    def finish(self, record):
+    def finish(self, record: dict) -> None:
+        """补充已完成操作的结束时间并持久化记录。"""
         record["completedAt"] = now() if record["status"] in ("succeeded", "failed") else None
         self.store(record)
 
-    def reconcile(self, application_id, operation_id, actor, *, admin=False, recovery=None):
-        config, binding = self.context(application_id, actor, admin=admin)
-        with self.service.repository.transaction(readonly=True) as session:
+    def reconcile(
+        self,
+        application_id: str,
+        operation_id: str,
+        actor: Actor,
+        *,
+        is_admin: bool = False,
+        recovery: MarketRecovery | None = None,
+    ) -> dict:
+        """核对不确定操作的外部结果，必要时验证用户补充的审核回执。"""
+        config, binding = self.context(application_id, actor, is_admin=is_admin)
+        with self.service.repository.transaction(is_readonly=True) as session:
             record = session.entry("market_operations", operation_id)
         if (
             not record
             or record["applicationId"] != application_id
             or record["profile"] != config.profile
             or record["resourceId"] != binding.resource_id
-            or not admin
+            or not is_admin
             and record["actorId"] != actor.id
         ):
             raise HTTPException(404, "操作记录不存在")
@@ -479,15 +545,15 @@ class MarketWorkflows:
                 receipt = self.client.review(config, recovery.external_submission_id)
                 try:
                     submitted_at = datetime.fromisoformat(receipt.get("submittedAt", ""))
-                    timely = submitted_at >= datetime.fromisoformat(
+                    is_timely = submitted_at >= datetime.fromisoformat(
                         record["createdAt"]
                     ) - timedelta(seconds=5)
                 except (ValueError, TypeError):
-                    timely = False
+                    is_timely = False
                 if (
                     receipt.get("targetId") != listing_id
                     or receipt.get("submissionId") != recovery.external_submission_id
-                    or not timely
+                    or not is_timely
                 ):
                     raise HTTPException(409, "回执的应用或提交时间不匹配，请核对原请求")
                 listing = self.checked_listing(config, binding, listing_id)

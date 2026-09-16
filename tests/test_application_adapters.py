@@ -90,9 +90,9 @@ def test_factory_injects_storage_and_provider_without_route_changes():
             self.calls = 0
 
         @contextmanager
-        def transaction(self, *, readonly=False):
+        def transaction(self, *, is_readonly=False):
             self.calls += 1
-            with self.inner.transaction(readonly=readonly) as session:
+            with self.inner.transaction(is_readonly=is_readonly) as session:
                 yield session
 
     class SuppliedProvider(DemoApplicationProvider):

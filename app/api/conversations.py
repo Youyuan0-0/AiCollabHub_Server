@@ -1,5 +1,7 @@
 """开发问答与附件接口；新会话按登录用户隔离，旧共享样例仍保留，生产环境不开放。"""
 
+from __future__ import annotations
+
 from typing import Annotated
 from urllib.parse import quote
 
@@ -7,9 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
+from starlette.types import Message
 
 from app.db.session import SessionDependency
 from app.schemas.conversations import (
@@ -38,7 +42,7 @@ router = APIRouter(
 )
 
 
-def request_service(request: Request, session) -> conversations.ConversationService:
+def request_service(request: Request, session: Session) -> conversations.ConversationService:
     """从可信登录状态构造服务；显式匿名开发沿用共享历史，不接受客户端传入所属用户。"""
     identity = getattr(request.state, "business_identity", None)
     return conversations.service(
@@ -50,7 +54,9 @@ def request_service(request: Request, session) -> conversations.ConversationServ
 
 
 @router.post("/{identifier}/attachments", response_model=ConversationAttachment, status_code=201)
-async def upload_attachment(identifier: str, request: Request, session: SessionDependency):
+async def upload_attachment(
+    identifier: str, request: Request, session: SessionDependency
+) -> ConversationAttachment:
     """每次上传一个原文件；总请求体限额包含表单开销，成功返回可用于发送消息的编号。"""
     record = await run_in_threadpool(request_service(request, session).get, identifier)
     # 登录模式不允许在无主旧共享记录上放置私人文件，应先新建自己的对话。
@@ -58,7 +64,8 @@ async def upload_attachment(identifier: str, request: Request, session: SessionD
         raise HTTPException(409, "attachment_requires_owned_conversation")
     received = 0
 
-    async def limited_receive():
+    async def limited_receive() -> Message:
+        """在解析表单前限制上传请求总字节数，超限时交由解析器清理临时文件。"""
         # 在 multipart 写入临时磁盘前限制字节数，不能仅信任 Content-Length 或 UploadFile.size。
         nonlocal received
         message = await request.receive()
@@ -84,13 +91,13 @@ async def upload_attachment(identifier: str, request: Request, session: SessionD
         raise
 
 
-@router.get("/{identifier}/attachments/{attachment_id}/content")
+@router.get("/{identifier}/attachments/{attachment_id}/content", response_model=None)
 def download_attachment(
     identifier: str,
     attachment_id: str,
     request: Request,
     session: SessionDependency,
-):
+) -> StreamingResponse:
     """检查会话访问权后分块下载；强制下载和 nosniff 防止用户文件被作为页面执行。"""
     request_service(request, session).get(identifier)
     store = request.app.state.attachment_store

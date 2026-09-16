@@ -1,5 +1,12 @@
 """复用 scene_activity 记录外部发布请求；不新增表，不复制外部目录。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.applications.database_session import DatabaseApplicationSession
+
 from datetime import timedelta
 
 from fastapi import HTTPException
@@ -9,21 +16,27 @@ from app.modules.applications.database_values import current_time, date_value, s
 
 
 class DatabaseMarketActivity:
-    def __init__(self, session):
-        self.session = session
-        self.table = session.t("activity")
+    """使用现有活动表保存外部市场操作及结果核对记录。"""
 
-    def entries(self):
+    def __init__(self, session: DatabaseApplicationSession) -> None:
+        """绑定应用事务及活动表。"""
+        self.session = session
+        self.table = session.table("activity")
+
+    def entries(self) -> list[dict]:
+        """读取包含外部市场操作详情的活动记录。"""
         return [
             row["detail"]["marketOperation"]
             for row in self.session.rows("activity", self.table.c.detail.has_key("marketOperation"))
         ]
 
-    def entry(self, key):
+    def entry(self, key: str) -> dict | None:
+        """按业务幂等键读取外部操作，不存在时返回空值。"""
         row = self.session.one("activity", self.table.c.id == stable_id("market", key))
         return row["detail"].get("marketOperation") if row else None
 
-    def put(self, key, record):
+    def put(self, key: str, record: dict) -> None:
+        """保存操作状态；已有终态不能被不同结果覆盖。"""
         session = self.session
         previous = self.entry(key)
         if previous and previous["status"] in ("succeeded", "failed"):

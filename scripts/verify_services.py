@@ -2,11 +2,13 @@
 
 import argparse
 import json
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import inspect, text
+from sqlalchemy import Engine, inspect, text
 
 from app.core.config import Settings
 from app.core.resources import create_resources
@@ -17,11 +19,17 @@ from app.modules.common.auth import models  # noqa: F401
 from app.modules.common.identity_sync import models as identity_models  # noqa: F401
 
 
-def verify(settings, *, write_probes=False, create_bucket=False):
+def verify(
+    settings: Settings, *, write_probes: bool = False, create_bucket: bool = False
+) -> dict[str, Any]:
+    """检查单库、缓存和对象存储，按参数执行写探测或创建存储桶。"""
     report = {"checks": {}, "scope": "single-server service integration; not capacity acceptance"}
     checks = report["checks"]
 
-    def check(name, action):
+    def check[CheckResultType](
+        name: str, action: Callable[[], CheckResultType]
+    ) -> CheckResultType | None:
+        """记录检查结果，异常时仅记录类型以避免泄露服务凭据。"""
         try:
             result = action()
             checks[name] = {"ok": bool(result), "result": result}
@@ -35,7 +43,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
         if resources.database is not None:
             engine = resources.database
 
-            def database_status():
+            def database_status() -> dict[str, bool | str]:
+                """确认数据库允许写入且使用本地持久化提交。"""
                 with engine.connect() as connection:
                     values = connection.execute(
                         text(
@@ -49,7 +58,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
 
             check("postgresql", database_status)
 
-            def database_schema():
+            def database_schema() -> dict[str, list[str]]:
+                """列出当前数据库缺少的业务表。"""
                 actual = set(inspect(engine).get_table_names())
                 return {"missingTables": sorted(set(Base.metadata.tables) - actual)}
 
@@ -64,7 +74,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
             check("redis_ping", resources.cache.probe)
             if write_probes:
 
-                def cache_probe():
+                def cache_probe() -> bool:
+                    """验证随机缓存键的写入与读取，并清理本次探测数据。"""
                     key = f"integration:{uuid4()}"
                     try:
                         return resources.cache.set_json(key, {"probe": 1}, ttl=30) and (
@@ -80,7 +91,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
             storage = resources.storage
             if create_bucket:
 
-                def ensure_bucket():
+                def ensure_bucket() -> bool:
+                    """确保配置的对象存储桶存在。"""
                     if not storage.client.bucket_exists(storage.bucket):
                         storage.client.make_bucket(storage.bucket)
                     return True
@@ -89,7 +101,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
             check("minio_bucket", storage.probe)
             if write_probes:
 
-                def storage_probe():
+                def storage_probe() -> bool:
+                    """验证随机对象的写入与读取，并清理本次探测数据。"""
                     key = f"integration/{uuid4()}"
                     try:
                         storage.put_object(key, BytesIO(b"integration-probe"), length=17)
@@ -106,7 +119,8 @@ def verify(settings, *, write_probes=False, create_bucket=False):
     return report
 
 
-def _database_probe(engine):
+def _database_probe(engine: Engine) -> bool:
+    """通过独立连接验证数据库写入持久化，并清理本次探测表。"""
     # 一个连接提交，另一个连接立即查询，验证持久化而非进程内状态。
     name = "aicollab_probe_" + uuid4().hex
     try:
@@ -122,7 +136,8 @@ def _database_probe(engine):
             connection.execute(text(f'DROP TABLE IF EXISTS "{name}"'))
 
 
-def main():
+def main() -> None:
+    """执行服务检查并输出报告，以退出码表示是否全部通过。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-probes", action="store_true")
     parser.add_argument("--create-bucket", action="store_true")

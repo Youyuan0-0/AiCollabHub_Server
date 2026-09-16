@@ -426,7 +426,7 @@ def test_catalog_batches_reads_and_preserves_persisted_metrics(database_app):
 
         event.listen(repository.engine, "before_cursor_execute", observe)
         try:
-            with repository.transaction(readonly=True) as session:
+            with repository.transaction(is_readonly=True) as session:
                 actual = session.list_resources()
                 visibility = {item["id"]: session.get_visibility(item["id"]) for item in actual}
             assert actual == expected
@@ -439,7 +439,7 @@ def test_catalog_batches_reads_and_preserves_persisted_metrics(database_app):
                 key = f"bulk-catalog-{index}"
                 repository.seeds[key] = {**deepcopy(seed), "id": key}
             statements.clear()
-            with repository.transaction(readonly=True) as session:
+            with repository.transaction(is_readonly=True) as session:
                 actual = session.list_resources()
                 for item in actual:
                     session.get_visibility(item["id"])
@@ -458,7 +458,7 @@ def test_read_transaction_is_snapshot_and_does_not_change_write_connections(data
             "SELECT current_setting('transaction_read_only'), "
             "current_setting('transaction_isolation')"
         )
-        with repository.transaction(readonly=True) as session:
+        with repository.transaction(is_readonly=True) as session:
             assert tuple(session.db.execute(policy).one()) == ("on", "repeatable read")
             with pytest.raises(RuntimeError, match="Cannot write"):
                 session.write(text("DELETE FROM scene_configuration"))

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import HTTPException
 
 from app.modules.common.fixtures import fixture, paginate
@@ -5,18 +7,21 @@ from app.modules.common.service import receipt, timestamp
 from app.modules.knowledge.schemas import ChunkQuery, CreateInput, RetrievalInput
 
 
-def list_bases():
+def list_bases() -> list[dict]:
+    """读取固定知识库样例的独立副本。"""
     return fixture("knowledge", "bases")
 
 
-def base(base_id: str):
+def base(base_id: str) -> dict:
+    """按编号查找知识库样例，不存在时返回 404。"""
     item = next((item for item in list_bases() if item["id"] == base_id), None)
     if item is None:
         raise HTTPException(404, "sample_knowledge_base_not_found")
     return item
 
 
-def create(payload: CreateInput):
+def create(payload: CreateInput) -> dict:
+    """构造知识库创建回执，缺省索引配置使用固定样例。"""
     return {
         **payload.model_dump(by_alias=True),
         "id": receipt()["id"],
@@ -33,18 +38,20 @@ def create(payload: CreateInput):
     }
 
 
-def chunks(base_id: str, query: ChunkQuery):
+def chunks(base_id: str, query: ChunkQuery) -> dict:
+    """按文档名称和关键词筛选知识库片段样例并分页。"""
     base(base_id)
     items = [
         item
         for item in fixture("knowledge", "chunks").get(base_id, [])
-        if (not query.documentName or item["documentName"] == query.documentName)
+        if (not query.document_name or item["documentName"] == query.document_name)
         and query.q.casefold() in item["text"].casefold()
     ]
-    return paginate(items, query.page, query.pageSize)
+    return paginate(items, query.page, query.page_size)
 
 
-def retrieve(base_id: str, payload: RetrievalInput):
+def retrieve(base_id: str, payload: RetrievalInput) -> list[dict]:
+    """按检索阈值返回固定演示片段，不执行真实向量检索。"""
     return [
         {
             "id": doc["name"],

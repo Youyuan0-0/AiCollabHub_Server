@@ -1,4 +1,4 @@
-"""仅开发使用的预置身份。正式环境由可信认证适配器提供 Actor。"""
+"""场景应用身份与权限判断；正式会话和开发演示分别通过身份适配器提供 Actor。"""
 
 from dataclasses import asdict, dataclass
 from secrets import token_urlsafe
@@ -10,13 +10,16 @@ from fastapi import HTTPException, Request
 
 @dataclass(frozen=True)
 class Actor:
+    """场景应用的可信操作身份，携带角色、组织与项目归属。"""
+
     id: str
     name: str
     role: str
     organization_id: str
     project_ids: tuple[str, ...] = ()
 
-    def public(self):
+    def public(self) -> dict:
+        """转换为前端使用的 camelCase 身份资料。"""
         data = asdict(self)
         return {
             "id": self.id,
@@ -50,13 +53,18 @@ DIRECTORY = {
 
 
 class IdentityProvider(Protocol):
-    def resolve(self, request: Request, audience: Literal["user", "admin"]) -> Actor: ...
+    """按用户端或管理端入口解析可信身份的适配器契约。"""
+
+    def resolve(self, request: Request, audience: Literal["user", "admin"]) -> Actor:
+        """解析指定入口的操作身份；认证失败时抛出 HTTP 异常。"""
+        ...
 
 
 class SessionIdentityProvider:
     """启用登录时，复用公共认证依赖验证过的用户或管理端会话。"""
 
     def resolve(self, request: Request, audience: Literal["user", "admin"]) -> Actor:
+        """复用认证依赖已验证的会话，并在配置目录时检查成员状态和角色。"""
         identity = getattr(request.state, "business_identity", None)
         if not identity or identity["scope"] != audience:
             raise HTTPException(401, "authentication_required")
@@ -88,11 +96,14 @@ class SessionIdentityProvider:
 
 
 class DemoIdentityProvider:
-    def __init__(self):
+    """为开发演示保存预置账号会话，不接受浏览器自报的角色或组织。"""
+
+    def __init__(self) -> None:
         self._sessions: dict[str, Actor] = {}
         self._lock = RLock()
 
-    def select(self, actor_id: str):
+    def select(self, actor_id: str) -> tuple[str, Actor]:
+        """选择预置账号，返回随机会话令牌和对应身份。"""
         actor = next((item for item in ACTORS if item.id == actor_id), None)
         if actor is None:
             raise HTTPException(422, "请选择已配置的演示账号")
@@ -101,7 +112,8 @@ class DemoIdentityProvider:
             self._sessions[token] = actor
         return token, actor
 
-    def resolve(self, request, audience):
+    def resolve(self, request: Request, audience: Literal["user", "admin"]) -> Actor:
+        """读取演示会话；未携带令牌时使用该入口的默认演示身份。"""
         token = request.cookies.get(f"application_{audience}")
         # 无会话时保留开发入口；任意浏览器角色/组织字段不参与授权。
         if not token:
@@ -113,16 +125,19 @@ class DemoIdentityProvider:
         return actor
 
 
-def current_actor(request: Request, admin=False):
-    return request.app.state.application_identity.resolve(request, "admin" if admin else "user")
+def current_actor(request: Request, is_admin: bool = False) -> Actor:
+    """通过已配置的身份适配器取得当前入口的操作身份。"""
+    return request.app.state.application_identity.resolve(request, "admin" if is_admin else "user")
 
 
-def require_admin(actor: Actor):
+def require_admin(actor: Actor) -> None:
+    """要求系统或单位管理员角色，否则返回 403。"""
     if actor.role not in ("admin", "org_admin"):
         raise HTTPException(403, "当前账号没有应用管理权限")
 
 
-def can_manage(actor: Actor, record: dict):
+def can_manage(actor: Actor, record: dict) -> bool:
+    """判断是否为系统管理员，或记录所属单位的管理员。"""
     return actor.role == "admin" or (
         actor.role == "org_admin"
         and bool(actor.organization_id)
@@ -130,13 +145,15 @@ def can_manage(actor: Actor, record: dict):
     )
 
 
-def can_edit(actor: Actor, record: dict):
+def can_edit(actor: Actor, record: dict) -> bool:
+    """允许有管理权限的身份或记录原发布者编辑。"""
     return can_manage(actor, record) or (
         actor.role == "publisher" and record.get("createdBy", DEFAULT_USER.id) == actor.id
     )
 
 
-def visible(actor: Actor, resource: dict, visibility: dict):
+def visible(actor: Actor, resource: dict, visibility: dict) -> bool:
+    """按开放范围检查可见性；有权管理该资源的身份始终可见。"""
     if can_manage(actor, resource):
         return True
     scope, targets = visibility["scope"], visibility["targets"]

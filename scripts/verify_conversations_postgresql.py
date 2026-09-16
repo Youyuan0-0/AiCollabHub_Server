@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Barrier
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -22,13 +23,13 @@ from app.main import create_app
 from app.services.conversation_store import SqlConversationStore
 
 
-def require(condition, label):
+def require(condition: bool, label: str) -> None:
     """断言只使用固定检查名称，失败日志不携带连接密码、业务内容或 SQL 参数。"""
     if not condition:
         raise RuntimeError(label)
 
 
-def verify(settings, *, migrate, output):
+def verify(settings: Settings, *, migrate: bool, output: Path) -> dict[str, Any]:
     """迁移可选；API 测试使用隔离应用连接真实库，保留部署认证配置并清理自己的数据。"""
     report = {
         "checkedAt": datetime.now(UTC).isoformat(),
@@ -165,7 +166,7 @@ def verify(settings, *, migrate, output):
                     checks["committed_messages_visible"] = positions == [0, 1, 2, 3]
                 barrier = Barrier(2)
 
-                def race(index):
+                def race(index: int) -> int:
                     """两个独立连接读取同版本后同时提交，确认仅一方成功且无消息覆盖。"""
                     with Session(database) as session:
                         store = SqlConversationStore(session)
@@ -222,7 +223,7 @@ def verify(settings, *, migrate, output):
     return report
 
 
-def main():
+def main() -> None:
     """命令行显式指定配置及报告路径；默认不迁移，只验证已部署的会话结构。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=Path, default=Path(".env"))

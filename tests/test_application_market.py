@@ -153,11 +153,13 @@ def setup_market(tmp_path, monkeypatch):
 
 
 def mutate(workflow, app_id, action, **extra):
-    admin = action in ("review_decision", "publish")
+    is_admin = action in ("review_decision", "publish")
     if action == "review_decision" and extra.get("decision") == "approved":
         extra.setdefault("scores", {"completeness": 4, "usability": 4, "security": 4})
     payload = MarketMutation(requestId="request-" + action, action=action, **extra)
-    return workflow.execute(app_id, DEFAULT_ADMIN if admin else DEFAULT_USER, payload, admin=admin)
+    return workflow.execute(
+        app_id, DEFAULT_ADMIN if is_admin else DEFAULT_USER, payload, is_admin=is_admin
+    )
 
 
 def draft():
@@ -198,7 +200,7 @@ def test_full_contract_separates_approval_and_publish_and_credentials(setup_mark
     save = next(request for request in supplier.calls if request.url.path.endswith("/me/listings"))
     assert json.loads(save.content) == {**draft(), "resourceId": "resource-1"}
     assert workflow.service.resources() == initial  # 独立外部流程不伪造原演示目录状态。
-    with workflow.service.repository.transaction(readonly=True) as session:
+    with workflow.service.repository.transaction(is_readonly=True) as session:
         text = json.dumps(session.entries("market_operations"), ensure_ascii=False)
     assert "修改后的应用" not in text and "详细说明" not in text
     assert "user-test-token" not in text
@@ -237,11 +239,11 @@ def test_accepted_publish_must_be_queried_and_recovery_never_reposts(setup_marke
             app_id,
             DEFAULT_ADMIN,
             MarketMutation(requestId="another-request", action="publish"),
-            admin=True,
+            is_admin=True,
         )
     assert error.value.status_code == 409
     supplier.listing["publicationStatus"] = "PUBLISHED"
-    completed = workflow.reconcile(app_id, result["id"], DEFAULT_ADMIN, admin=True)
+    completed = workflow.reconcile(app_id, result["id"], DEFAULT_ADMIN, is_admin=True)
     assert completed["status"] == "succeeded"
     assert sum(r.method == "POST" and r.url.path.endswith("/publish") for r in supplier.calls) == 1
 
@@ -300,9 +302,9 @@ def test_definite_rejection_is_not_success_and_no_redirect(setup_market, case):
 def test_permissions_binding_review_enum_and_unsupported_fields(setup_market):
     workflow, supplier, app_id, _ = setup_market
     assert workflow.status(ACTORS[2])["applications"] == []
-    for actor, admin in ((ACTORS[2], False), (ACTORS[1], False)):
+    for actor, is_admin in ((ACTORS[2], False), (ACTORS[1], False)):
         with pytest.raises(HTTPException) as error:
-            workflow.detail(app_id, actor, admin=admin)
+            workflow.detail(app_id, actor, is_admin=is_admin)
         assert error.value.status_code == 404
     mutate(workflow, app_id, "submit_review")
     size = len(supplier.calls)
@@ -391,7 +393,7 @@ def test_approval_requires_local_quality_and_current_submission_content(setup_ma
                 submissionId="submission-1",
                 decision="approved",
             ),
-            admin=True,
+            is_admin=True,
         )
     assert error.value.status_code == 422
     supplier.listing["title"] = "外部后来修改的资料"

@@ -1,5 +1,7 @@
 """对齐用户端 overview.ts；展示字段保留 camelCase，内部使用 snake_case。"""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -52,6 +54,7 @@ class ApplicationScenario(OverviewModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
+        """限制场景链接为受支持的站内路径。"""
         # 首页目前仅跳转固定目录；未来资源详情入口需明确加入允许列表。
         if value not in {"/models", "/applications", "/datasets", "/tools", "/knowledge"}:
             raise ValueError("path 必须是已支持的站内资源目录")
@@ -105,6 +108,7 @@ class HomeOverview(OverviewModel):
     @field_validator("leaderboard_groups")
     @classmethod
     def unique_groups(cls, value: list[LeaderboardGroup]) -> list[LeaderboardGroup]:
+        """拒绝首页排行榜中重复的分组标识。"""
         # 重复标识会破坏前端页签选择和列表键值，发布时直接拒绝。
         if len({group.id for group in value}) != len(value):
             raise ValueError("榜单分类 id 不能重复")
@@ -167,6 +171,7 @@ class BudgetInput(OverviewModel):
     @field_validator("used", "limit")
     @classmethod
     def validate_amount(cls, value: float) -> float:
+        """拒绝小于一分钱的非零预算金额，避免使用率计算溢出。"""
         # 金额以元录入，非零值至少一分，避免极小预算导致使用率溢出。
         if 0 < value < 0.01:
             raise ValueError("非零金额不能小于 0.01 元")

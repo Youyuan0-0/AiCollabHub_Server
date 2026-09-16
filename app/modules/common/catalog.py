@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -8,7 +10,8 @@ from app.modules.common.schemas import CatalogQuery
 MODULES = ("datasets", "models", "applications", "tools")
 
 
-def last_download_timestamp(resource: dict):
+def last_download_timestamp(resource: dict) -> float:
+    """读取最近下载时间用于排序，缺失或无效时间排在最后。"""
     value = resource.get("lastDownloadedAt")
     if not value:
         return float("-inf")
@@ -21,54 +24,63 @@ def last_download_timestamp(resource: dict):
         return float("-inf")
 
 
-def list_samples(module: str, query: CatalogQuery):
+def list_samples(module: str, query: CatalogQuery) -> dict:
+    """读取指定模块的固定样例，再按目录查询条件筛选。"""
     resources = fixture(module, "resources")
     return query_resources(resources, query)
 
 
-def query_resources(resources: list[dict], query: CatalogQuery):
+def query_resources(resources: list[dict], query: CatalogQuery) -> dict:
+    """筛选、排序并分页返回资源；统计值相同时使用稳定的编号顺序。"""
     facets, favorites = query.filters()
     keyword = query.q.strip().casefold()
     items = [
-        r
-        for r in resources
+        resource
+        for resource in resources
         if (
             (
                 not keyword
                 or keyword
                 in " ".join(
-                    [r["name"], r["description"], r["owner"], r["category"], *r["tags"]]
+                    [
+                        resource["name"],
+                        resource["description"],
+                        resource["owner"],
+                        resource["category"],
+                        *resource["tags"],
+                    ]
                 ).casefold()
             )
-            and (not query.category or query.category == r["category"])
-            and (not query.owner or query.owner == r["owner"])
-            and (favorites is None or r["id"] in favorites)
+            and (not query.category or query.category == resource["category"])
+            and (not query.owner or query.owner == resource["owner"])
+            and (favorites is None or resource["id"] in favorites)
             and all(
-                not values or set(values).intersection(r.get("facets", {}).get(key, []))
+                not values or set(values).intersection(resource.get("facets", {}).get(key, []))
                 for key, values in facets.items()
             )
         )
     ]
     keys = {
-        "latest": lambda r: r["updatedAt"],
-        "rating": lambda r: r["rating"] or 0,
-        "popular": lambda r: r["usage"],
-        "recommended": lambda r: (bool(r.get("badge")), r["usage"]),
+        "latest": lambda resource: resource["updatedAt"],
+        "rating": lambda resource: resource["rating"] or 0,
+        "popular": lambda resource: resource["usage"],
+        "recommended": lambda resource: (bool(resource.get("badge")), resource["usage"]),
         "recent_download": last_download_timestamp,
-        "downloads": lambda r: r.get("downloadCount") or 0,
-        "favorites": lambda r: r.get("favoriteCount") or 0,
+        "downloads": lambda resource: resource.get("downloadCount") or 0,
+        "favorites": lambda resource: resource.get("favoriteCount") or 0,
     }
     if query.sort in ("recent_download", "downloads", "favorites"):
         # 相同统计值按编号固定顺序，翻页时不会因并列指标交换位置。
-        items.sort(key=lambda r: r["id"])
+        items.sort(key=lambda resource: resource["id"])
     items.sort(key=keys[query.sort], reverse=True)
     return {
-        **paginate(items, query.page, query.pageSize),
-        "owners": list(dict.fromkeys(r["owner"] for r in resources)),
+        **paginate(items, query.page, query.page_size),
+        "owners": list(dict.fromkeys(resource["owner"] for resource in resources)),
     }
 
 
-def find_sample(resource_id: str):
+def find_sample(resource_id: str) -> dict:
+    """跨资源模块查找固定样例，未找到时返回 404。"""
     for module in MODULES:
         for resource in fixture(module, "resources"):
             if resource["id"] == resource_id:

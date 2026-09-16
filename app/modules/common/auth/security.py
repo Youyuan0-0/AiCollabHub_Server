@@ -6,14 +6,17 @@ from fastapi import HTTPException
 
 
 def digest(value: str) -> str:
+    """生成令牌或票据的 SHA-256 摘要，供数据库保存与匹配。"""
     return hashlib.sha256(value.encode()).hexdigest()
 
 
 def csrf_token(token: str, secret: str) -> str:
+    """使用服务端密钥生成绑定当前会话令牌的 CSRF 校验值。"""
     return hmac.new(secret.encode(), ("csrf:" + token).encode(), hashlib.sha256).hexdigest()
 
 
 def safe_return_path(value: str, scope: str) -> str:
+    """验证登录返回地址属于当前入口的站内路径，非法地址返回 400。"""
     decoded = value
     for _ in range(4):
         next_value = unquote(decoded)

@@ -1,5 +1,8 @@
 """会话存储协议及 PostgreSQL 实现；业务层无需处理表结构或事务细节。"""
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Protocol
@@ -22,11 +25,25 @@ from app.schemas.conversations import (
 class ConversationStore(Protocol):
     """服务层仅依赖此协议；None 表示不存在或已删，历史样例是否隐藏由 contains 判断。"""
 
-    def get(self, identifier: str) -> ConversationRecord | None: ...
-    def contains(self, identifier: str) -> bool: ...
-    def list(self, owner_id: str = "") -> list[ConversationSummary]: ...
-    def save(self, record: ConversationRecord, expected_version: int | None) -> None: ...
-    def delete(self, identifier: str) -> None: ...
+    def get(self, identifier: str) -> ConversationRecord | None:
+        """读取会话完整记录，不存在时返回空值。"""
+        ...
+
+    def contains(self, identifier: str) -> bool:
+        """检查会话编号是否存在，包含已经删除的占位记录。"""
+        ...
+
+    def list(self, owner_id: str = "") -> list[ConversationSummary]:
+        """按所属用户读取会话摘要列表。"""
+        ...
+
+    def save(self, record: ConversationRecord, expected_version: int | None) -> None:
+        """按预期版本保存会话，发生并发变更时拒绝覆盖。"""
+        ...
+
+    def delete(self, identifier: str) -> None:
+        """删除会话消息并保留防止示例复现的删除标记。"""
+        ...
 
 
 def record_from_answer(answer: ChatAnswer, created_at: datetime) -> ConversationRecord:
@@ -57,7 +74,7 @@ def record_from_answer(answer: ChatAnswer, created_at: datetime) -> Conversation
 
 
 @contextmanager
-def database_operation(session: Session):
+def database_operation(session: Session) -> Iterator[None]:
     """数据库失败时回滚，隐藏连接串和 SQL；并发首次创建以 409 告知调用方。"""
     try:
         yield
@@ -80,7 +97,7 @@ def utc_time(value: datetime) -> datetime:
 class SqlConversationStore:
     """会话与消息分表存储；先比较版本并锁定会话行，再原子追加整轮消息。"""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session) -> None:
         self.session = session
         # 仅保留本仓库实例最近一次读取的独立快照；用于校验旧消息，不能替代数据库版本条件更新。
         self._loaded_record: ConversationRecord | None = None

@@ -1,5 +1,7 @@
 """提交轮次、质量评分与模拟外部状态的组合；不复制外部版本或完整草稿。"""
 
+from __future__ import annotations
+
 import json
 from copy import deepcopy
 from hashlib import sha256
@@ -12,26 +14,32 @@ from app.modules.applications.demo_marketplace import LOCAL_FIELDS
 
 
 class DatabasePublicationMixin:
-    def extension_rows(self, publication_id):
-        table = self.t("submission_extension")
+    """发布申请扩展、审核记录及供应方申请引用的数据库存取实现。"""
+
+    def extension_rows(self, publication_id: str) -> list[dict]:
+        """读取指定申请的各轮扩展记录。"""
+        table = self.table("submission_extension")
         return sorted(
             self.rows("submission_extension", table.c.submission_key == publication_id),
             key=lambda row: row["round_no"],
         )
 
-    def list_publications(self):
-        table = self.t("submission_extension")
+    def list_publications(self) -> list[dict]:
+        """按申请编号组合发布资料和审核历史。"""
+        table = self.table("submission_extension")
         ids = self.db.execute(table.select().with_only_columns(table.c.submission_key).distinct())
         return [
             record for key in sorted(row[0] for row in ids) if (record := self.get_publication(key))
         ]
 
-    def publication_data(self, extension):
+    def publication_data(self, extension: dict) -> dict:
+        """根据扩展记录读取对应的供应方发布资料。"""
         external = self.marketplace.load(extension["external_version_id"], "submission")
         external["data"].update(deepcopy(extension["local_fields"]))
         return external
 
-    def get_publication(self, publication_id):
+    def get_publication(self, publication_id: str) -> dict | None:
+        """读取申请当前轮次、提交快照和审核历史。"""
         self.lock("publication:" + publication_id)
         extensions = self.extension_rows(publication_id)
         if not extensions:
@@ -39,7 +47,7 @@ class DatabasePublicationMixin:
         latest = extensions[-1]
         record = self.publication_data(latest)
         application = self.one(
-            "application", self.t("application").c.id == latest["application_id"]
+            "application", self.table("application").c.id == latest["application_id"]
         )
         record.update(
             id=publication_id,
@@ -57,12 +65,14 @@ class DatabasePublicationMixin:
         if latest["form_rules_snapshot"]:
             record["submissionRules"] = deepcopy(latest["form_rules_snapshot"])
             record["formRevision"] = latest["form_rules_snapshot"].get("revision")
-        note_table = self.t("review_note")
+        note_table = self.table("review_note")
         for extension in extensions:
             note = self.one("review_note", note_table.c.submission_extension_id == extension["id"])
             if note is None:
                 continue
-            decision = self.one("activity", self.t("activity").c.id == note["decision_activity_id"])
+            decision = self.one(
+                "activity", self.table("activity").c.id == note["decision_activity_id"]
+            )
             # 本地建议不能充当外部最终状态；开发模式也从独立模拟结果读取状态。
             if decision is None or decision["status"] != "succeeded":
                 continue
@@ -91,7 +101,8 @@ class DatabasePublicationMixin:
             )
         return record
 
-    def put_publication(self, record):
+    def put_publication(self, record: dict) -> None:
+        """保存申请当前状态及提交轮次，与审核记录共用当前事务。"""
         self.lock("publication:" + record["id"])
         self.ensure_application(
             record["applicationId"],
@@ -104,7 +115,7 @@ class DatabasePublicationMixin:
         )
         rows = self.extension_rows(record["id"])
         previous = rows[-1] if rows else None
-        table = self.t("submission_extension")
+        table = self.table("submission_extension")
         if record["status"] in ("approved", "rejected", "needs_changes"):
             if previous is None or previous["frozen_at"] is None:
                 raise HTTPException(409, "申请尚未提交")
@@ -156,7 +167,7 @@ class DatabasePublicationMixin:
             self.write(update(table).where(table.c.id == previous["id"]).values(**values))
         source = record.get("source", {})
         if source.get("kind") == "toolchain":
-            application = self.t("application")
+            application = self.table("application")
             self.write(
                 update(application)
                 .where(application.c.id == record["applicationId"])
@@ -168,10 +179,11 @@ class DatabasePublicationMixin:
                 )
             )
 
-    def save_review(self, record, extension):
+    def save_review(self, record: dict, extension: dict) -> None:
+        """保存当前轮次的审核决定、评分和审核时资料。"""
         review = record["reviews"][-1]
         activity_id = stable_id("review-decision", review["id"])
-        if self.one("review_note", self.t("review_note").c.id == review["id"]):
+        if self.one("review_note", self.table("review_note").c.id == review["id"]):
             raise HTTPException(409, "本轮申请已经审核")
         policy = self.configuration_record("workflow")
         scores = review["scores"] or {}
@@ -196,7 +208,7 @@ class DatabasePublicationMixin:
             ).encode()
         ).hexdigest()
         self.write(
-            insert(self.t("activity")).values(
+            insert(self.table("activity")).values(
                 id=activity_id,
                 application_id=record["applicationId"],
                 submission_extension_id=extension["id"],
@@ -214,7 +226,7 @@ class DatabasePublicationMixin:
             )
         )
         self.write(
-            insert(self.t("review_note")).values(
+            insert(self.table("review_note")).values(
                 id=review["id"],
                 application_id=record["applicationId"],
                 submission_extension_id=extension["id"],

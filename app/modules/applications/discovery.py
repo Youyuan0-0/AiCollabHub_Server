@@ -1,5 +1,7 @@
 """从应用元数据构建能力关系，提供可解释的分类与相似应用推荐。"""
 
+from __future__ import annotations
+
 import hashlib
 import re
 from collections import Counter
@@ -14,7 +16,8 @@ CATEGORY_TERMS = {
 }
 
 
-def normalized(value):
+def normalized(value: object) -> str:
+    """统一元数据的大小写和连续空白，供规则匹配使用。"""
     return re.sub(r"\s+", " ", str(value).strip().casefold())
 
 
@@ -38,7 +41,8 @@ def analyze(data: dict) -> dict:
     nodes = [{"id": "application", "kind": "application", "label": data.get("name") or "当前应用"}]
     edges, seen = [], set()
 
-    def add(kind, value, relation):
+    def add(kind: object, value: object, relation: str) -> None:
+        """忽略无效或重复信号，将有效元数据加入能力关系图。"""
         if not isinstance(kind, str) or not isinstance(value, str) or not value.strip():
             return
         key = kind + ":" + normalized(value)
@@ -68,7 +72,8 @@ def analyze(data: dict) -> dict:
     }
 
 
-def related(source: dict, candidates: list[dict], limit=4):
+def related(source: dict, candidates: list[dict], limit: int = 4) -> list[dict]:
+    """按有区分度的共同能力节点推荐相似应用，最多返回 limit 条。"""
     source_graph = analyze(source)["graph"]
     source_nodes = {
         node["id"]: node for node in source_graph["nodes"] if node["kind"] != "application"

@@ -1,4 +1,4 @@
-"""Logical backup and isolated restore verification using PostgreSQL client tools."""
+"""使用 PostgreSQL 客户端工具备份数据库，并可在隔离库中验证恢复结果。"""
 
 import argparse
 import hashlib
@@ -15,7 +15,8 @@ from sqlalchemy.engine import make_url
 from app.core.config import Settings
 
 
-def main():
+def main() -> None:
+    """按命令行参数备份数据库并记录校验摘要，可选执行隔离恢复验证。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--pg-bin", type=Path, help="Directory containing pg_dump and pg_restore")
@@ -41,7 +42,8 @@ def main():
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     archive = args.directory.resolve() / f"aicollabhub_{timestamp}.dump"
 
-    def run(tool, *arguments):
+    def run(tool: str, *arguments: str | Path) -> bytes:
+        """执行 PostgreSQL 客户端命令，失败时避免在日志中暴露凭据。"""
         executable = str(args.pg_bin / tool) if args.pg_bin else tool
         result = subprocess.run(
             [executable, *map(str, arguments)], env=env, capture_output=True, timeout=600
@@ -50,7 +52,8 @@ def main():
             raise RuntimeError(f"{tool} failed (exit {result.returncode}); no credentials printed")
         return result.stdout
 
-    def inventory(conn):
+    def inventory(conn: psycopg.Connection) -> dict[str, int]:
+        """统计业务表行数，供备份与隔离恢复结果核对。"""
         tables = conn.execute(
             "SELECT schemaname, tablename FROM pg_tables "
             "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "

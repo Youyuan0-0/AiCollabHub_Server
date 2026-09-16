@@ -1,5 +1,7 @@
 """开发用外部资料快照；模拟目录不写入平台业务表，不调用供应方服务。"""
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -47,10 +49,11 @@ class DemoMarketplaceStore:
 
     profile = "demo-file"
 
-    def __init__(self, directory: str | Path):
+    def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory).resolve()
 
     def save(self, kind: str, data: dict) -> str:
+        """以内容摘要保存不可变模拟快照，原子替换文件并返回引用。"""
         if kind not in ("listing", "submission", "decision", "download", "development"):
             raise ValueError("Unsupported demo snapshot kind")
         content = json.dumps(
@@ -84,6 +87,7 @@ class DemoMarketplaceStore:
                 os.unlink(temporary)
 
     def load(self, reference: str, kind: str) -> dict:
+        """读取指定类型的快照并校验引用格式、摘要与内容结构。"""
         if not re.fullmatch(re.escape(kind) + r"-[0-9a-f]{64}", reference or ""):
             raise HTTPException(503, "application_demo_reference_invalid")
         try:
@@ -97,7 +101,8 @@ class DemoMarketplaceStore:
         except (OSError, ValueError, KeyError):
             raise HTTPException(503, "application_demo_snapshot_unavailable") from None
 
-    def developments(self):
+    def developments(self) -> list[tuple[str, dict]]:
+        """按文件名返回开发快照引用及内容，目录不存在时返回空列表。"""
         folder = self.directory / "development"
         if not folder.exists():
             return []
@@ -107,6 +112,7 @@ class DemoMarketplaceStore:
         ]
 
     def save_submission(self, record: dict) -> str:
+        """剔除本地管理字段后保存模拟外部提交快照。"""
         external = {
             key: deepcopy(value)
             for key, value in record.items()
@@ -128,6 +134,7 @@ class DemoMarketplaceStore:
         return self.save("submission", external)
 
     def save_listing(self, resource: dict) -> str:
+        """剔除本地权限与运行指标后保存模拟外部条目快照。"""
         return self.save(
             "listing",
             {

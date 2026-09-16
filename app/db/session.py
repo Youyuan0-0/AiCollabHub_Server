@@ -46,7 +46,7 @@ def create_db_engine(
 
 
 def get_engine(request: Request) -> Engine:
-    # 引擎由应用生命周期统一管理，请求仅获取引用，不重复创建连接池。
+    """取得应用共用的数据库引擎，未配置时返回 503，不重复创建连接池。"""
     engine: Engine | None = request.app.state.database_engine
     if engine is None:
         raise HTTPException(
@@ -57,7 +57,7 @@ def get_engine(request: Request) -> Engine:
 
 
 def get_session(engine: Annotated[Engine, Depends(get_engine)]) -> Iterator[Session]:
-    # 每个请求使用独立会话；业务服务显式 commit，未提交内容在会话关闭时回滚。
+    """提供请求独享的会话；业务显式提交，未提交内容随会话关闭回滚。"""
     # 查询前不自动 flush；提交后保留已加载属性，便于构造响应。
     with Session(engine, autoflush=False, expire_on_commit=False) as session:
         yield session

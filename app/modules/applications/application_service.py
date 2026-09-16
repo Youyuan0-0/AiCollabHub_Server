@@ -16,6 +16,7 @@ from app.modules.applications.discovery import analyze
 from app.modules.applications.identity import (
     DEFAULT_ADMIN,
     DEFAULT_USER,
+    Actor,
     can_edit,
     can_manage,
     require_admin,
@@ -35,13 +36,15 @@ from app.modules.applications.publication_schemas import (
 from app.modules.applications.workflows import ApplicationWorkflows
 
 
-def timestamp():
+def timestamp() -> str:
+    """生成 UTC 时间文本，统一保留微秒精度。"""
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def application_resource(
     data: dict, application_id: str, version_id: str, created_at: str, now: str
-):
+) -> dict:
+    """将已审核资料转换为目录资源，初始化版本和使用统计。"""
     return {
         **deepcopy(data),
         "id": application_id,
@@ -76,43 +79,46 @@ def application_resource(
     }
 
 
-# 路由接收 HTTP，本类处理业务规则；repository 保存数据，provider 提供关联资源。
 class ApplicationService:
-    def __init__(self, repository: ApplicationRepository, provider: ApplicationProvider):
+    """处理应用发布、审核和配置；通过仓储与供应方接口访问外部资源。"""
+
+    def __init__(self, repository: ApplicationRepository, provider: ApplicationProvider) -> None:
         self.repository = repository
         self.provider = provider
         self.workflows = ApplicationWorkflows(self)
 
     @staticmethod
-    def _resource(session: ApplicationSession, application_id: str):
+    def _resource(session: ApplicationSession, application_id: str) -> dict:
         result = session.get_resource(application_id)
         if result is None:
             raise HTTPException(404, "应用不存在或尚未上架")
         return result
 
     @staticmethod
-    def _publication(session: ApplicationSession, publication_id: str):
+    def _publication(session: ApplicationSession, publication_id: str) -> dict:
         result = session.get_publication(publication_id)
         if result is None:
             raise HTTPException(404, "申请不存在，请重新查询")
         return result
 
-    def resources(self, actor=DEFAULT_USER, *, admin=False):
-        if admin:
+    def resources(self, actor: Actor = DEFAULT_USER, *, is_admin: bool = False) -> list[dict]:
+        """列出可见应用；管理入口改为筛选当前身份有权管理的应用。"""
+        if is_admin:
             require_admin(actor)
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             return [
                 item
                 for item in session.list_resources()
                 if (
                     can_manage(actor, item)
-                    if admin
+                    if is_admin
                     else visible(actor, item, session.get_visibility(item["id"]))
                 )
             ]
 
-    def resource(self, application_id: str, actor=DEFAULT_USER):
-        with self.repository.transaction(readonly=True) as session:
+    def resource(self, application_id: str, actor: Actor = DEFAULT_USER) -> dict:
+        """读取有权访问的应用详情，并附带运行连接状态和版本发布权限。"""
+        with self.repository.transaction(is_readonly=True) as session:
             resource = self.workflows.public_resource(session, application_id, actor)
             connection = (
                 self.provider.connection(resource)
@@ -125,30 +131,35 @@ class ApplicationService:
                 "runtimeConnection": connection,
             }
 
-    def publications(self, actor=DEFAULT_USER, *, admin=False):
-        if admin:
+    def publications(self, actor: Actor = DEFAULT_USER, *, is_admin: bool = False) -> list[dict]:
+        """按更新时间倒序返回可编辑或可管理的发布申请。"""
+        if is_admin:
             require_admin(actor)
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             return sorted(
                 [
                     item
                     for item in session.list_publications()
-                    if (can_manage(actor, item) if admin else can_edit(actor, item))
+                    if (can_manage(actor, item) if is_admin else can_edit(actor, item))
                 ],
                 key=lambda item: item["updatedAt"],
                 reverse=True,
             )
 
-    def publication(self, publication_id: str, actor=DEFAULT_USER, *, admin=False):
-        if admin:
+    def publication(
+        self, publication_id: str, actor: Actor = DEFAULT_USER, *, is_admin: bool = False
+    ) -> dict:
+        """读取发布申请；无权查看时与记录不存在统一返回 404。"""
+        if is_admin:
             require_admin(actor)
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             record = self._publication(session, publication_id)
-            if not (can_manage(actor, record) if admin else can_edit(actor, record)):
+            if not (can_manage(actor, record) if is_admin else can_edit(actor, record)):
                 raise HTTPException(404, "申请不存在或当前账号无权查看")
             return record
 
-    def create_version(self, application_id: str, actor=DEFAULT_USER):
+    def create_version(self, application_id: str, actor: Actor = DEFAULT_USER) -> dict:
+        """为已有应用创建版本草稿；存在未通过的申请时复用该申请。"""
         with self.repository.transaction() as session:
             source = self.workflows.public_resource(session, application_id, actor)
             if not can_edit(actor, source):
@@ -187,7 +198,7 @@ class ApplicationService:
                 base_resource=source,
             )
 
-    def _validate_version(self, session: ApplicationSession, data: dict, record: dict):
+    def _validate_version(self, session: ApplicationSession, data: dict, record: dict) -> None:
         source = session.get_resource(record["applicationId"])
         if not source:
             return
@@ -199,14 +210,13 @@ class ApplicationService:
         ):
             raise HTTPException(422, "版本号已经发布，请使用新的版本号")
 
-    # 【场景应用交互 5】处理并返回：接收路由传入的 payload，在一次仓储事务中保存申请。
-    # 返回值逐层交回 router.py，最终成为前端 save() 成功回调中的 result。
     def save(
         self,
         payload: SaveApplicationPublication,
         publication_id: str | None = None,
-        actor=DEFAULT_USER,
-    ):
+        actor: Actor = DEFAULT_USER,
+    ) -> dict:
+        """在一次事务中保存草稿或提交审核；旧 revision 不能覆盖新记录。"""
         with self.repository.transaction() as session:
             return self._save(session, payload, publication_id, actor)
 
@@ -215,10 +225,10 @@ class ApplicationService:
         session: ApplicationSession,
         payload: SaveApplicationPublication,
         publication_id: str | None = None,
-        actor=DEFAULT_USER,
+        actor: Actor = DEFAULT_USER,
         *,
         base_resource: dict | None = None,
-    ):
+    ) -> dict:
         if actor.role not in ("publisher", "org_admin", "admin"):
             raise HTTPException(403, "当前账号没有发布应用的权限")
         # 参数对象转成字典；by_alias=True 保持前端使用的 camelCase 字段名。
@@ -285,8 +295,12 @@ class ApplicationService:
         return deepcopy(record)
 
     def review(
-        self, publication_id: str, payload: ReviewApplicationPublication, actor=DEFAULT_ADMIN
-    ):
+        self,
+        publication_id: str,
+        payload: ReviewApplicationPublication,
+        actor: Actor = DEFAULT_ADMIN,
+    ) -> dict:
+        """审核待处理申请，将审核结果、上架资源和通知在同一事务中保存。"""
         require_admin(actor)
         with self.repository.transaction() as session:
             record = self._publication(session, publication_id)
@@ -387,10 +401,14 @@ class ApplicationService:
             return deepcopy(record)
 
     def visibility(
-        self, application_id: str, payload: ApplicationVisibility | None = None, actor=DEFAULT_ADMIN
-    ):
+        self,
+        application_id: str,
+        payload: ApplicationVisibility | None = None,
+        actor: Actor = DEFAULT_ADMIN,
+    ) -> dict:
+        """读取或修改有权管理的应用开放范围；传入 revision 时检查并发冲突。"""
         require_admin(actor)
-        with self.repository.transaction(readonly=payload is None) as session:
+        with self.repository.transaction(is_readonly=payload is None) as session:
             resource = self._resource(session, application_id)
             if not can_manage(actor, resource):
                 raise HTTPException(403, "只能配置本单位应用")
@@ -408,9 +426,10 @@ class ApplicationService:
                 session.put_visibility(application_id, current)
             return current
 
-    def admin_resource(self, application_id: str, actor=DEFAULT_ADMIN):
+    def admin_resource(self, application_id: str, actor: Actor = DEFAULT_ADMIN) -> dict:
+        """读取管理详情，包含开放范围和运行状态，并校验单位管理权限。"""
         require_admin(actor)
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             resource = self._resource(session, application_id)
             if not can_manage(actor, resource):
                 raise HTTPException(403, "只能管理本单位应用")
@@ -421,9 +440,14 @@ class ApplicationService:
         return resource
 
     def configuration(
-        self, payload: SaveApplicationConfiguration | None = None, *, public=False, actor=None
-    ):
-        with self.repository.transaction(readonly=payload is None) as session:
+        self,
+        payload: SaveApplicationConfiguration | None = None,
+        *,
+        public: bool = False,
+        actor: Actor | None = None,
+    ) -> dict:
+        """读取或按 revision 更新表单配置；public 视图只返回发布表单所需字段。"""
+        with self.repository.transaction(is_readonly=payload is None) as session:
             current = session.get_configuration()
             if payload is not None:
                 if payload.revision != current["revision"]:
@@ -441,6 +465,6 @@ class ApplicationService:
             )
 
 
-# 取出启动时创建的业务实例；同一后端实例的多次请求共用它及其仓储。
 def application_service(request: Request) -> ApplicationService:
+    """取得启动时创建的业务实例，同一后端进程内复用实例及其仓储。"""
     return request.app.state.application_service

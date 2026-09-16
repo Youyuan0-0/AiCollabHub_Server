@@ -11,17 +11,20 @@ from app.storage.client import MinioStorage
 
 @dataclass
 class ApplicationResources:
+    """保存各 worker 的单库连接池与服务客户端，并统一管理回收顺序。"""
+
     database: Engine | None = None
     cache: RedisCache | None = None
     storage: MinioStorage | None = None
     _cleanup: ExitStack = field(default_factory=ExitStack, repr=False)
 
     def close(self) -> None:
+        """按注册顺序的逆序释放已创建的客户端资源。"""
         self._cleanup.close()
 
 
 def create_resources(settings: Settings) -> ApplicationResources:
-    # 每个 worker 独立创建客户端和连接池，启动不访问服务或自动建表、建桶。
+    """按配置创建独立客户端和连接池，不在启动时连接服务、建表或建桶。"""
     # 中途配置失败时，ExitStack 会回收此前已经创建的所有资源。
     with ExitStack() as cleanup:
         database = cache = storage = None

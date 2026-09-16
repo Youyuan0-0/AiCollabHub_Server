@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from os import getpid
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.router import api_router, database_router, mock_router
 from app.core.config import Settings
@@ -36,9 +39,10 @@ def create_app(
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
     chat_provider: ChatProvider | None = None,
     attachment_store: AttachmentStore | None = None,
-    cas_client=None,
+    cas_client: MockCasClient | None = None,
     applications_factory: Callable[[], ApplicationService] | None = None,
 ) -> FastAPI:
+    """装配应用路由、认证与资源生命周期，支持开发和测试注入服务。"""
     settings = settings if settings is not None else Settings()
 
     @asynccontextmanager
@@ -100,7 +104,8 @@ def create_app(
     application.state.resources = None
 
     @application.middleware("http")
-    async def request_context(request, call_next):
+    async def request_context(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """为请求和响应补充追踪标识与数据模式，并限制接口响应缓存。"""
         request.state.request_id = str(uuid4())
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
@@ -130,15 +135,18 @@ def create_app(
         return response
 
     @application.exception_handler(SQLAlchemyError)
-    async def database_unavailable(request, error):
+    async def database_unavailable(request: Request, error: SQLAlchemyError) -> JSONResponse:
+        """将数据库异常转换为不含内部连接信息的服务错误。"""
         return JSONResponse(status_code=503, content={"detail": "database_unavailable"})
 
     @application.exception_handler(StorageUnavailable)
-    async def storage_unavailable(request, error):
+    async def storage_unavailable(request: Request, error: StorageUnavailable) -> JSONResponse:
+        """将存储访问失败转换为统一服务不可用响应。"""
         return JSONResponse(status_code=503, content={"detail": "object_storage_unavailable"})
 
     @application.exception_handler(ObjectNotFound)
-    async def object_not_found(request, error):
+    async def object_not_found(request: Request, error: ObjectNotFound) -> JSONResponse:
+        """将存储对象缺失转换为统一资源不存在响应。"""
         return JSONResponse(status_code=404, content={"detail": "object_not_found"})
 
     # Vue 使用同源开发代理时无需 CORS；独立跨域访问须显式配置允许的来源。

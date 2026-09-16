@@ -13,7 +13,8 @@ from app.core.config import Settings
 from app.modules.common.identity_sync.schemas import SyncBatch
 
 
-def main():
+def main() -> None:
+    """生成并留档模拟身份事件，支持使用原文件重试未确认的提交。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--subject")
     parser.add_argument("--resource", choices=("user", "userlinkedrole"), default="user")

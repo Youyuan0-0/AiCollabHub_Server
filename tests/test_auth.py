@@ -121,8 +121,8 @@ def test_applications_use_verified_identity_and_disable_demo_switch(auth):
     record = a.post("/api/v1/application-publications", json=payload, headers=csrf(a)).json()
     assert record["createdBy"] == "mock-user" and record["organizationId"] == ""
     login(a, iam, scope="admin", subject="mock-admin")
-    admin = a.get("/api/v1/admin/application-session").json()
-    assert admin["current"]["id"] == "mock-admin" and admin["current"]["role"] == "admin"
+    is_admin = a.get("/api/v1/admin/application-session").json()
+    assert is_admin["current"]["id"] == "mock-admin" and is_admin["current"]["role"] == "admin"
     assert a.get("/api/v1/admin/application-dependencies").status_code == 200
     # 切换账号后两端统一使用新身份，不能回退到原用户或演示发布者。
     assert a.get("/api/v1/application-session").json()["current"]["id"] == "mock-admin"

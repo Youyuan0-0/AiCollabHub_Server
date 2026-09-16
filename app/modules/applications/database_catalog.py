@@ -1,5 +1,13 @@
 """在一次只读事务中批量组合应用目录；缓存只存在于当前事务。"""
 
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.applications.database_session import DatabaseApplicationSession
+
 from collections import defaultdict
 from copy import deepcopy
 
@@ -10,13 +18,17 @@ from app.modules.applications.database_values import iso
 
 
 class DatabaseCatalogReader:
-    def __init__(self, session):
+    """在只读事务中批量加载目录、权限和统计，缓存仅在当前事务有效。"""
+
+    def __init__(self, session: DatabaseApplicationSession) -> None:
+        """绑定只读事务并初始化局部目录缓存。"""
         self.session = session
         self.resources = {}
         self.visibility = {}
         self.list_ids = None
 
-    def list_resources(self):
+    def list_resources(self) -> list[dict]:
+        """批量加载目录并返回有效资源的独立副本。"""
         if self.list_ids is None:
             rows = self.session.rows("application")
             ids = set(self.session.repository.seeds)
@@ -25,21 +37,25 @@ class DatabaseCatalogReader:
             self._load(ids, rows)
         return [deepcopy(self.resources[key]) for key in self.list_ids if self.resources[key]]
 
-    def get_resource(self, application_id):
+    def get_resource(self, application_id: str) -> dict | None:
+        """读取单个资源副本，首次访问时补充当前事务缓存。"""
         self._ensure(application_id)
         return deepcopy(self.resources[application_id])
 
-    def get_visibility(self, application_id):
+    def get_visibility(self, application_id: str) -> dict:
+        """读取应用开放范围的独立副本。"""
         self._ensure(application_id)
         return deepcopy(self.visibility[application_id])
 
-    def _ensure(self, application_id):
+    def _ensure(self, application_id: str) -> None:
+        """首次访问应用时加载当前事务内所需目录资料。"""
         if application_id not in self.resources:
-            table = self.session.t("application")
+            table = self.session.table("application")
             rows = self.session.rows("application", table.c.id == application_id)
             self._load({application_id}, rows)
 
-    def _load(self, ids, rows):
+    def _load(self, ids: Iterable[str], rows: list[dict]) -> None:
+        """批量补充尚未缓存的应用、可见范围和统计数据。"""
         ids = set(ids) - self.resources.keys()
         if not ids:
             return
@@ -54,7 +70,7 @@ class DatabaseCatalogReader:
                 {"ids": sorted(ids)},
             ).mappings()
         }
-        activity = session.t("activity")
+        activity = session.table("activity")
         downloads = {
             row.application_id: row
             for row in session.db.execute(
@@ -75,10 +91,10 @@ class DatabaseCatalogReader:
         approved = {}
         names = {}
         if rows:
-            target = session.t("visibility_target")
+            target = session.table("visibility_target")
             for row in session.rows("visibility_target", target.c.application_id.in_(rows)):
                 targets[row["application_id"]].append(row["target_id"])
-            extension, note = session.t("submission_extension"), session.t("review_note")
+            extension, note = session.table("submission_extension"), session.table("review_note")
             # 每个应用只取最近一次通过审核的密级，不逐条查询完整审核历史。
             approved = dict(
                 session.db.execute(

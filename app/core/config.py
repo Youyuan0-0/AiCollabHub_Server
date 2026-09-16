@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Literal
 
@@ -8,6 +10,8 @@ from sqlalchemy.engine import URL
 
 # 配置优先级：初始化参数 > 环境变量 > .env 文件 > 字段默认值。
 class Settings(BaseSettings):
+    """从环境变量加载应用、数据库和外部服务配置并校验组合约束。"""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -93,7 +97,7 @@ class Settings(BaseSettings):
     auth_mock_admin_subjects: list[str] = ["mock-admin"]
 
     @model_validator(mode="after")
-    def assemble_service_urls(self) -> "Settings":
+    def assemble_service_urls(self) -> Settings:
         """组装并返回当前配置；显式 URL 优先，分项连接不继承其他账号凭证。"""
         for prefix, target in (
             ("postgres", "database_url"),
@@ -152,7 +156,8 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_authentication(self) -> "Settings":
+    def validate_authentication(self) -> Settings:
+        """检查认证模式、回调地址与模拟凭据的环境约束。"""
         for url in (self.auth_public_origin, self.auth_mock_iam_url):
             if (
                 url.username
@@ -204,13 +209,15 @@ class Settings(BaseSettings):
     )
     @classmethod
     def normalize_optional_service_setting(cls, value: object) -> object:
+        """将可选服务配置中的空字符串转换为未配置状态。"""
         # 空白连接串或凭证统一视为未配置，避免创建无效客户端。
         if isinstance(value, str) and not value.strip():
             return None
         return value
 
     @model_validator(mode="after")
-    def validate_service_configuration(self) -> "Settings":
+    def validate_service_configuration(self) -> Settings:
+        """校验单库连接、缓存和存储服务所需配置。"""
         if self.applications_storage == "database" and self.database_url is None:
             raise ValueError("APPLICATIONS_STORAGE=database requires a PostgreSQL connection")
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。

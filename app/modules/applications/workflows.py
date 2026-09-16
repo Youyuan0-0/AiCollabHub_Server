@@ -1,5 +1,21 @@
 """应用运行、个人操作、同步及审核扩展；全部通过仓储和供应方合同。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from app.modules.applications.identity import Actor
+from app.modules.applications.ports import ApplicationSession
+from app.modules.applications.workflow_schemas import (
+    HistoryQuery,
+    InteractionInput,
+    RunInput,
+    SyncInput,
+)
+
+if TYPE_CHECKING:
+    from app.modules.applications.application_service import ApplicationService
+
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -18,26 +34,32 @@ from app.modules.applications.workflow_schemas import WorkflowPolicy
 from app.modules.common.fixtures import paginate
 
 
-def now():
+def now() -> str:
+    """生成 UTC 时间文本，工作流记录统一保留微秒精度。"""
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 class ApplicationWorkflows:
-    def __init__(self, service):
+    """通过仓储与供应方接口处理运行、互动、通知、同步和审核扩展。"""
+
+    def __init__(self, service: ApplicationService) -> None:
+        """复用应用服务已配置的仓储与供应方适配器。"""
         self.service = service
         self.repository = service.repository
         self.provider = service.provider
 
     @staticmethod
-    def policy_in(session):
+    def policy_in(session: ApplicationSession) -> dict:
+        """读取当前事务的业务策略，未保存时采用默认策略。"""
         return session.entry("policy", "current") or WorkflowPolicy(revision=1).model_dump(
             by_alias=True
         )
 
-    def policy(self, actor=None, payload=None):
+    def policy(self, actor: Actor | None = None, payload: WorkflowPolicy | None = None) -> dict:
+        """读取或按版本保存策略；未传身份时仅返回公开展示配置。"""
         if actor:
             require_admin(actor)
-        with self.repository.transaction(readonly=payload is None) as session:
+        with self.repository.transaction(is_readonly=payload is None) as session:
             current = self.policy_in(session)
             if payload:
                 if actor.role != "admin":
@@ -71,13 +93,25 @@ class ApplicationWorkflows:
                 )
             }
 
-    def public_resource(self, session, application_id, actor):
+    def public_resource(
+        self, session: ApplicationSession, application_id: str, actor: Actor
+    ) -> dict:
+        """读取指定身份可见的资源，无权访问时按不存在处理。"""
         resource = self.service._resource(session, application_id)
         if not visible(actor, resource, session.get_visibility(application_id)):
             raise HTTPException(404, "应用不存在或当前账号不可见")
         return resource
 
-    def notify(self, session, recipient, application, status, kind, key):
+    def notify(
+        self,
+        session: ApplicationSession,
+        recipient: str,
+        application: dict,
+        status: str,
+        kind: str,
+        key: str,
+    ) -> None:
+        """按策略在当前事务中生成通知，使用业务键避免重复创建。"""
         policy = self.policy_in(session)
         if not policy["notificationsEnabled"] or session.entry("notifications", key):
             return
@@ -97,7 +131,10 @@ class ApplicationWorkflows:
             },
         )
 
-    def validate_security(self, session, data, security_level):
+    def validate_security(
+        self, session: ApplicationSession, data: dict, security_level: str
+    ) -> None:
+        """校验发布密级和敏感词规则，失败返回 422。"""
         if security_level == "confidential":
             raise HTTPException(422, "当前发布通道不接收涉密资料，请调整密级或走专用审批通道")
         from app.modules.applications.precheck import sensitive_errors
@@ -105,11 +142,12 @@ class ApplicationWorkflows:
         if sensitive_errors(data, self.policy_in(session)["sensitiveTerms"]):
             raise HTTPException(422, "资料命中发布拦截词，请检查并修改后提交")
 
-    def quality(self, record, actor):
+    def quality(self, record: dict, actor: Actor) -> dict:
+        """检查有权审核的申请资料并给出改进建议，不替代实际模型效果评测。"""
         require_admin(actor)
         if not can_manage(actor, record):
             raise HTTPException(403, "只能审核本单位的申请")
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             checks = []
             for label, check in (
                 (
@@ -152,8 +190,11 @@ class ApplicationWorkflows:
                 "basis": "本平台资料规则检查；不代表实际模型效果评测",
             }
 
-    def interaction(self, application_id, actor, payload=None):
-        with self.repository.transaction(readonly=payload is None) as session:
+    def interaction(
+        self, application_id: str, actor: Actor, payload: InteractionInput | None = None
+    ) -> dict:
+        """读取或更新当前用户的收藏、订阅和评分，同步应用统计。"""
+        with self.repository.transaction(is_readonly=payload is None) as session:
             resource = self.public_resource(session, application_id, actor)
             key = f"{actor.id}:{application_id}"
             value = session.entry("interactions", key) or {
@@ -193,8 +234,9 @@ class ApplicationWorkflows:
                 "favoriteCount": resource["favoriteCount"],
             }
 
-    def ratings(self, application_id, actor):
-        with self.repository.transaction(readonly=True) as session:
+    def ratings(self, application_id: str, actor: Actor) -> list[dict]:
+        """读取可见应用的有效评分和评论。"""
+        with self.repository.transaction(is_readonly=True) as session:
             self.public_resource(session, application_id, actor)
             return [
                 {
@@ -207,8 +249,9 @@ class ApplicationWorkflows:
                 if item["applicationId"] == application_id and item["rating"] is not None
             ]
 
-    def activity(self, actor):
-        with self.repository.transaction(readonly=True) as session:
+    def activity(self, actor: Actor) -> dict:
+        """读取当前身份可见的订阅、收藏、运行记录与通知。"""
+        with self.repository.transaction(is_readonly=True) as session:
             available = {
                 item["id"]: item
                 for item in session.list_resources()
@@ -254,7 +297,8 @@ class ApplicationWorkflows:
                 ),
             }
 
-    def read_notification(self, notification_id, actor):
+    def read_notification(self, notification_id: str, actor: Actor) -> dict:
+        """将属于当前用户的通知标记为已读。"""
         with self.repository.transaction() as session:
             item = session.entry("notifications", notification_id)
             if not item or item["recipient"] != actor.id:
@@ -263,7 +307,8 @@ class ApplicationWorkflows:
             session.put_entry("notifications", notification_id, item)
             return item
 
-    def download(self, application_id, actor, request_id):
+    def download(self, application_id: str, actor: Actor, request_id: str) -> dict:
+        """生成应用下载资料，重试使用原请求编号以避免重复计数。"""
         with self.repository.transaction() as session:
             resource = self.public_resource(session, application_id, actor)
             key = f"{actor.id}:{application_id}:{request_id}"
@@ -299,7 +344,8 @@ class ApplicationWorkflows:
             )
             return value
 
-    def run(self, application_id, actor, payload):
+    def run(self, application_id: str, actor: Actor, payload: RunInput) -> dict:
+        """执行应用并保存结果，使用请求指纹检查重复提交，返回前再次验证可见性。"""
         mode = getattr(self.provider, "mode", "simulation")
         key = f"{actor.id}:{application_id}:{payload.request_id}"
         serialized = json.dumps(
@@ -384,11 +430,13 @@ class ApplicationWorkflows:
         return self.run_view(record)
 
     @staticmethod
-    def run_view(record):
+    def run_view(record: dict) -> dict:
+        """生成运行结果视图，移除内部请求指纹。"""
         return {key: value for key, value in record.items() if key != "fingerprint"}
 
     @staticmethod
-    def validate_input(schema_text, inputs):
+    def validate_input(schema_text: str, inputs: dict) -> None:
+        """按应用声明的 Schema 校验输入，不读取远程引用，失败返回 422。"""
         if not schema_text:
             if not inputs:
                 raise HTTPException(422, "请填写应用输入")
@@ -411,9 +459,10 @@ class ApplicationWorkflows:
                 422, "应用输入格式无法校验，请联系发布者检查 Schema 或外部引用"
             ) from None
 
-    def runtime(self, application_id):
+    def runtime(self, application_id: str) -> dict | None:
+        """统计当前运行模式的已完成任务，无样本时返回空值。"""
         mode = getattr(self.provider, "mode", "simulation")
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             completed = [
                 item
                 for item in session.entries("runs")
@@ -434,7 +483,8 @@ class ApplicationWorkflows:
             "measuredAt": max(item["completedAt"] for item in completed),
         }
 
-    def sync(self, actor, payload):
+    def sync(self, actor: Actor, payload: SyncInput) -> dict:
+        """导入指定工具链版本为发布草稿，按请求编号与内容指纹去重并记录失败。"""
         if actor.role not in ("publisher", "admin", "org_admin"):
             raise HTTPException(403, "当前账号不能导入工具链应用")
         key = f"{actor.id}:{payload.request_id}"
@@ -573,22 +623,24 @@ class ApplicationWorkflows:
                 session.put_entry("syncs", key, job)
         return job
 
-    def syncs(self, actor, admin=False):
-        if admin:
+    def syncs(self, actor: Actor, is_admin: bool = False) -> list[dict]:
+        """按身份权限读取同步历史，按创建时间倒序返回。"""
+        if is_admin:
             require_admin(actor)
-        with self.repository.transaction(readonly=True) as session:
+        with self.repository.transaction(is_readonly=True) as session:
             return sorted(
                 [
                     item
                     for item in session.entries("syncs")
-                    if (can_manage(actor, item) if admin else item["actorId"] == actor.id)
+                    if (can_manage(actor, item) if is_admin else item["actorId"] == actor.id)
                 ],
                 key=lambda item: item["createdAt"],
                 reverse=True,
             )
 
-    def history(self, actor, query):
-        records = self.service.publications(actor, admin=True)
+    def history(self, actor: Actor, query: HistoryQuery) -> dict:
+        """筛选当前管理员可查看的审核历史，并返回分页结果和审核人列表。"""
+        records = self.service.publications(actor, is_admin=True)
         items = []
         for record in records:
             for review in record["reviews"]:
@@ -623,6 +675,6 @@ class ApplicationWorkflows:
             if review.get("reviewerId")
         }
         return {
-            **paginate(items, query.page, query.pageSize),
+            **paginate(items, query.page, query.page_size),
             "reviewers": list(reviewers.values()),
         }

@@ -1,5 +1,7 @@
 """第三方对话调用扩展点；当前默认使用原样回显，不内置供应方协议和密钥。"""
 
+from __future__ import annotations
+
 from typing import Protocol
 
 from app.schemas.conversations import ChatReply, ConversationMessage
@@ -15,7 +17,9 @@ class ChatProvider(Protocol):
         model: str,
         knowledge_base: str,
         tools: list[str],
-    ) -> ChatReply: ...
+    ) -> ChatReply:
+        """根据会话消息和资源配置生成助手回答。"""
+        ...
 
 
 class EchoChatProvider:
@@ -29,5 +33,6 @@ class EchoChatProvider:
         knowledge_base: str,
         tools: list[str],
     ) -> ChatReply:
+        """回显最近一条用户消息，供开发环境验证问答流程。"""
         # 服务层确保消息非空且最后一条是当前问题，不生成模拟引用。
         return ChatReply(text=messages[-1].content)

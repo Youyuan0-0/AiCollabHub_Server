@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hmac
 import secrets
 from datetime import UTC, datetime
@@ -6,7 +8,7 @@ from urllib.parse import parse_qs, urlencode
 
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import update
@@ -27,11 +29,13 @@ config_router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 @config_router.get("/config")
-def config(request: Request):
+def config(request: Request) -> dict:
+    """返回前端初始化所需的认证启用状态与提供方标识。"""
     return {"enabled": request.app.state.settings.auth_mode != "disabled", "provider": "mock"}
 
 
-def set_cookie(response, request: Request, name: str, value: str, ttl: int):
+def set_cookie(response: Response, request: Request, name: str, value: str, ttl: int) -> None:
+    """按统一安全属性写入业务认证 Cookie。"""
     response.set_cookie(
         name,
         value,
@@ -43,20 +47,31 @@ def set_cookie(response, request: Request, name: str, value: str, ttl: int):
     )
 
 
-def clear_login_cookie(response, scope: str):
+def clear_login_cookie(response: Response, scope: str) -> None:
+    """清除指定入口的一次性登录请求 Cookie。"""
     response.delete_cookie(service.login_cookie(scope), path="/api", httponly=True, samesite="lax")
 
 
-def share_session_cookie(response, request: Request, value: AuthSession, raw: str):
+def share_session_cookie[ResponseType: Response](
+    response: ResponseType, request: Request, value: AuthSession, raw_token: str
+) -> ResponseType:
+    """补发两端共用的会话 Cookie，保留原会话到期时间和响应类型。"""
     # 旧会话可直接沿用，Cookie 有效期保持原值；不因访问另一端而延长登录时间。
-    if request.cookies.get(service.cookie_name()) != raw:
+    if request.cookies.get(service.cookie_name()) != raw_token:
         set_cookie(
-            response, request, service.cookie_name(), raw, max(0, value.expires_at - service.now())
+            response,
+            request,
+            service.cookie_name(),
+            raw_token,
+            max(0, value.expires_at - service.now()),
         )
     return response
 
 
-def login_failure(request: Request, db: Session, scope: str, error: str, return_path: str):
+def login_failure(
+    request: Request, db: Session, scope: str, error: str, return_path: str
+) -> RedirectResponse:
+    """记录登录失败并跳转登录页，同时清除一次性登录 Cookie。"""
     prepare_write(db, request.app.state.settings)
     service.audit(db, request, scope, "login", error)
     commit_write(db)
@@ -68,14 +83,15 @@ def login_failure(request: Request, db: Session, scope: str, error: str, return_
     return response
 
 
-@router.get("/login")
+@router.get("/login", response_model=None)
 def login(
     request: Request,
     db: SessionDependency,
     scope: Scope = "user",
     return_to: Annotated[str | None, Query(max_length=2048)] = None,
     renew: bool = False,
-):
+) -> RedirectResponse:
+    """保存并绑定一次性登录请求，跳转统一认证入口。"""
     settings = request.app.state.settings
     target = safe_return_path(return_to or ("/admin/" if scope == "admin" else "/"), scope)
     if not renew:
@@ -112,14 +128,15 @@ def login(
     return response
 
 
-@router.get("/callback")
+@router.get("/callback", response_model=None)
 def callback(
     request: Request,
     db: SessionDependency,
     scope: Scope,
     state: Annotated[str, Query(min_length=20, max_length=200)],
     ticket: Annotated[str, Query(min_length=3, max_length=1024)],
-):
+) -> RedirectResponse:
+    """原子消费登录请求、验证票据并创建业务会话。"""
     settings = request.app.state.settings
     pending = db.get(AuthLoginRequest, digest(state))
     default_path = "/admin/" if scope == "admin" else "/"
@@ -189,7 +206,8 @@ def callback(
 
 
 @router.get("/session")
-def current_session(request: Request, db: SessionDependency, scope: Scope = "user"):
+def current_session(request: Request, db: SessionDependency, scope: Scope = "user") -> JSONResponse:
+    """返回有效会话的身份、有效期与 CSRF 令牌，兼容升级前的入口 Cookie。"""
     value, raw = service.authenticated_session(db, request, scope)
     response = JSONResponse(
         {
@@ -210,10 +228,11 @@ def current_session(request: Request, db: SessionDependency, scope: Scope = "use
     return share_session_cookie(response, request, value, raw)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=None)
 def logout(
     request: Request, db: SessionDependency, scope: Scope = "user", global_logout: bool = True
-):
+) -> JSONResponse:
+    """校验 CSRF 后撤销本浏览器两端会话，返回本地或统一注销地址。"""
     settings = request.app.state.settings
     if service.cookie_name() in request.cookies:
         raw = service.session_tokens(request).get(service.cookie_name(), "")
@@ -239,8 +258,9 @@ def logout(
     return response
 
 
-@router.post("/single-logout")
-async def single_logout(request: Request):
+@router.post("/single-logout", response_model=None)
+async def single_logout(request: Request) -> dict:
+    """校验统一注销通知来源与报文，并撤销对应票据的会话。"""
     settings = request.app.state.settings
     if not hmac.compare_digest(
         request.headers.get("x-mock-iam-key", "").encode(),
@@ -271,7 +291,8 @@ async def single_logout(request: Request):
     except (ValueError, UnicodeError, ElementTree.ParseError, DefusedXmlException):
         raise HTTPException(400, "invalid_logout_notification") from None
 
-    def persist():
+    def persist() -> None:
+        """在独立数据库会话中撤销统一注销通知指定的票据。"""
         with Session(request.app.state.database_engine) as db:
             service.revoke_ticket(db, request, ticket)
 

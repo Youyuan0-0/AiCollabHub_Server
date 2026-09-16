@@ -5,6 +5,8 @@ from app.db.base import Base
 
 
 class IdentityState(Base):
+    """保存身份状态及其源版本，为登录和用户状态推送提供共同锁定点。"""
+
     __tablename__ = "iam_identity_state"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'disabled', 'deleted')", name="valid_status"),
@@ -19,6 +21,8 @@ class IdentityState(Base):
 
 
 class IdentityRole(Base):
+    """保存身份的角色授权与独立源版本，保留撤权记录以防旧配置恢复权限。"""
+
     __tablename__ = "iam_identity_role"
     __table_args__ = (CheckConstraint("sync_time > 0", name="valid_sync_time"),)
 
@@ -33,6 +37,8 @@ class IdentityRole(Base):
 
 
 class IdentitySyncReceipt(Base):
+    """保存同步事件指纹、处理结果和重试次数，支持幂等核对。"""
+
     __tablename__ = "iam_sync_receipt"
 
     event_id: Mapped[str] = mapped_column(String(100), primary_key=True)

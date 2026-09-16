@@ -1,5 +1,7 @@
 """表单预检查不保存业务资料；最终提交仍执行完整服务端校验。"""
 
+from __future__ import annotations
+
 import json
 
 from pydantic import Field, ValidationError, field_validator
@@ -14,12 +16,15 @@ from app.modules.applications.publication_schemas import (
 
 
 class ApplicationPrecheck(ApplicationPayload):
+    """发布表单的有限预检资料，保留半成品字段用于逐项提示。"""
+
     data: dict = Field(max_length=len(FIELD_LABELS))
     security_level: str = Field(default="internal", max_length=30)
 
     @field_validator("data")
     @classmethod
-    def bounded_data(cls, value):
+    def bounded_data(cls, value: dict) -> dict:
+        """拒绝未知字段和过长表单，控制预检输入范围。"""
         if value.keys() - FIELD_LABELS.keys():
             raise ValueError("包含未知的应用字段")
         if len(json.dumps(value, ensure_ascii=False)) > 150000:
@@ -27,7 +32,8 @@ class ApplicationPrecheck(ApplicationPayload):
         return value
 
 
-def sensitive_errors(data, terms):
+def sensitive_errors(data: dict, terms: list[str]) -> dict[str, str]:
+    """检查各字段是否命中拦截词，返回字段与错误说明的映射。"""
     return {
         key: "内容命中发布拦截词，请修改后提交"
         for key, value in data.items()
@@ -37,7 +43,8 @@ def sensitive_errors(data, terms):
     }
 
 
-def precheck(payload, configuration, policy):
+def precheck(payload: ApplicationPrecheck, configuration: dict, policy: dict) -> dict:
+    """合并结构、必填项、密级与敏感词检查，并分析可识别的元数据。"""
     configuration = effective_configuration(configuration)
     errors = {}
     data = payload.data

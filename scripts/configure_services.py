@@ -6,7 +6,8 @@ from pathlib import Path
 from dotenv import dotenv_values, set_key, unset_key
 
 
-def main():
+def main() -> None:
+    """读取服务凭据并写入应用环境配置，清除会覆盖新配置的旧连接串。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-env", required=True, type=Path)
     parser.add_argument("--output-env", type=Path, default=Path(".env"))

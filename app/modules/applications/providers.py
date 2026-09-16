@@ -1,30 +1,39 @@
 """供应方适配入口；当前实现只读开发样例，不调用实际服务。"""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from threading import RLock
 from uuid import uuid4
 
 from fastapi import HTTPException
 
+from app.modules.applications.demo_marketplace import DemoMarketplaceStore
 from app.modules.applications.dependencies import dependency_resources
 
 
 # 供业务类查询和校验关联资源；当前使用本地样例，不执行远程模型调用。
 class DemoApplicationProvider:
-    def __init__(self, marketplace=None):
+    """使用本地样例提供关联资源、工具链资料与模拟执行结果。"""
+
+    def __init__(self, marketplace: DemoMarketplaceStore | None = None) -> None:
+        """可选绑定文件样例存储；未提供时开发资料仅保存在进程内。"""
         self._lock = RLock()
         self._developed = {}
         self.marketplace = marketplace
 
-    def dependencies(self):
+    def dependencies(self) -> list[dict]:
+        """读取当前演示关联资源目录。"""
         return dependency_resources()
 
-    def validate_dependencies(self, dependencies):
+    def validate_dependencies(self, dependencies: list[dict]) -> None:
+        """按资源类型与编号检查关联资源存在性。"""
         available = {(item["kind"], item["resourceId"]) for item in self.dependencies()}
         if any((item["kind"], item["resourceId"]) not in available for item in dependencies):
             raise HTTPException(422, "关联资源不存在，请从当前目录重新选择")
 
-    def runtime_status(self, application_id, version_id):
+    def runtime_status(self, application_id: str, version_id: str) -> dict:
+        """返回未接入状态和空统计，不虚构实际运行指标。"""
         return {
             "status": "not_connected",
             "averageResponseMs": None,
@@ -33,7 +42,8 @@ class DemoApplicationProvider:
             "measuredAt": None,
         }
 
-    def toolchain_resources(self):
+    def toolchain_resources(self) -> list[dict]:
+        """合并内置样例与已提交开发资料，提供可选版本列表。"""
         self._load_developments()
         base = [
             {
@@ -66,7 +76,8 @@ class DemoApplicationProvider:
             ]
         return base + custom
 
-    def develop(self, data, actor_id):
+    def develop(self, data: dict, actor_id: str) -> dict:
+        """保存演示开发资料，返回工具链资源和版本编号。"""
         if self.marketplace is not None:
             reference = self.marketplace.save("development", {"data": data, "actorId": actor_id})
             key = "tc-dev-" + reference.removeprefix("development-")
@@ -76,7 +87,8 @@ class DemoApplicationProvider:
             self._developed[key] = [{"data": data, "actorId": actor_id}]
         return {"externalId": key, "externalVersion": data["version"]}
 
-    def _load_developments(self):
+    def _load_developments(self) -> None:
+        """从模拟存储恢复开发资料，并按快照引用建立可查询记录。"""
         if self.marketplace is not None:
             with self._lock:
                 self._developed = {
@@ -84,7 +96,8 @@ class DemoApplicationProvider:
                     for key, record in self.marketplace.developments()
                 }
 
-    def toolchain_resource(self, external_id, version):
+    def toolchain_resource(self, external_id: str, version: str) -> dict:
+        """读取指定工具链版本的发布资料，不存在时返回 404。"""
         from app.modules.applications.publication_schemas import ApplicationDetails
 
         self._load_developments()
@@ -129,7 +142,8 @@ class DemoApplicationProvider:
             ).model_dump(by_alias=True),
         }
 
-    def invoke(self, resource, inputs, options, simulate_failure):
+    def invoke(self, resource: dict, inputs: dict, options: dict, simulate_failure: bool) -> dict:
+        """返回包含输入和配置的模拟结果，可按参数触发模拟失败。"""
         if simulate_failure:
             raise RuntimeError("simulated provider failure")
         return {

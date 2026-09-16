@@ -1,13 +1,20 @@
 """发布与运行共用 JSON Schema 方言和结构校验；不读取网络引用。"""
 
+from __future__ import annotations
+
 import json
+from typing import NoReturn
 
 from jsonschema import Draft7Validator, Draft201909Validator, Draft202012Validator, SchemaError
+from jsonschema.protocols import Validator
 from jsonschema.validators import validator_for
 
 
-def parse_schema(value: str):
-    def invalid_constant(_):
+def parse_schema(value: str) -> tuple[dict, type[Validator]]:
+    """校验 JSON Schema 对象及支持的方言，返回文档和验证器类型，不访问远程引用。"""
+
+    def invalid_constant(_: str) -> NoReturn:
+        """拒绝 JSON 中不符合标准的非有限数值字面量。"""
         raise ValueError("JSON Schema 不支持 NaN 或 Infinity")
 
     try:

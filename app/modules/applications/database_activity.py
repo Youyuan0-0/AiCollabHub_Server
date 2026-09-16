@@ -1,6 +1,9 @@
 """互动、任务、通知和配置到场景表的映射。"""
 
+from __future__ import annotations
+
 import json
+from collections.abc import Mapping
 from datetime import timedelta
 from hashlib import sha256
 
@@ -13,14 +16,18 @@ from app.modules.applications.identity import ACTORS
 OPERATIONS = {"runs": "run", "downloads": "download", "syncs": "sync"}
 
 
-def fingerprint(value):
+def fingerprint(value: object) -> str:
+    """以稳定 JSON 表达生成内容指纹，用于幂等请求核对。"""
     if isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value):
         return value
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 class DatabaseActivityMixin:
-    def entries(self, kind):
+    """应用事务的互动、通知、运行和同步活动存取实现。"""
+
+    def entries(self, kind: str) -> list[dict]:
+        """按活动种类读取平台记录，并转换为现有接口结构。"""
         if kind == "market_operations":
             from app.modules.applications.database_market_activity import DatabaseMarketActivity
 
@@ -32,13 +39,16 @@ class DatabaseActivityMixin:
         if kind in OPERATIONS:
             return [
                 self.activity_view(row)
-                for row in self.rows("activity", self.t("activity").c.operation == OPERATIONS[kind])
+                for row in self.rows(
+                    "activity", self.table("activity").c.operation == OPERATIONS[kind]
+                )
             ]
         if kind == "policy":
             return [self.configuration_record("workflow")]
         raise ValueError("Unsupported application entry kind")
 
-    def entry(self, kind, key):
+    def entry(self, kind: str, key: str) -> dict | None:
+        """按种类和业务键读取活动记录，缺失时返回空值。"""
         self.lock(f"{kind}:{key}")
         if kind == "market_lock":
             return None
@@ -50,7 +60,7 @@ class DatabaseActivityMixin:
             return self.configuration_record("workflow")
         if kind == "interactions":
             actor, application_id = key.rsplit(":", 1)
-            table = self.t("interaction")
+            table = self.table("interaction")
             row = self.one(
                 "interaction",
                 table.c.actor_subject == actor,
@@ -58,13 +68,13 @@ class DatabaseActivityMixin:
             )
             return self.interaction_view(row) if row else None
         if kind == "notifications":
-            table = self.t("notification")
+            table = self.table("notification")
             row = self.one("notification", table.c.id == key)
             row = row or self.one("notification", table.c.event_key == key)
             return self.notification_view(row) if row else None
         if kind == "bindings":
             profile, code = key.split(":", 1)
-            table = self.t("application")
+            table = self.table("application")
             row = self.one(
                 "application", table.c.agent_profile == profile, table.c.agent_code == code
             )
@@ -78,7 +88,7 @@ class DatabaseActivityMixin:
                 else None
             )
         if kind in OPERATIONS:
-            table = self.t("activity")
+            table = self.table("activity")
             row = self.one(
                 "activity",
                 table.c.id == stable_id(kind, key),
@@ -87,7 +97,8 @@ class DatabaseActivityMixin:
             return self.activity_view(row) if row else None
         raise ValueError("Unsupported application entry kind")
 
-    def put_entry(self, kind, key, value):
+    def put_entry(self, kind: str, key: str, value: dict) -> None:
+        """按活动种类分派保存逻辑，复用当前数据库事务。"""
         self.lock(f"{kind}:{key}")
         if kind == "market_operations":
             from app.modules.applications.database_market_activity import DatabaseMarketActivity
@@ -109,7 +120,8 @@ class DatabaseActivityMixin:
         raise ValueError("Unsupported application entry kind")
 
     @staticmethod
-    def interaction_view(row):
+    def interaction_view(row: Mapping) -> dict:
+        """将数据库互动记录转换为前端字段结构。"""
         return {
             "id": f"{row['actor_subject']}:{row['application_id']}",
             "actorId": row["actor_subject"],
@@ -121,9 +133,10 @@ class DatabaseActivityMixin:
             "updatedAt": iso(row["updated_at"]),
         }
 
-    def save_interaction(self, value):
+    def save_interaction(self, value: dict) -> None:
+        """按用户与应用保存收藏、订阅和评分状态。"""
         self.ensure_application(value["applicationId"])
-        table = self.t("interaction")
+        table = self.table("interaction")
         conditions = (
             table.c.application_id == value["applicationId"],
             table.c.actor_subject == value["actorId"],
@@ -156,7 +169,8 @@ class DatabaseActivityMixin:
             )
 
     @staticmethod
-    def notification_view(row):
+    def notification_view(row: Mapping) -> dict:
+        """将数据库通知记录转换为接口视图。"""
         return {
             "id": row["id"],
             "recipient": row["actor_subject"],
@@ -167,8 +181,9 @@ class DatabaseActivityMixin:
             "read": row["read_at"] is not None,
         }
 
-    def save_notification(self, key, value):
-        table = self.t("notification")
+    def save_notification(self, key: str, value: dict) -> None:
+        """按通知业务键保存通知或已读状态，避免重复投递。"""
+        table = self.table("notification")
         existing = self.one("notification", table.c.id == key)
         if existing:
             if existing["actor_subject"] != value["recipient"]:
@@ -206,7 +221,8 @@ class DatabaseActivityMixin:
                 )
             )
 
-    def activity_view(self, row):
+    def activity_view(self, row: Mapping) -> dict:
+        """组合活动记录及其关联资料，返回平台活动视图。"""
         detail = row["detail"]
         status = row["status"]
         if (
@@ -216,12 +232,12 @@ class DatabaseActivityMixin:
         ):
             # 中断后不盲目重复调用；保留不确定结果，等原请求核验或用户明确发起新请求。
             # 列表按当前时间展示超时；持久化核验留在后续写事务中完成。
-            if not self.readonly:
+            if not self.is_readonly:
                 self.write(
-                    update(self.t("activity"))
+                    update(self.table("activity"))
                     .where(
-                        self.t("activity").c.id == row["id"],
-                        self.t("activity").c.status.in_(("running", "queued")),
+                        self.table("activity").c.id == row["id"],
+                        self.table("activity").c.status.in_(("running", "queued")),
                     )
                     .values(
                         status="unknown",
@@ -273,8 +289,9 @@ class DatabaseActivityMixin:
             **({"completedAt": iso(row["completed_at"])} if row["completed_at"] else {}),
         }
 
-    def save_activity(self, kind, key, value):
-        table = self.t("activity")
+    def save_activity(self, kind: str, key: str, value: dict) -> None:
+        """保存运行、下载或同步记录，校验幂等键对应的请求内容。"""
+        table = self.table("activity")
         identity = stable_id(kind, key)
         previous = self.one("activity", table.c.id == identity)
         app_id = value.get("applicationId")

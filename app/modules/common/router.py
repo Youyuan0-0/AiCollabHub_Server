@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.modules.common import service
@@ -7,8 +9,9 @@ from app.modules.common.schemas import AccessInput, FeedbackInput, InvocationInp
 router = APIRouter(tags=["common (mock)"])
 
 
-@router.get("/framework")
-def framework(request: Request):
+@router.get("/framework", response_model=None)
+def framework(request: Request) -> dict:
+    """返回当前模拟实例和已挂载的业务模块。"""
     return {
         "mode": "mock",
         "instance": request.app.state.settings.instance_id,
@@ -19,18 +22,21 @@ def framework(request: Request):
 # 看板由 app.api.overview 读取数据库快照，避免相同路径仍命中固定 Mock。
 
 
-@router.get("/feedback")
-def feedback():
+@router.get("/feedback", response_model=None)
+def feedback() -> list[dict]:
+    """查询固定反馈样例列表。"""
     return service.list_feedback()
 
 
-@router.post("/feedback", status_code=201)
-def submit_feedback(payload: FeedbackInput):
+@router.post("/feedback", status_code=201, response_model=None)
+def submit_feedback(payload: FeedbackInput) -> dict:
+    """校验反馈请求并返回本次模拟回执。"""
     return service.feedback_receipt(payload)
 
 
-@router.post("/resources/{resource_id}/invoke")
-def invoke(resource_id: str, payload: InvocationInput):
+@router.post("/resources/{resource_id}/invoke", response_model=None)
+def invoke(resource_id: str, payload: InvocationInput) -> dict:
+    """验证样例资源存在后生成模拟调用结果。"""
     resource = find_sample(resource_id)
     return {
         "id": service.receipt()["id"],
@@ -39,14 +45,16 @@ def invoke(resource_id: str, payload: InvocationInput):
     }
 
 
-@router.post("/resources/{resource_id}/access-requests", status_code=201)
-def access_request(resource_id: str, payload: AccessInput):
+@router.post("/resources/{resource_id}/access-requests", status_code=201, response_model=None)
+def access_request(resource_id: str, payload: AccessInput) -> dict:
+    """验证资源编号并生成模拟访问申请回执。"""
     find_sample(resource_id)
     return service.receipt()
 
 
-@router.post("/publications", status_code=201)
-def publication(payload: PublicationInput):
+@router.post("/publications", status_code=201, response_model=None)
+def publication(payload: PublicationInput) -> dict:
+    """接收通用发布资料；场景应用须使用独立发布入口。"""
     if payload.kind == "application":
         raise HTTPException(422, "请通过场景应用发布页面提交完整资料")
     if payload.submit and (not payload.name.strip() or not payload.summary.strip()):

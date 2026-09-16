@@ -14,13 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class RedisCache:
-    def __init__(self, client: Redis, *, namespace: str, default_ttl: int):
+    """按环境隔离 JSON 缓存；连接失败时允许业务回退到权威数据源。"""
+
+    def __init__(self, client: Redis, *, namespace: str, default_ttl: int) -> None:
         self.client = client
         self.namespace = namespace
         self.default_ttl = default_ttl
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RedisCache":
+        """从配置创建延迟连接的客户端，未配置 Redis 地址时拒绝创建。"""
         if settings.redis_url is None:
             raise ValueError("REDIS_URL is required")
         client = Redis.from_url(
@@ -43,6 +46,7 @@ class RedisCache:
         return f"{self.namespace}:{key}"
 
     def get_json(self, key: str) -> Any | None:
+        """读取 JSON；未命中、连接失败或缓存损坏时返回 None。"""
         try:
             value = self.client.get(self._key(key))
         except UnicodeError:
@@ -63,6 +67,7 @@ class RedisCache:
             return None
 
     def set_json(self, key: str, value: Any, *, ttl: int | None = None) -> bool:
+        """写入可序列化的 JSON，ttl 单位为秒；连接失败时返回 False。"""
         ttl = self.default_ttl if ttl is None else ttl
         if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl <= 0:
             raise ValueError("Cache TTL must be a positive integer")
@@ -74,6 +79,7 @@ class RedisCache:
             return False
 
     def delete(self, *keys: str) -> bool:
+        """删除当前命名空间内的缓存键，连接失败时返回 False。"""
         if not keys:
             return True
         try:
@@ -84,6 +90,7 @@ class RedisCache:
             return False
 
     def probe(self) -> bool:
+        """通过 PING 检查 Redis 连接是否可用。"""
         try:
             return bool(self.client.ping())
         except RedisError as error:
@@ -91,10 +98,12 @@ class RedisCache:
             return False
 
     def close(self) -> None:
+        """关闭缓存客户端及其连接资源。"""
         self.client.close()
 
 
 def get_cache(request: Request) -> RedisCache | None:
+    """取得应用共用的缓存客户端；未启用缓存时返回 None。"""
     resources = request.app.state.resources
     return resources.cache if resources is not None else None
 

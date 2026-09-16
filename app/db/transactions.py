@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 from fastapi import HTTPException
@@ -11,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def prepare_write(session: Session, settings: Settings) -> None:
+    """为 PostgreSQL 当前写事务设置语句和锁等待超时。"""
     if session.bind.dialect.name != "postgresql":
         return
     # 只限制当前事务的语句和锁等待，不改变连接归还后的设置。
