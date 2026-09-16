@@ -55,3 +55,13 @@ Desktop.ini
 # 本地 Markdown 文档不纳入版本管理；根目录 README 是打包所需文件
 *.md
 !/README.md
+
+# 当前说明与规范随工程维护；阶段材料存放在工程外归档。
+!/README.md
+!/docs/
+/docs/*
+!/docs/AiCollabHub-代码规范.md
+!/deploy/README.md
+!/deploy/authentication.md
+!/app/modules/applications/README.md
+!/database/scenario-applications/README.md

@@ -27,7 +27,7 @@ python -m alembic upgrade head
 python -m alembic check
 ```
 
-完整迁移在 `20260915_04` 汇合身份同步与会话分表。早期独立入口使用的
+完整迁移在 `20260915_04` 汇合身份同步与会话分表，并在 `20260916_01` 兼容其他历史迁移分支。早期独立入口使用的
 `alembic_version_conversations=20260915_chat01` 保留为历史标记，完整升级会先校验
 已有会话表并保留数据，不重复搬迁。`alembic.conversations.ini` 仍可用于只接管会话表的
 历史共享库，但不会补齐平台其他模块；完整项目使用默认入口即可。

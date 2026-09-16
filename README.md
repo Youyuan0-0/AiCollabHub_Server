@@ -201,7 +201,7 @@ docker compose up -d
 
 MinIO 的 `MINIO_ROOT_*` 是容器管理账号；在控制台创建 `MINIO_BUCKET` 指定的 Bucket，并配置对应 `MINIO_ACCESS_KEY/SECRET_KEY` 应用凭据。已配置有建桶权限的账号时，也可显式运行 `verify_services --create-bucket`。已有开发服务直接填写连接信息即可，无需再次运行 Compose。
 
-用户端在 `AiCollabHub_User` 中执行 `npm ci`、`npm run build`；管理端在 `AiCollabHub_Admin` 中设置 `VITE_BASE=/admin/`、`VITE_USER_URL=/`、`VITE_API_BASE_URL=/api/v1` 后执行相同构建命令。每个项目仅部署一份 `dist`。本地使用前述 `start-local.ps1`；Linux 服务器运行 `uvicorn app.main:app --host 127.0.0.1 --port 18000 --workers <进程数> --no-access-log`，由 systemd 等进程管理器托管。
+用户端在 `AiCollabHub_User` 中设置 `VITE_ADMIN_URL=/admin/`，执行 `pnpm install --frozen-lockfile`、`pnpm build`；管理端在 `AiCollabHub_Admin` 中设置 `VITE_BASE=/admin/`、`VITE_USER_URL=/`、`VITE_API_BASE_URL=/api/v1` 后执行 `npm ci`、`npm run build`。每个项目仅部署一份 `dist`。本地使用前述 `start-local.ps1`；Linux 服务器运行 `uvicorn app.main:app --host 127.0.0.1 --port 18000 --workers <进程数> --no-access-log`，由 systemd 等进程管理器托管。
 
 Nginx 配置可用 `python -m scripts.render_nginx --nginx-root <目录> --user-dist <用户端dist> --admin-dist <管理端dist> --api-port 18000 --port 18880 --listen-host 0.0.0.0` 生成，执行 `nginx -t` 后加载。生成器在 Windows 默认使用一个 Nginx 进程，Linux 默认按 CPU 自动设置进程数，也可用 `--nginx-workers` 显式指定。每个进程允许 8192 个连接；代理请求还占用上游连接，Linux 的文件描述符限制需配套调整并压测。HTTPS 域名和证书按交付环境补充，启用 HTTPS 时同步调整认证公开地址及 Cookie 配置。该模板不包含正式证书和服务器启动托管设置。
 
@@ -271,5 +271,9 @@ FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据�
 第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
 首页附件先通过独立接口上传，发送多轮 JSON 时携带 `attachmentIds`，历史可展示和下载原文件；暂不解析或参与回答。
 会话与消息已适配 PostgreSQL 分表存储；附件原文件仍默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
-详细契约、上限、临时文件保留规则及后续附件仓库/MinIO 迁移边界见 [附件说明](ATTACHMENTS.md)。
+附件契约与保留规则见 `app/api/conversations.py` 和 `app/services/attachment_store.py`；数据库迁移不搬迁附件原文件。
 数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。
+
+## 维护说明
+
+[代码规范](docs/AiCollabHub-代码规范.md)、[单服务器部署](deploy/README.md)、[场景应用源码](app/modules/applications/README.md) 随工程维护。历史联调、交付校验和阶段材料统一移至工程外 `D:/UGit/_archive/`；`.runtime` 中保留正在使用的服务与业务数据，测试及构建产物按忽略规则管理。
