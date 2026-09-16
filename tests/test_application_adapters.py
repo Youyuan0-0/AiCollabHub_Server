@@ -20,7 +20,14 @@ def pending(service):
     return service.save(
         SaveApplicationPublication.model_validate(
             {
-                "data": {"name": "事务测试", "summary": "测试审批原子性", "owner": "测试单位"},
+                "data": {
+                    "name": "事务测试",
+                    "summary": "测试审批原子性",
+                    "owner": "测试单位",
+                    "triggerType": "手动触发",
+                    "communicationProtocol": "HTTP",
+                    "deployment": "工具链托管",
+                },
                 "submit": True,
             }
         )
@@ -83,9 +90,9 @@ def test_factory_injects_storage_and_provider_without_route_changes():
             self.calls = 0
 
         @contextmanager
-        def transaction(self):
+        def transaction(self, *, readonly=False):
             self.calls += 1
-            with self.inner.transaction() as session:
+            with self.inner.transaction(readonly=readonly) as session:
                 yield session
 
     class SuppliedProvider(DemoApplicationProvider):
@@ -129,3 +136,18 @@ def test_factory_injects_storage_and_provider_without_route_changes():
             client.get("/api/v1/admin/applications/app-qa").json()["runtime"]["sampleCount"] == 100
         )
     assert repository.calls >= 2
+
+
+def test_database_storage_starts_with_single_engine_and_reports_unsupported_database(tmp_path):
+    """场景仓储复用单库资源；不支持的数据库由接口明确报错，不能在启动时崩溃。"""
+    settings = Settings(
+        _env_file=None,
+        database_url=f"sqlite:///{tmp_path / 'unsupported.db'}",
+        applications_storage="database",
+        applications_demo_directory=str(tmp_path / "provider"),
+    )
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/v1/health/live").status_code == 200
+        response = client.get("/api/v1/applications")
+        assert response.status_code == 503
+        assert response.json()["detail"] == "application_storage_requires_postgresql"

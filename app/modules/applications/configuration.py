@@ -12,6 +12,9 @@ FIELD_LABELS = {
     "category": "应用分类",
     "owner": "所属单位",
     "contact": "联系人",
+    "developmentTeam": "开发团队",
+    "sharingAgreement": "共享协议",
+    "toolList": "工具清单",
     "summary": "应用简介",
     "tags": "关键词",
     "versionNotes": "版本说明",
@@ -29,7 +32,16 @@ FIELD_LABELS = {
     "configOptions": "配置项",
     "usageLimits": "使用限制",
 }
-CORE_FIELDS = ("name", "version", "category", "owner", "summary")
+CORE_FIELDS = (
+    "name",
+    "version",
+    "category",
+    "owner",
+    "summary",
+    "triggerType",
+    "communicationProtocol",
+    "deployment",
+)
 MANAGEMENT_COLUMNS = {
     "englishName": "英文名称",
     "category": "分类",
@@ -54,6 +66,14 @@ def default_configuration():
     }
 
 
+def effective_configuration(configuration):
+    """旧数据库配置同样遵循固定必填规则；读取时合并，不写入或重置原配置。"""
+    return {
+        **configuration,
+        "requiredFields": list(dict.fromkeys((*CORE_FIELDS, *configuration["requiredFields"]))),
+    }
+
+
 class SaveApplicationConfiguration(ApplicationPayload):
     revision: int = Field(ge=1)
     required_fields: list[str] = Field(max_length=len(FIELD_LABELS))
@@ -63,7 +83,7 @@ class SaveApplicationConfiguration(ApplicationPayload):
     @model_validator(mode="after")
     def valid_configuration(self):
         if not set(CORE_FIELDS).issubset(self.required_fields):
-            raise ValueError("应用名称、版本、分类、所属单位和简介必须保留为必填")
+            raise ValueError("应用基本资料、触发方式、通信协议和部署方式必须保留为必填")
         if (
             set(self.required_fields) - FIELD_LABELS.keys()
             or set(self.field_hints) - FIELD_LABELS.keys()
@@ -84,6 +104,7 @@ class SaveApplicationConfiguration(ApplicationPayload):
 
 
 def configuration_view(configuration: dict, *, public=False):
+    configuration = effective_configuration(configuration)
     result = {
         "revision": configuration["revision"],
         "categories": list(APPLICATION_CATEGORIES),
@@ -106,7 +127,10 @@ def configuration_view(configuration: dict, *, public=False):
     return result
 
 
-def validate_submission(data: dict, configuration: dict):
+def validate_submission(data: dict, configuration: dict, *, frozen=False):
+    # 新提交使用最新固定规则，既有待审核申请仍按当时冻结的规则检查。
+    if not frozen:
+        configuration = effective_configuration(configuration)
     missing = [FIELD_LABELS[key] for key in configuration["requiredFields"] if not data.get(key)]
     if missing:
         raise HTTPException(422, "请填写" + "、".join(missing))

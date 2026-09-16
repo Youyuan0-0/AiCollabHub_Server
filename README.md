@@ -12,7 +12,7 @@
 
 后端在后续请求中检查会话有效性；前端在路由切换、获得焦点和可见页面每 30 秒的检查中更新显示。账号状态的后台变化尚未通过实时推送通知浏览器。
 
-场景应用业务使用单实例临时存储，可演示发布、审核、同步和调用等流程；这部分不连接数据库或供应方，认证模块按独立配置启用。
+场景应用支持两种存储方式：`memory` 为单实例临时演示，`database` 将平台自己的关联、权限、互动、审核补充项、消息和操作记录写入 PostgreSQL 的 8 张场景表。供应方目录、草稿、版本、发布和调用仍为开发模拟；认证模块按独立配置启用。
 
 启用 `AUTH_MODE=mock` 时，`require_business_identity()` 校验会话及写请求的 CSRF，并把可信身份交给 `SessionIdentityProvider`。场景应用据此保存发布者和审核者标识，用户端和管理端分别读取 `/application-session` 与 `/admin/application-session`。此时关闭演示账号切换，不使用演示组织或项目替代尚未接入的 IAM 归属信息。`AUTH_MODE=disabled` 时继续使用原有演示账号。
 
@@ -52,7 +52,7 @@ scripts/                 启停、连接验证和备份工具
 tests/                   框架、Mock 契约及基础设施适配器测试
 ```
 
-模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。样例 JSON 按领域存放，读取时复制。场景应用由 `application_service.py` 处理业务规则、`memory_repository.py` 在每个 worker 内暂存新增状态，`ports.py` 定义后续数据库/供应方替换合同。该模块的发布审核状态尚未跨进程共享，完整流程演示需使用 `-Workers 1`，重启后重置；正式业务需接入持久化仓储。认证、身份同步、看板及对话历史已通过数据库在 worker 间共享。
+模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。场景应用由 `application_service.py` 处理业务规则，`database_repository.py` 组合平台表和开发用外部资料快照，`ports.py` 定义业务存储和供应方适配边界。`memory_repository.py` 保留独立内存演示，该模式需使用 `-Workers 1`，重启后重置。数据库模式在 worker 间共享平台业务记录；认证、身份同步、看板及对话历史也通过同一数据库共享。
 
 ## 本地开发
 
@@ -78,6 +78,17 @@ py -3.13 -m venv .venv
 
 所有本地配置统一放在项目根目录 `.env`，包括 `POSTGRES_*`、`REDIS_*`、`MINIO_*` 和 `AUTH_*`；数据库和 Redis 支持分项账号密码，兼容显式连接 URL，显式 URL 优先。`.env.example` 是可提交的配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
 
+场景应用使用已创建的表时，在 `.env` 设置：
+
+```dotenv
+APPLICATIONS_STORAGE=database
+APPLICATIONS_DEMO_DIRECTORY=D:/UGit/AiCollabHub_Server/.runtime/application-marketplace-demo
+```
+
+目录按实际机器调整；同机各 worker 须指向同一绝对路径及数据库。数据库模式复用单库连接池，读写均访问同一数据库，不自动建表，不把缺表或连接失败降级为内存成功。新环境需先执行场景建表 SQL；已建环境不可重复执行。配置在后端下次启动时读取，已有内存演示记录不会自动迁移。
+
+外部模拟资料单独保存在上述目录，数据库仅保存引用和本地业务数据。模拟快照是开发持久化的一部分，清空目录会导致已有模拟草稿/版本无法读取；SQL 回滚可能留下未被引用的快照，不会提前发布。该方式支持同机重启及多进程共享，不代表不同服务器已共享外部资料。真实接入仍需 HiMarket/Agent Dev 适配及联调，不能只换地址。
+
 集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。配置 PostgreSQL、执行迁移并构建两套前端后，可使用以下脚本启动认证联调；生成器统一更新根目录 `.env`，保留已有服务凭据和联调密钥。
 
 ```powershell
@@ -99,7 +110,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 ## HTTP Mock 契约
 
-默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，开发/测试环境另带 `X-App-Worker` 便于验证进程间会话共享。样例业务接口带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。认证开关控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
+默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，开发/测试环境另带 `X-App-Worker` 便于验证进程间会话共享。样例业务接口带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。场景数据库模式另标记 `X-Data-Mode: development`、`X-Application-Storage: postgresql`，`X-Application-Provider` 随配置为 `simulation` 或 `agent_dev`。认证开关控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
 
 | 路由 | 当前行为 |
 | --- | --- |
@@ -108,8 +119,8 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用 PostgreSQL 会话表与消息表持久化 |
 | `/conversations/{id}/attachments`、`/conversations/{id}/attachments/{attachmentId}/content` | 上传原文件、按会话权限下载；独立临时文件仓库 |
 | `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
-| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交审核；内存暂存 |
-| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入同实例的应用目录 |
+| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交模拟审核；按存储模式保存 |
+| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入模拟目录；数据库模式持久化本地评分和操作 |
 | `GET /admin/applications` 及详情、`PUT .../{id}/visibility` | 应用管理与有效的范围限制；关闭登录时用预置身份，启用后复用公共会话 |
 | `GET /admin/application-review-queue` | 管理端审核查询、状态筛选、分页及数量 |
 | `GET /application-form-configuration`、`GET/PUT /admin/application-configuration` | 表单必填和提示配置、管理列配置；提交校验与页面生效 |
@@ -120,7 +131,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化；登录开启时新会话按用户隔离，旧共享样例保留。
 
-场景应用的专用发布/审核接口在当前实例内保存跨请求状态，浏览器刷新仍可查询，服务重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。目录模块文件只传文件名、大小等元信息；会话附件支持原文件上传与下载，暂不解析或参与回答。场景应用在 HTTP 模式下按账号保存收藏、订阅和评分；其他目录收藏仍是本机演示状态。后续关联表设计见 `database/scenario-applications/schema.sql`。
+场景应用在数据库模式下保留刷新、重启后的平台业务记录，目录 GET 不会自动把样例导入数据库；内存模式仍在重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。目录模块文件只传文件名、大小等元信息；会话附件支持原文件上传与下载，暂不解析或参与回答。场景应用按账号保存收藏、关注新版和评分；其他目录收藏仍是本机演示状态。场景表结构见 `database/scenario-applications/schema.sql`。
 
 这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
 
@@ -128,17 +139,17 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 
 | 能力 | 项目已有内容 | 当前边界 |
 | --- | --- | --- |
-| PostgreSQL | 单一连接池入口、请求级会话、显式事务、本机持久化提交 | 看板、会话、认证与身份同步持久化；其余 Mock 业务不持久化 |
+| PostgreSQL | 单一连接池入口、请求级会话、显式事务、本机持久化提交 | 看板、会话、认证、身份同步及启用后的场景数据库模式持久化 |
 | Redis | 共享客户端、环境前缀、TTL、失败按未命中处理、Compose 模板 | 开发环境可配置真实服务；尚未实现完整业务缓存 |
 | MinIO | 对象上传、读取、删除、大小检查、连接回收 | 基础适配器及服务探测；没有业务文件 API |
 | Web 入口 | 各一份前端静态资源、单个 API 端口与多个 worker | worker 数量按 CPU、连接池和压测结果确定；不自动重试代理请求 |
 | 备份 | 数据库逻辑备份和隔离恢复；指定对象前缀备份及新桶恢复 | 不依赖已移除的业务表；定时独立备份尚未部署 |
 
-所有读写使用 `SessionDependency`，业务服务显式提交。每个 worker 独立建立连接池，数据库最大应用连接数为 `workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)`，另外预留迁移、运维和备份连接。2 万在线用户不对应 2 万条数据库连接，具体容量需按请求类型、耗时与缓存命中率压测。
+路由使用 `SessionDependency`，场景仓储从同一引擎建立独立事务，业务服务显式提交。每个 worker 独立建立连接池，数据库最大应用连接数为 `workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)`，另外预留迁移、运维和备份连接。2 万在线用户不对应 2 万条数据库连接，具体容量需按请求类型、耗时与缓存命中率压测。
 
 应用、迁移及恢复连接使用 `synchronous_commit=local`，等待本机 WAL 落盘后确认提交。显式写事务使用 `DB_STATEMENT_TIMEOUT_MS` 限制语句耗时，锁等待上限为 3 秒；提交遇到断连仍可能返回 `commit_outcome_unknown`，不能直接认定已回滚或盲目重试。身份同步已按事件编号处理幂等，其他正式业务按领域补齐。
 
-`CacheDependency` 未配置时返回 `None`，传输失败按缓存未命中处理；`StorageDependency` 未配置返回 503。适配器均为同步实现，应使用同步路由或工作线程。健康检查会实际访问服务；数据库看板、会话和认证也访问数据库，其余页面样例不会。
+`CacheDependency` 未配置时返回 `None`，传输失败按缓存未命中处理；`StorageDependency` 未配置返回 503。适配器均为同步实现，应使用同步路由或工作线程。健康检查会实际访问服务；数据库看板、会话、认证和场景数据库模式也访问数据库。
 
 ## 数据库迁移
 
@@ -150,9 +161,9 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后认证兼容标记与会话分表在 `20260915_merge01` 汇合，身份同步及补表分支到达 `20260915_03`。最终由 `20260915_04` 汇合为唯一 head，保留双方已使用的版本号，无需手工 stamp。
+基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后认证兼容标记与会话分表在 `20260915_merge01` 汇合，身份同步及补表分支到达 `20260915_03`，由 `20260915_04` 汇合。场景分支已有的 `20260915_merge02` 汇合身份同步 `20260915_02` 和 `20260915_merge01`。最终 `20260916_01` 将两个分支汇合为唯一 head，保留已有版本号，无需手工 stamp。
 
-历史认证迁移可执行 `alembic upgrade 20260915_01 --sql` 生成离线 SQL；会话数据搬迁需要读取旧记录，因此完整 `alembic upgrade head` 必须在线执行。`20260915_04` 校验会话表结构，并清理补表分支可能重新创建的空旧表；若新旧表同时存在且旧表有数据，则中止并保留记录供核对。
+历史认证与身份同步迁移可执行 `alembic upgrade 20260915_02 --sql` 生成离线 SQL；会话数据搬迁需要读取旧记录，因此完整 `alembic upgrade head` 必须在线执行。`20260915_04` 校验会话表结构，并清理补表分支可能重新创建的空旧表；若新旧表同时存在且旧表有数据，则中止并保留记录供核对。
 
 最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
 
@@ -161,6 +172,21 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 `20260915_02` 在此之后增加身份状态、角色授权和同步回执三表，并为会话的用户标识增加索引。回退该版本不删除已有登录会话或业务数据。
 
 `20260915_03` 补齐部分历史库遗漏的 `demo_conversations` 表，不修改已有会话、认证或身份同步数据。历史迁移编号继续保留，保证已有数据库可直接升级。
+
+两个分支曾各自提供 `20260915_02`；当前统一保留 `20260915_02_identity_sync.py`，三张身份表结构一致。`20260916_01` 为另一分支的旧库补齐 `ix_auth_session_subject` 索引，已有索引时跳过，不重建身份表。若较早版本的库已手工创建同名身份表，应先核对来源和结构，不能直接 stamp 跳过。该兼容迁移不表示已接入真实 IAM。
+
+`database/migration-alignment-20260915.json` 保留旧分支的历史核对记录，其中脚本路径、摘要及主备状态均指当时版本，不代表当前部署方式或最新迁移状态。本次冲突处理不对共享业务库执行升级。
+
+场景 8 表及 2 视图由独立 `database/scenario-applications/schema.sql` 管理，既有部署记录见该目录的 `deployment-result.json`。新库的 `alembic upgrade head` 不会创建场景表；后续纳入迁移链时须兼容已建结构，不能重复 CREATE 或用 stamp 冒充执行。
+
+`20260915_chat01` 将旧 `demo_conversations` JSON 搬迁为 `conversations` 和
+`conversation_messages`，保留会话/消息编号、所属用户、顺序、附件元信息及删除标记。
+合并后的完整项目统一使用默认 `alembic upgrade head`。早期通过
+`alembic.conversations.ini` 独立迁移过的数据库也能直接汇入完整迁移链，
+已有会话表先校验结构再接管，保留 `alembic_version_conversations` 历史标记。
+分项 `POSTGRES_*` 配置已支持，完整 `DATABASE_URL` 优先。单库会话复验入口为
+`python -m scripts.verify_conversations_postgresql --env .env`。
+配置、表结构与迁移边界见 [首页会话 PostgreSQL 说明](deploy/conversations-postgresql.md)。
 
 ## 单服务器部署
 
@@ -180,15 +206,6 @@ MinIO 的 `MINIO_ROOT_*` 是容器管理账号；在控制台创建 `MINIO_BUCKE
 Nginx 配置可用 `python -m scripts.render_nginx --nginx-root <目录> --user-dist <用户端dist> --admin-dist <管理端dist> --api-port 18000 --port 18880 --listen-host 0.0.0.0` 生成，执行 `nginx -t` 后加载。生成器在 Windows 默认使用一个 Nginx 进程，Linux 默认按 CPU 自动设置进程数，也可用 `--nginx-workers` 显式指定。每个进程允许 8192 个连接；代理请求还占用上游连接，Linux 的文件描述符限制需配套调整并压测。HTTPS 域名和证书按交付环境补充，启用 HTTPS 时同步调整认证公开地址及 Cookie 配置。该模板不包含正式证书和服务器启动托管设置。
 
 数据库备份使用 `python -m scripts.backup_database --directory <备份目录> --pg-bin <PostgreSQL工具目录>`，工具版本需兼容数据库服务器；加 `--restore-check` 会创建全新的恢复验证库并核对各表行数，需要建库权限。MinIO 备份使用 `scripts/backup_objects.py`，对象恢复到新的 Bucket。备份计划、保留期限和机外副本由部署时配置，单服务器本机副本无法覆盖整机损坏。
-
-后续 `20260915_chat01` 将旧 `demo_conversations` JSON 搬迁为 `conversations` 和
-`conversation_messages`，保留会话/消息编号、所属用户、顺序、附件元信息及删除标记。
-合并后的完整项目统一使用默认 `alembic upgrade head`。早期通过
-`alembic.conversations.ini` 独立迁移过的数据库也能直接汇入完整迁移链，
-已有会话表先校验结构再接管，保留 `alembic_version_conversations` 历史标记。
-分项 `POSTGRES_*` 配置已支持，完整 `DATABASE_URL` 优先。单库会话复验入口为
-`python -m scripts.verify_conversations_postgresql --env .env`。
-配置、表结构与迁移边界见 [首页会话 PostgreSQL 说明](deploy/conversations-postgresql.md)。
 
 ## 验证
 
@@ -241,6 +258,8 @@ Python 测试覆盖单库配置、提交异常、缓存和对象客户端、各�
 `tests/test_identity_sync.py` 覆盖模拟接口与事务；`tests/test_identity_sync_postgresql.py` 仅在显式提供 `IDENTITY_SYNC_TEST_DATABASE_URL` 时运行，使用可写 PostgreSQL，在随机独立 Schema 中验证重复推送、乱序、批次回滚，以及登录与停用的双向并发顺序，完成后清理该 Schema。
 
 本地网关的浏览器联调可设置 `VERIFY_IDENTITY_SYNC=1` 后运行 `node scripts/verify_auth_browser.mjs`，在原有登录验证上增加管理员撤权、旧推送拦截、双端停用和重新登录检查。该模式会临时变更模拟管理员的状态，验证结束后恢复可用；密钥只在验证进程使用。
+
+`test_application_database_storage.py` 另有 10 项数据库集成测试，覆盖重启、重提历史、权限/配置共享、审核回滚、通知、运行/下载/同步去重、缺表报错和中断请求。只允许显式指定的本机 `55491` 端口 PGlite 隔离实例；测试会校验引擎并重置该实例，未配置时跳过，不读取项目远端连接。2026-09-15 在隔离实例下全套 **240 项通过**；PGlite 的多连接测试不等于真实 PostgreSQL 并发容量验证。另在远端真实表验证写入与新仓储读取，使用外层事务全部回滚，未提交测试业务记录。
 
 ## 数据库看板与多轮会话
 

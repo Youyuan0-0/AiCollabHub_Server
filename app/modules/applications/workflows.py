@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from time import perf_counter
 
 from fastapi import HTTPException
@@ -36,7 +37,7 @@ class ApplicationWorkflows:
     def policy(self, actor=None, payload=None):
         if actor:
             require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=payload is None) as session:
             current = self.policy_in(session)
             if payload:
                 if actor.role != "admin":
@@ -49,9 +50,14 @@ class ApplicationWorkflows:
                 ):
                     raise HTTPException(422, "推荐应用或热门分类不存在")
                 current = {**payload.model_dump(by_alias=True), "revision": current["revision"] + 1}
+                current["updatedBy"] = actor.id
                 session.put_entry("policy", "current", current)
             if actor:
-                return current
+                return {
+                    key: value
+                    for key, value in current.items()
+                    if key not in ("updatedBy", "updatedAt")
+                }
             return {
                 key: current[key]
                 for key in (
@@ -94,21 +100,24 @@ class ApplicationWorkflows:
     def validate_security(self, session, data, security_level):
         if security_level == "confidential":
             raise HTTPException(422, "当前发布通道不接收涉密资料，请调整密级或走专用审批通道")
-        text = json.dumps(data, ensure_ascii=False).casefold()
-        if any(term.casefold() in text for term in self.policy_in(session)["sensitiveTerms"]):
+        from app.modules.applications.precheck import sensitive_errors
+
+        if sensitive_errors(data, self.policy_in(session)["sensitiveTerms"]):
             raise HTTPException(422, "资料命中发布拦截词，请检查并修改后提交")
 
     def quality(self, record, actor):
         require_admin(actor)
         if not can_manage(actor, record):
             raise HTTPException(403, "只能审核本单位的申请")
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             checks = []
             for label, check in (
                 (
                     "必填与分类",
                     lambda: validate_submission(
-                        record["data"], record.get("submissionRules", session.get_configuration())
+                        record["data"],
+                        record.get("submissionRules", session.get_configuration()),
+                        frozen="submissionRules" in record,
                     ),
                 ),
                 (
@@ -144,7 +153,7 @@ class ApplicationWorkflows:
             }
 
     def interaction(self, application_id, actor, payload=None):
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=payload is None) as session:
             resource = self.public_resource(session, application_id, actor)
             key = f"{actor.id}:{application_id}"
             value = session.entry("interactions", key) or {
@@ -185,7 +194,7 @@ class ApplicationWorkflows:
             }
 
     def ratings(self, application_id, actor):
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             self.public_resource(session, application_id, actor)
             return [
                 {
@@ -199,7 +208,7 @@ class ApplicationWorkflows:
             ]
 
     def activity(self, actor):
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             available = {
                 item["id"]: item
                 for item in session.list_resources()
@@ -260,7 +269,7 @@ class ApplicationWorkflows:
             key = f"{actor.id}:{application_id}:{request_id}"
             previous = session.entry("downloads", key)
             if previous:
-                return previous
+                return {name: previous[name] for name in ("filename", "content", "downloadedAt")}
             data = ApplicationDetails.model_validate(
                 {
                     field.alias or name: resource[field.alias or name]
@@ -277,16 +286,30 @@ class ApplicationWorkflows:
             resource["downloadCount"] += 1
             resource["lastDownloadedAt"] = value["downloadedAt"]
             session.put_resource(resource)
-            session.put_entry("downloads", key, value)
+            session.put_entry(
+                "downloads",
+                key,
+                {
+                    **value,
+                    "actorId": actor.id,
+                    "applicationId": application_id,
+                    "requestId": request_id,
+                    "versionId": resource["versionId"],
+                },
+            )
             return value
 
     def run(self, application_id, actor, payload):
+        mode = getattr(self.provider, "mode", "simulation")
         key = f"{actor.id}:{application_id}:{payload.request_id}"
-        fingerprint = json.dumps(
-            payload.model_dump(exclude={"request_id"}), sort_keys=True, ensure_ascii=False
+        serialized = json.dumps(
+            {**payload.model_dump(exclude={"request_id"}), "mode": mode},
+            sort_keys=True,
+            ensure_ascii=False,
         )
-        if len(fingerprint) > 60000:
+        if len(serialized) > 60000:
             raise HTTPException(422, "输入内容过长")
+        fingerprint = sha256(serialized.encode()).hexdigest()
         with self.repository.transaction() as session:
             resource = self.public_resource(session, application_id, actor)
             previous = session.entry("runs", key)
@@ -294,6 +317,8 @@ class ApplicationWorkflows:
                 if previous["fingerprint"] != fingerprint:
                     raise HTTPException(409, "同一请求编号不能用于不同输入")
                 return self.run_view(previous)
+            if hasattr(self.provider, "binding"):
+                self.provider.binding(resource)
             self.validate_security(
                 session, {"input": payload.input, "options": payload.options}, "internal"
             )
@@ -318,7 +343,7 @@ class ApplicationWorkflows:
                 "output": None,
                 "error": "",
                 "durationMs": None,
-                "mode": "simulation",
+                "mode": mode,
             }
             session.put_entry("runs", key, record)
         started = perf_counter()
@@ -327,6 +352,8 @@ class ApplicationWorkflows:
                 resource, payload.input, payload.options, payload.simulate_failure
             )
             record.update(status="succeeded", output=output)
+        except HTTPException as error:
+            record.update(status="failed", error=str(error.detail))
         except Exception:
             record.update(status="failed", error="服务调用失败，可以重新发起；本次失败已记录")
         record.update(
@@ -366,14 +393,14 @@ class ApplicationWorkflows:
             if not inputs:
                 raise HTTPException(422, "请填写应用输入")
             return
-        from jsonschema import Draft202012Validator
         from referencing import Registry
 
+        from app.modules.applications.schema_validation import parse_schema
+
         try:
-            schema = json.loads(schema_text)
-            Draft202012Validator.check_schema(schema)
+            schema, validator_class = parse_schema(schema_text)
             # 不读取任何远程引用，避免应用元数据触发任意网络访问。
-            validator = Draft202012Validator(schema, registry=Registry())
+            validator = validator_class(schema, registry=Registry())
             errors = list(validator.iter_errors(inputs))
             if errors:
                 raise HTTPException(422, "输入不符合应用格式：" + errors[0].message[:300])
@@ -385,17 +412,19 @@ class ApplicationWorkflows:
             ) from None
 
     def runtime(self, application_id):
-        with self.repository.transaction() as session:
+        mode = getattr(self.provider, "mode", "simulation")
+        with self.repository.transaction(readonly=True) as session:
             completed = [
                 item
                 for item in session.entries("runs")
                 if item["applicationId"] == application_id
+                and item.get("mode", "simulation") == mode
                 and item["status"] in ("succeeded", "failed")
             ]
         if not completed:
             return None
         return {
-            "status": "simulation",
+            "status": mode,
             "averageResponseMs": round(
                 sum(item["durationMs"] for item in completed) / len(completed), 1
             ),
@@ -410,7 +439,18 @@ class ApplicationWorkflows:
             raise HTTPException(403, "当前账号不能导入工具链应用")
         key = f"{actor.id}:{payload.request_id}"
         binding_key = f"demo-toolchain:{payload.external_id}"
-        fingerprint = f"{payload.external_id}:{payload.external_version}:{payload.simulate_failure}"
+        fingerprint = sha256(
+            json.dumps(
+                {
+                    "externalId": payload.external_id,
+                    "externalVersion": payload.external_version,
+                    "simulateFailure": payload.simulate_failure,
+                    "mode": "simulation",
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
         with self.repository.transaction() as session:
             existing = session.entry("syncs", key)
             if existing:
@@ -422,6 +462,7 @@ class ApplicationWorkflows:
                 "actorId": actor.id,
                 "organizationId": actor.organization_id,
                 "source": "demo-toolchain",
+                "workspace": "demo",
                 "externalId": payload.external_id,
                 "externalVersion": payload.external_version,
                 "createdAt": now(),
@@ -436,6 +477,7 @@ class ApplicationWorkflows:
             if payload.simulate_failure:
                 raise HTTPException(502, "模拟工具链暂时不可用，请重试")
             source = self.provider.toolchain_resource(payload.external_id, payload.external_version)
+            job["workspace"] = source["workspace"]
             with self.repository.transaction() as session:
                 binding = session.entry("bindings", binding_key)
                 if binding:
@@ -471,6 +513,7 @@ class ApplicationWorkflows:
                                 data=ApplicationDetails.model_validate(source["data"])
                             ),
                             actor=actor,
+                            base_resource=resource,
                         )
                         for field in (
                             "createdBy",
@@ -480,9 +523,6 @@ class ApplicationWorkflows:
                         ):
                             if field in resource:
                                 record[field] = resource[field]
-                        record.update(
-                            applicationId=resource["id"], baseVersionId=resource["versionId"]
-                        )
                         self.service._validate_version(session, record["data"], record)
                     else:
                         raise HTTPException(409, "工具链绑定的应用状态异常，请管理员检查")
@@ -536,7 +576,7 @@ class ApplicationWorkflows:
     def syncs(self, actor, admin=False):
         if admin:
             require_admin(actor)
-        with self.repository.transaction() as session:
+        with self.repository.transaction(readonly=True) as session:
             return sorted(
                 [
                     item

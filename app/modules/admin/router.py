@@ -76,9 +76,11 @@ def application_visibility(
     payload: ApplicationVisibility,
     request: Request,
 ):
-    return application_service(request).visibility(
-        application_id, payload, current_actor(request, True)
-    )
+    from app.modules.applications.identity_directory import validate_visibility_targets
+
+    actor = current_actor(request, True)
+    validate_visibility_targets(request, actor, payload)
+    return application_service(request).visibility(application_id, payload, actor)
 
 
 @router.get("/application-review-queue")
@@ -98,4 +100,4 @@ def application_configuration(request: Request):
 def save_application_configuration(payload: SaveApplicationConfiguration, request: Request):
     if current_actor(request, True).role != "admin":
         raise HTTPException(403, "只有系统管理员可以修改表单配置")
-    return application_service(request).configuration(payload)
+    return application_service(request).configuration(payload, actor=current_actor(request, True))
