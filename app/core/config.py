@@ -92,11 +92,13 @@ class Settings(BaseSettings):
     auth_mode: Literal["disabled", "mock"] = "disabled"
     auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
     auth_mock_iam_url: AnyHttpUrl = "http://127.0.0.1:18002"
+    # 容器间验证与注销通知可走内网；浏览器跳转始终使用上方公网来源。
+    auth_internal_origin: AnyHttpUrl | None = None
+    auth_mock_iam_internal_url: AnyHttpUrl | None = None
     auth_mock_secret: SecretStr | None = None
     auth_cookie_secure: bool = False
     auth_session_ttl: int = Field(default=28800, ge=60, le=86400)
     auth_login_ttl: int = Field(default=300, ge=30, le=600)
-    auth_audit_retention_days: int = Field(default=90, ge=1)
     auth_mock_admin_subjects: list[str] = ["mock-admin"]
 
     @model_validator(mode="after")
@@ -161,7 +163,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_authentication(self) -> Settings:
         """检查认证模式、回调地址与模拟凭据的环境约束。"""
-        for url in (self.auth_public_origin, self.auth_mock_iam_url):
+        for url in (
+            self.auth_public_origin,
+            self.auth_mock_iam_url,
+            self.auth_internal_origin,
+            self.auth_mock_iam_internal_url,
+        ):
+            if url is None:
+                continue
             if (
                 url.username
                 or url.password
@@ -208,6 +217,8 @@ class Settings(BaseSettings):
         "applications_agent_key",
         "applications_agent_bindings",
         "applications_identity_directory",
+        "auth_internal_origin",
+        "auth_mock_iam_internal_url",
         mode="before",
     )
     @classmethod

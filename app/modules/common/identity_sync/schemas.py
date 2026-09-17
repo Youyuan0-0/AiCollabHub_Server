@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from typing import Annotated, Literal, cast
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Subject = Annotated[str, Field(min_length=1, max_length=200, pattern=r"^[^\s\x00-\x1f\x7f]+$")]
-EventId = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")]
 
 
 class SyncModel(BaseModel):
@@ -15,10 +15,21 @@ class SyncModel(BaseModel):
 
 
 class UserChange(SyncModel):
-    """单个身份的状态变化，不包含角色授权或个人敏感资料。"""
+    """集团最小用户资料变化；Mock 状态推送可不携带姓名。"""
 
     subject: Subject
     status: Literal["active", "disabled", "deleted"]
+    display_name: Annotated[str | None, Field(min_length=1, max_length=100)] = Field(
+        default=None, alias="displayName"
+    )
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: str | None) -> str | None:
+        """拒绝空白姓名，不让已验证批次在数据库约束阶段才失败。"""
+        if value is not None and not value.strip():
+            raise ValueError("displayName cannot be blank")
+        return value
 
 
 class RoleChange(SyncModel):
@@ -33,11 +44,10 @@ class RoleChange(SyncModel):
 class SyncBatch(SyncModel):
     """同一资源类型的有界事件批次，使用源版本处理重试和乱序。"""
 
-    event_id: EventId = Field(alias="eventId")
     app_id: Literal["platform"] = Field(alias="appId")
     resource_type: Literal["user", "userlinkedrole"] = Field(alias="resType")
     action: Literal["push", "recycle"]
-    # 同步源提供的单调版本；模拟器采用毫秒时间戳，服务端不使用到达时间排序。
+    # 原样保存 IAM syncTime；正式接口的重试保值约定尚待联调确认。
     sync_time: Annotated[int, Field(strict=True, gt=0, le=9223372036854775807)] = Field(
         alias="syncTime"
     )
@@ -56,15 +66,13 @@ class SyncBatch(SyncModel):
 
 
 class SyncResult(SyncModel):
-    """同步事件的处理统计和重复标记，对外保持既有小驼峰字段。"""
+    """返回可查询的回执编号，不重复持久化统计或假定存在集团事件编号。"""
 
-    event_id: str = Field(alias="eventId")
+    receipt_id: UUID = Field(alias="receiptId")
+    result_code: Literal[200] = Field(default=200, alias="resultCode")
+    result_msg: str = Field(default="success", alias="resultMsg")
     resource_type: str = Field(alias="resType")
     sync_time: int = Field(alias="syncTime")
-    applied: int
-    ignored: int
-    unchanged: int
-    revoked_sessions: int = Field(alias="revokedSessions")
     duplicate: bool = False
 
 

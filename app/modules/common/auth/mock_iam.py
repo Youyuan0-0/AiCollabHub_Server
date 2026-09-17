@@ -55,6 +55,9 @@ def create_mock_iam(
     challenges: dict[str, float] = {}
     lock = Lock()
     origin = str(settings.auth_public_origin).rstrip("/")
+    notification_origin = str(settings.auth_internal_origin or settings.auth_public_origin).rstrip(
+        "/"
+    )
     iam_origin = str(settings.auth_mock_iam_url).rstrip("/")
     secret = settings.auth_mock_secret.get_secret_value()
 
@@ -234,7 +237,7 @@ def create_mock_iam(
                 )
                 try:
                     response = client.post(
-                        origin + "/api/v1/auth/single-logout",
+                        notification_origin + "/api/v1/auth/single-logout",
                         data={"logoutRequest": xml},
                         headers={"X-Mock-IAM-Key": secret},
                     )

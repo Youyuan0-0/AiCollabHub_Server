@@ -1,21 +1,23 @@
-from http.cookies import SimpleCookie
+from datetime import timedelta
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
+from auth_resources import auth_resources_factory
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.db.base import Base
 from app.main import create_app
+from app.modules.common.auth import login_state, service
 from app.modules.common.auth import router as auth_router
-from app.modules.common.auth import service
 from app.modules.common.auth.cas import IAMUnavailable, MockCasClient
 from app.modules.common.auth.mock_iam import PREFIX, create_mock_iam
-from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthSession
+from app.modules.common.auth.models import AuthSession, OperationLog, User, UserRole
 from app.modules.common.auth.security import csrf_token, digest
 
 SECRET = "test-only-secret-with-at-least-32-characters"
@@ -33,12 +35,20 @@ def auth(tmp_path):
     )
     engine = create_engine(settings.database_url.get_secret_value())
     Base.metadata.create_all(engine)
+    resources = auth_resources_factory()
     cas = MockCasClient(settings)
     cas.client.close()
     with (
-        TestClient(create_app(settings, cas_client=cas), follow_redirects=False) as a,
         TestClient(
-            create_app(settings.model_copy(update={"instance_id": "B"}), cas_client=cas),
+            create_app(settings, cas_client=cas, resources_factory=resources),
+            follow_redirects=False,
+        ) as a,
+        TestClient(
+            create_app(
+                settings.model_copy(update={"instance_id": "B"}),
+                cas_client=cas,
+                resources_factory=resources,
+            ),
             follow_redirects=False,
         ) as b,
         TestClient(
@@ -155,11 +165,11 @@ def test_cross_instance_callback_session_and_business_csrf(auth):
     assert b.get(callback).headers["location"].startswith("/login?error=login_request_expired")
     with Session(engine) as db:
         values = db.scalars(select(AuthSession)).all()
-        assert len(values) == 1 and values[0].subject == "mock-user"
+        assert len(values) == 1 and values[0].user.iam_subject == "mock-user"
         assert values[0].token_hash == digest(a.cookies.get("ach_session"))
-        assert values[0].scope == "platform"
+        assert values[0].record_type == "session"
         assert values[0].ticket_hash != parse_qs(urlsplit(callback).query)["ticket"][0]
-        assert db.scalar(select(AuthEventLog).where(AuthEventLog.result == "success")) is not None
+        assert db.scalar(select(OperationLog).where(OperationLog.action == "login")) is not None
 
 
 @pytest.mark.parametrize(
@@ -184,10 +194,13 @@ def test_callback_requires_browser_binding_and_live_state(auth):
     a, b, iam, engine = auth
     callback = begin(a, iam)
     assert "login_request_expired" in b.get(callback).headers["location"]
-    with Session(engine) as db:
-        assert db.scalar(select(AuthLoginRequest)).consumed_at is None
-        db.execute(update(AuthLoginRequest).values(expires_at=service.now() - 1))
-        db.commit()
+    cache = a.app.state.resources.cache
+    state = parse_qs(urlsplit(callback).query)["state"][0]
+    key = f"{cache.namespace}:auth:login:{digest(state)}"
+    assert cache.client.exists(key) == 1
+    assert cache.client.ttl(key) > 0
+    # 删除表示 TTL 到期；错误浏览器先到不能消费状态，缺失状态必须重新登录。
+    cache.client.delete(key)
     assert "login_request_expired" in a.get(callback).headers["location"]
     assert a.get("/api/v1/auth/session").status_code == 401
 
@@ -208,7 +221,12 @@ def test_local_logout_and_expiry_are_shared(auth, scope):
     assert b.get("/api/v1/auth/session?scope=admin").status_code == 401
     login(a, iam, subject="mock-admin", scope=scope)
     with Session(engine) as db:
-        db.execute(update(AuthSession).values(expires_at=service.now() - 1))
+        db.execute(
+            update(AuthSession).values(
+                created_at=service.now() - timedelta(hours=1),
+                expires_at=service.now() - timedelta(seconds=1),
+            )
+        )
         db.commit()
     assert a.get("/api/v1/datasets").status_code == 401
     assert a.get("/api/v1/admin/feedback").status_code == 401
@@ -340,7 +358,7 @@ def test_ticket_expiry_and_provider_failure_do_not_establish_sessions(auth, monk
     monkeypatch.setattr(a.app.state.cas_client, "validate", unavailable)
     assert "iam_unavailable" in a.get(callback).headers["location"]
     with Session(engine) as db:
-        assert db.scalar(select(AuthSession).where(AuthSession.subject.is_not(None))) is None
+        assert db.scalar(select(AuthSession).where(AuthSession.user_id.is_not(None))) is None
 
 
 def test_uncertain_commit_never_returns_a_session_cookie(auth, monkeypatch):
@@ -353,7 +371,7 @@ def test_uncertain_commit_never_returns_a_session_cookie(auth, monkeypatch):
         nonlocal commits
         commits += 1
         real_commit(db)
-        if commits == 2:
+        if commits == 1:
             raise HTTPException(503, "commit_outcome_unknown")
 
     monkeypatch.setattr(auth_router, "commit_write", commit_then_lose_confirmation)
@@ -396,51 +414,22 @@ def test_one_login_covers_both_frontends_and_instances(auth, entry_scope):
     assert len(tokens) == 1
     with Session(engine) as db:
         assert len(db.scalars(select(AuthSession)).all()) == 1
-        assert len(db.scalars(select(AuthLoginRequest)).all()) == 1
+    assert a.app.state.resources.cache.client.dbsize() == 0
     # 显式切换账号仍创建新的登录请求。
     response = a.get("/api/v1/auth/login?scope=admin&renew=true")
     assert response.headers["location"].startswith("http://iam.test/")
 
 
-def legacy_session(engine, client, scope, subject="mock-admin", created_at=None):
-    raw = f"legacy-test-token-{scope}-{subject}"
-    created = created_at if created_at is not None else service.now() - 60
-    with Session(engine) as db:
-        db.add(
-            AuthSession(
-                token_hash=digest(raw),
-                ticket_hash=digest("ST-" + raw),
-                scope=scope,
-                subject=subject,
-                display_name=subject,
-                created_at=created,
-                expires_at=created + 600,
-            )
-        )
-        db.commit()
-    client.cookies.set("ach_session_" + scope, raw, domain="testserver.local", path="/api")
-    return raw
-
-
-@pytest.mark.parametrize("old_scope", ["user", "admin"])
-def test_existing_login_is_promoted_without_extending_expiry(auth, old_scope):
-    a, b, _, engine = auth
-    raw = legacy_session(engine, a, old_scope)
-    b.cookies.update(a.cookies)
-    response = a.get("/api/v1/auth/session?scope=admin")
-    assert response.status_code == 200
-    assert a.cookies.get("ach_session") == raw
-    assert "HttpOnly" in response.headers["set-cookie"]
-    cookies = SimpleCookie(response.headers["set-cookie"])
-    assert 0 < int(cookies["ach_session"]["max-age"]) <= 540
-    assert a.get("/api/v1/auth/session").json()["expiresAt"] == response.json()["expiresAt"]
-    redirect = b.get("/api/v1/auth/login?scope=user&return_to=/datasets")
-    assert redirect.headers["location"] == "/datasets"
-    assert b.cookies.get("ach_session") == raw
-    assert a.post("/api/v1/auth/logout?global_logout=false", headers=csrf(a)).status_code == 200
-    assert not any(name.startswith("ach_session") for name in a.cookies)
-    b.cookies.delete("ach_session")
-    assert b.get("/api/v1/auth/session").status_code == 401
+@pytest.mark.parametrize("old_cookie", ["ach_session_user", "ach_session_admin"])
+def test_old_entry_cookies_are_not_valid_login_credentials(auth, old_cookie):
+    a, b, iam, _ = auth
+    login(a, iam, subject="mock-admin")
+    b.cookies.set(old_cookie, a.cookies.get("ach_session"), domain="testserver.local", path="/api")
+    for scope in ("user", "admin"):
+        assert b.get(f"/api/v1/auth/session?scope={scope}").status_code == 401
+    login(b, iam)
+    assert old_cookie not in b.cookies
+    assert b.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user"
 
 
 @pytest.mark.parametrize("shared_state", ["expired", "revoked", "missing", "malformed"])
@@ -448,11 +437,12 @@ def test_invalid_shared_session_never_falls_back_to_legacy(auth, shared_state):
     a, _, iam, engine = auth
     login(a, iam, subject="mock-admin")
     raw = a.cookies.get("ach_session")
-    legacy_session(engine, a, "admin")
+    a.cookies.set("ach_session_admin", raw, path="/api")
     with Session(engine) as db:
-        value = db.get(AuthSession, digest(raw))
+        value = service.session_by_token(db, raw)
         if shared_state == "expired":
-            value.expires_at = service.now() - 1
+            value.created_at = service.now() - timedelta(hours=1)
+            value.expires_at = service.now() - timedelta(seconds=1)
         elif shared_state == "revoked":
             value.revoked_at = service.now()
         elif shared_state == "missing":
@@ -465,40 +455,8 @@ def test_invalid_shared_session_never_falls_back_to_legacy(auth, shared_state):
         assert a.get(f"/api/v1/auth/session?scope={scope}").status_code == 401
 
 
-def test_legacy_identities_must_agree_and_cannot_be_elevated_by_cookie_name(auth):
-    a, b, _, engine = auth
-    raw = legacy_session(engine, a, "user", subject="mock-user")
-    legacy_session(engine, a, "admin")
-    for scope in ("user", "admin"):
-        assert a.get(f"/api/v1/auth/session?scope={scope}").status_code == 401
-    b.cookies.set("ach_session_admin", raw, path="/api")
-    assert b.get("/api/v1/auth/session?scope=admin").status_code == 401
-    b.cookies.clear()
-    b.cookies.set("ach_session_user", raw, path="/api")
-    assert b.get("/api/v1/auth/session?scope=admin").status_code == 403
-
-
-@pytest.mark.parametrize("action", ["logout", "renew"])
-def test_logout_and_account_switch_revoke_all_presented_legacy_sessions(auth, action):
-    a, _, iam, engine = auth
-    raw_user = legacy_session(engine, a, "user", created_at=service.now() - 120)
-    raw_admin = legacy_session(engine, a, "admin")
-    headers = csrf(a)
-    assert a.cookies.get("ach_session") == raw_admin
-    if action == "logout":
-        assert a.post("/api/v1/auth/logout?global_logout=false", headers=headers).status_code == 200
-    else:
-        login(a, iam, subject="mock-user")
-        assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user"
-    assert not any(name in a.cookies for name in service.LEGACY_SESSION_COOKIES)
-    with Session(engine) as db:
-        assert all(
-            db.get(AuthSession, digest(raw)).revoked_at is not None for raw in (raw_user, raw_admin)
-        )
-
-
 def test_shared_session_keeps_csrf_and_current_admin_checks(auth):
-    a, _, iam, _ = auth
+    a, _, iam, engine = auth
     login(a, iam, subject="mock-admin")
     headers = csrf(a)
     for invalid in (
@@ -507,9 +465,71 @@ def test_shared_session_keeps_csrf_and_current_admin_checks(auth):
     ):
         assert a.post("/api/v1/auth/logout?scope=admin", headers=invalid).status_code == 403
     assert a.get("/api/v1/auth/session?scope=admin").status_code == 200
-    a.app.state.settings.auth_mock_admin_subjects = []
+    with Session(engine) as db:
+        user = db.scalar(select(User).where(User.iam_subject == "mock-admin"))
+        user.role, user.role_sync_time = UserRole.USER, 1
+        db.commit()
     assert a.get("/api/v1/auth/session?scope=admin").status_code == 403
     assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is False
     login(a, iam, subject="mock-user")
     assert a.post("/api/v1/auth/logout", headers=headers).status_code == 403
     assert csrf(a)["X-CSRF-Token"] == csrf_token(a.cookies.get("ach_session"), SECRET)
+
+
+def test_wrong_browser_cannot_consume_another_browsers_state(auth):
+    a, b, iam, _ = auth
+    callback = begin(a, iam)
+    assert "login_request_expired" in b.get(callback).headers["location"]
+    assert a.get(callback).headers["location"] == "/datasets"
+    assert a.get("/api/v1/auth/session").status_code == 200
+
+
+def test_redis_failure_prevents_new_login_but_keeps_existing_session(auth, monkeypatch):
+    a, b, iam, _ = auth
+    login(a, iam)
+    iam.cookies.clear()
+    callback = begin(b, iam)
+    client = a.app.state.resources.cache.client
+
+    def unavailable(*args, **kwargs):
+        raise RedisConnectionError("test failure")
+
+    monkeypatch.setattr(client, "set", unavailable)
+    monkeypatch.setattr(client, "eval", unavailable)
+    assert b.get("/api/v1/auth/login?renew=true").status_code == 503
+    assert b.get(callback).status_code == 503
+    assert b.get("/api/v1/auth/session").status_code == 401
+    assert a.get("/api/v1/auth/session").status_code == 200
+    assert a.get("/api/v1/auth/login?return_to=/models").headers["location"] == "/models"
+
+
+def test_failed_login_is_only_in_system_logs(auth, caplog):
+    a, _, iam, engine = auth
+    with caplog.at_level("INFO", logger=service.__name__):
+        response = login(a, iam, scope="admin")
+    assert "admin_not_allowed" in response.headers["location"]
+    assert "admin_not_allowed" in caplog.text
+    with Session(engine) as db:
+        assert db.scalar(select(OperationLog)) is None
+        assert db.scalar(select(AuthSession)) is None
+
+
+def test_redis_state_consumption_is_atomic(auth):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    a, _, iam, _ = auth
+    callback = begin(a, iam)
+    state = parse_qs(urlsplit(callback).query)["state"][0]
+    cache = a.app.state.resources.cache
+    key = f"{cache.namespace}:auth:login:{digest(state)}"
+    browser = digest(a.cookies.get("ach_login_user"))
+    barrier = Barrier(2)
+
+    def consume():
+        barrier.wait(timeout=5)
+        return cache.client.eval(login_state.CONSUME_LOGIN, 1, key, browser, "user")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: consume(), range(2)))
+    assert sum(value is not None for value in results) == 1

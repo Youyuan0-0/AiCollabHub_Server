@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy import bindparam, func, select, text
 
 from app.modules.applications.database_values import iso
+from app.modules.common.auth.models import User
 
 logger = logging.getLogger(__name__)
 SNAPSHOT_WARNING = "部分应用资料暂时无法读取，当前仅显示可用应用，请联系管理员恢复缺失资料。"
@@ -120,12 +121,9 @@ class DatabaseCatalogReader:
             else:
                 names = dict(
                     session.db.execute(
-                        text(
-                            "SELECT DISTINCT ON (subject) subject, display_name FROM auth_session "
-                            "WHERE subject IN :subjects AND display_name IS NOT NULL "
-                            "ORDER BY subject, created_at DESC"
-                        ).bindparams(bindparam("subjects", expanding=True)),
-                        {"subjects": sorted(subjects)},
+                        select(User.iam_subject, User.display_name).where(
+                            User.iam_subject.in_(subjects), User.display_name.is_not(None)
+                        )
                     ).all()
                 )
         for application_id in ids:

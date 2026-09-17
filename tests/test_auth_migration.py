@@ -7,6 +7,15 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from legacy_auth_models import (
+    AuthEventLog,
+    AuthLoginRequest,
+    AuthSession,
+    IdentityRole,
+    IdentityState,
+    IdentitySyncReceipt,
+    check_historical,
+)
 from sqlalchemy import (
     Boolean,
     Column,
@@ -24,8 +33,6 @@ from sqlalchemy.orm import Session
 
 from app.db.conversations import Conversation, StoredConversationMessage
 from app.db.overview import OverviewSnapshot
-from app.modules.common.auth.models import AuthEventLog, AuthLoginRequest, AuthSession
-from app.modules.common.identity_sync.models import IdentityRole, IdentityState, IdentitySyncReceipt
 from app.schemas.conversations import ConversationRecord
 from app.services.conversation_store import SqlConversationStore
 
@@ -40,16 +47,16 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
         connection.execute(text("INSERT INTO unrelated_history (id) VALUES (1)"))
     config = Config(str(project / "alembic.ini"))
     config.set_main_option("script_location", str(project / "migrations"))
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
     assert {"auth_session", "auth_login_request", "auth_event_log"}.issubset(
         inspect(engine).get_table_names()
     )
-    command.check(config)
+    check_historical(engine)
     command.downgrade(config, "20260913_01")
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT id FROM unrelated_history")) == 1
     assert "auth_session" not in inspect(engine).get_table_names()
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
     engine.dispose()
 
 
@@ -72,7 +79,7 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
     ],
 )
 def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch, legacy_revision):
-    """两个分支的旧库均可直接 upgrade head，不能跳过看板或重建已有认证数据。"""
+    """两个分支的旧库均可升级到历史汇合点，不能跳过看板或重建已有认证数据。"""
     project = Path(__file__).resolve().parents[1]
     url = f"sqlite:///{tmp_path / 'legacy.db'}"
     monkeypatch.setenv("DATABASE_URL", url)
@@ -181,7 +188,7 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
             with Session(engine) as session:
                 SqlConversationStore(session).save(record, expected_version=None)
         has_conversation = bool({"demo_conversations", "conversations"} & existing)
-        command.upgrade(config, "head")
+        command.upgrade(config, "20260916_01")
         assert {table.name for table in tables}.issubset(inspect(engine).get_table_names())
         assert {Conversation.__tablename__, StoredConversationMessage.__tablename__}.issubset(
             inspect(engine).get_table_names()
@@ -193,11 +200,11 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
             )
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260917_01"
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260916_01"
             )
             for table, rows in preserved.items():
                 assert connection.execute(select(table)).mappings().all() == rows
-        command.check(config)
+        check_historical(engine)
         # 回退先将会话重新打包为旧 JSON，同时保留全部认证与看板记录。
         command.downgrade(config, "20260914_03")
         assert {table.name for table in tables}.issubset(inspect(engine).get_table_names())
@@ -208,14 +215,14 @@ def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch,
                 payload = connection.scalar(select(old.c.payload).where(old.c.id == record.id))
                 assert ConversationRecord.model_validate_json(payload) == record
         # 重复升级不重建数据；回退认证不应删除前序看板或会话。
-        command.upgrade(config, "head")
-        command.check(config)
+        command.upgrade(config, "20260916_01")
+        check_historical(engine)
         command.downgrade(config, "20260914_02")
         assert {"overview_snapshots", "demo_conversations"}.issubset(
             inspect(engine).get_table_names()
         )
-        command.upgrade(config, "head")
-        command.check(config)
+        command.upgrade(config, "20260916_01")
+        check_historical(engine)
     finally:
         engine.dispose()
 
@@ -242,8 +249,8 @@ def test_repair_migration_restores_missing_conversations_without_losing_sessions
                     expires_at=9999999999,
                 )
             )
-        command.upgrade(config, "head")
-        command.check(config)
+        command.upgrade(config, "20260916_01")
+        check_historical(engine)
         assert "demo_conversations" not in inspect(engine).get_table_names()
         record = ConversationRecord(
             id="repaired-chat",
@@ -262,7 +269,7 @@ def test_repair_migration_restores_missing_conversations_without_losing_sessions
                 text("SELECT payload FROM demo_conversations WHERE id = 'repaired-chat'")
             )
             assert ConversationRecord.model_validate_json(payload) == record
-        command.upgrade(config, "head")
+        command.upgrade(config, "20260916_01")
         with engine.connect() as connection:
             assert connection.scalar(select(AuthSession.subject)) == "existing-user"
         with Session(engine) as session:
@@ -276,7 +283,7 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260917_01"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["20260917_auth01"]
     command.upgrade(config, "20260915_02", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):
@@ -363,14 +370,14 @@ def test_global_upgrade_adopts_independent_conversations_and_preserves_identity(
         )
         with Session(engine) as session:
             SqlConversationStore(session).save(record, expected_version=None)
-        command.upgrade(shared, "head")
-        command.upgrade(shared, "head")
-        command.check(shared)
+        command.upgrade(shared, "20260916_01")
+        command.upgrade(shared, "20260916_01")
+        check_historical(engine)
         command.check(module)
         assert "demo_conversations" not in inspect(engine).get_table_names()
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260917_01"
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260916_01"
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version_conversations"))
@@ -395,7 +402,7 @@ def test_merge_validation_uses_frozen_schema_instead_of_future_orm(tmp_path, mon
         future_table = Conversation.__table__.to_metadata(MetaData())
         future_table.append_column(Column("future_feature", Text))
         monkeypatch.setattr(Conversation, "__table__", future_table)
-        command.upgrade(config, "head")
+        command.upgrade(config, "20260916_01")
         assert "future_feature" not in {
             column["name"] for column in inspect(engine).get_columns("conversations")
         }
@@ -433,7 +440,7 @@ def test_merge_does_not_discard_legacy_data_when_both_stores_exist(tmp_path, mon
                 )
             )
         with pytest.raises(RuntimeError, match="Ambiguous conversation tables"):
-            command.upgrade(config, "head")
+            command.upgrade(config, "20260916_01")
         with engine.connect() as connection:
             assert connection.scalar(select(old.c.payload)) == '{"preserved":true}'
         with Session(engine) as session:
@@ -508,7 +515,7 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
                     )
                 )
     command.stamp(config, "20260914_02" if legacy == "conversations" else "20260914_01")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
     assert {
         "overview_snapshots",
         "conversations",
@@ -522,6 +529,6 @@ def test_merge_upgrades_both_existing_branches_without_losing_data(tmp_path, mon
         if legacy == "conversations":
             # 新迁移将旧 JSON 搬到关系表，原有会话编号仍然可读。
             assert connection.scalar(text("SELECT id FROM conversations")) == "existing-chat"
-    command.check(config)
-    command.upgrade(config, "head")
+    check_historical(engine)
+    command.upgrade(config, "20260916_01")
     engine.dispose()

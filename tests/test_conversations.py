@@ -14,11 +14,12 @@ from app.schemas.conversations import ChatReply
 
 
 @pytest.fixture
-def conversation_settings(tmp_path, monkeypatch):
+def conversation_settings(tmp_path, monkeypatch, request):
     """通过正式迁移准备独立测试库，不触碰用户已有开发记录。"""
     url = f"sqlite:///{(tmp_path / 'conversations.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", url)
-    command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
+    target = "20260914_03" if request.node.name == "test_legacy_record_and_stale_update" else "head"
+    command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), target)
     return Settings(
         app_env="test",
         database_url=url,
@@ -181,7 +182,6 @@ def test_legacy_record_and_stale_update(conversation_settings):
     engine = create_engine(conversation_settings.database_url.get_secret_value())
     try:
         config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-        command.downgrade(config, "20260914_03")
         legacy = Table("demo_conversations", MetaData(), autoload_with=engine)
         with engine.begin() as connection:
             connection.execute(

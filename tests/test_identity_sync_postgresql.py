@@ -6,12 +6,13 @@ from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
+from auth_resources import auth_resources_factory
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
-from test_auth import SECRET, begin
+from test_auth import SECRET, begin, csrf, login
 from test_identity_sync import batch, push
 from test_identity_sync import (
     test_conflicting_batch_rolls_back_state_revocations_and_receipt as check_rollback,
@@ -24,8 +25,9 @@ from app.main import create_app
 from app.modules.common.auth import router as auth_router
 from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.mock_iam import create_mock_iam
+from app.modules.common.auth.models import AuthSession, OperationLog, User
 from app.modules.common.identity_sync import service
-from app.modules.common.identity_sync.models import IdentityState, IdentitySyncReceipt
+from app.modules.common.identity_sync.models import IamSyncReceipt
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("IDENTITY_SYNC_TEST_DATABASE_URL"),
@@ -58,10 +60,18 @@ def postgres_auth():
         Base.metadata.create_all(engine)
         cas = MockCasClient(settings)
         cas.client.close()
+        resources = auth_resources_factory()
         with (
-            TestClient(create_app(settings, cas_client=cas), follow_redirects=False) as a,
             TestClient(
-                create_app(settings.model_copy(update={"instance_id": "B"}), cas_client=cas),
+                create_app(settings, cas_client=cas, resources_factory=resources),
+                follow_redirects=False,
+            ) as a,
+            TestClient(
+                create_app(
+                    settings.model_copy(update={"instance_id": "B"}),
+                    cas_client=cas,
+                    resources_factory=resources,
+                ),
                 follow_redirects=False,
             ) as b,
             TestClient(
@@ -101,16 +111,16 @@ def test_postgresql_concurrent_duplicate_and_out_of_order_events(postgres_auth):
         ]
         assert all(future.result(timeout=20).status_code == 200 for future in futures)
     with Session(engine) as db:
-        identity = db.get(IdentityState, "mock-user")
-        assert identity.status == "disabled" and identity.sync_time == 102
-        receipts = db.scalars(select(IdentitySyncReceipt)).all()
+        identity = db.scalar(select(User).where(User.iam_subject == "mock-user"))
+        assert identity.status == "disabled" and identity.user_sync_time == 102
+        receipts = db.scalars(select(IamSyncReceipt)).all()
         assert len(receipts) == 3
-        assert db.get(IdentitySyncReceipt, value["eventId"]).attempts == 2
+        assert len(db.scalars(select(OperationLog).where(OperationLog.action == "sync")).all()) == 2
 
 
 @pytest.mark.parametrize("first", ["login", "sync"])
 def test_postgresql_login_and_disable_serialize_on_the_identity(postgres_auth, monkeypatch, first):
-    a, b, iam, _ = postgres_auth
+    a, b, iam, engine = postgres_auth
     assert push(b, batch(version=1)).status_code == 200
     callback = begin(a, iam)
     locked, release, contender_started = Event(), Event(), Event()
@@ -150,9 +160,63 @@ def test_postgresql_login_and_disable_serialize_on_the_identity(postgres_auth, m
         assert "ach_session" not in a.cookies
     else:
         assert login_response.headers["location"] == "/datasets"
-        assert sync_response.json()["revokedSessions"] == 1
+        with Session(engine) as db:
+            assert db.scalar(select(AuthSession)).revoked_at is not None
     assert a.get("/api/v1/auth/session").status_code == 401
 
 
 def test_postgresql_failed_batch_rolls_back_the_whole_transaction(postgres_auth):
     check_rollback(postgres_auth)
+
+
+def test_postgresql_concurrent_logout_writes_one_success_log(postgres_auth):
+    a, b, iam, engine = postgres_auth
+    login(a, iam)
+    b.cookies.update(a.cookies)
+    headers = csrf(a)
+    barrier = Barrier(2)
+
+    def logout(client):
+        barrier.wait(timeout=10)
+        return client.post("/api/v1/auth/logout?global_logout=false", headers=headers)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(logout, (a, b)))
+    assert all(response.status_code == 200 for response in responses)
+    with Session(engine) as db:
+        assert (
+            len(db.scalars(select(OperationLog).where(OperationLog.action == "logout")).all()) == 1
+        )
+
+
+def test_postgresql_first_logins_share_one_user_identity(postgres_auth, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.modules.common.auth.cas import Principal
+
+    a, b, _, engine = postgres_auth
+    callbacks = []
+    for suffix, client in (("a", a), ("b", b)):
+        response = client.get("/api/v1/auth/login")
+        callback = parse_qs(urlsplit(response.headers["location"]).query)["service"][0]
+        callbacks.append(callback + "&ticket=ST-first-" + suffix)
+    monkeypatch.setattr(
+        a.app.state.cas_client, "validate", lambda *args: Principal("first-user", "首次登录")
+    )
+    barrier = Barrier(2)
+
+    def finish(pair):
+        client, callback = pair
+        barrier.wait(timeout=10)
+        return client.get(callback)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(finish, zip((a, b), callbacks, strict=True)))
+    assert all(
+        response.status_code == 303 and response.headers["location"] == "/"
+        for response in responses
+    )
+    with Session(engine) as db:
+        user = db.scalars(select(User)).one()
+        sessions = db.scalars(select(AuthSession)).all()
+        assert len(sessions) == 2 and all(session.user_id == user.id for session in sessions)

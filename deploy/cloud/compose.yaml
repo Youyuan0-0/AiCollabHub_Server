@@ -1,0 +1,110 @@
+name: aicollabhub-app
+
+x-common: &common
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=32m,mode=1777"]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  api:
+    <<: *common
+    image: aicollabhub-api:${RELEASE_TAG:?Set RELEASE_TAG in .env}
+    env_file: app.env
+    command: [python, -m, uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --workers, "2", --proxy-headers, --forwarded-allow-ips, "*", --no-access-log]
+    mem_limit: 512m
+    pids_limit: 160
+    volumes: [./data:/data]
+    networks: [app, services]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+
+  mock-iam:
+    <<: *common
+    image: aicollabhub-api:${RELEASE_TAG:?Set RELEASE_TAG in .env}
+    env_file: iam.env
+    # 模拟票据保存在单进程内，IAM 不得启用多个 worker。
+    command: [python, -m, uvicorn, "app.modules.common.auth.mock_iam:create_mock_iam", --factory, --host, 0.0.0.0, --port, "18002", --no-access-log]
+    mem_limit: 160m
+    pids_limit: 64
+    networks: [app]
+    healthcheck:
+      test: [CMD, python, -c, "import httpx; assert httpx.get('http://127.0.0.1:18002/', timeout=3).status_code == 404"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  admin:
+    <<: *common
+    image: aicollabhub-admin:${RELEASE_TAG:?Set RELEASE_TAG in .env}
+    mem_limit: 48m
+    pids_limit: 32
+    networks: [app]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  user:
+    <<: *common
+    image: aicollabhub-user:${RELEASE_TAG:?Set RELEASE_TAG in .env}
+    ports: ["${HTTP_PORT:-80}:8080"]
+    mem_limit: 64m
+    pids_limit: 32
+    networks: [app]
+    depends_on:
+      api: {condition: service_healthy}
+      mock-iam: {condition: service_healthy}
+      admin: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  migrate:
+    image: aicollabhub-api:${RELEASE_TAG:?Set RELEASE_TAG in .env}
+    profiles: [maintenance]
+    env_file: [app.env, migration.env]
+    command:
+      - python
+      - -m
+      - alembic
+      - -x
+      - auth_archive_dir=/backups/auth
+      - -x
+      - auth_mock_admin_subjects=${AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS:-}
+      - upgrade
+      - head
+    mem_limit: 256m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    # 旧认证数据必须先归档；显式创建私有目录，避免自动生成 root 属主目录。
+    volumes:
+      - type: bind
+        source: ./backups/auth
+        target: /backups/auth
+        bind:
+          create_host_path: false
+    networks: [services]
+
+networks:
+  app:
+  services:
+    external: true
+    name: ${SERVICES_NETWORK:-aicollabhub-cloud-dev_services}

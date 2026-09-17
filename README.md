@@ -169,13 +169,13 @@ PostgreSQL 14+ 的新应用连接设置 `DB_IDLE_SESSION_TIMEOUT=120`（秒）�
 .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
 ```
 
-基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后认证兼容标记与会话分表在 `20260915_merge01` 汇合，身份同步及补表分支到达 `20260915_03`，由 `20260915_04` 汇合。场景分支已有的 `20260915_merge02` 汇合身份同步 `20260915_02` 和 `20260915_merge01`。最终 `20260916_01` 将两个分支汇合为唯一 head，保留已有版本号，无需手工 stamp。
+基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后认证兼容标记与会话分表在 `20260915_merge01` 汇合，身份同步及补表分支到达 `20260915_03`，由 `20260915_04` 汇合。场景分支已有的 `20260915_merge02` 汇合身份同步 `20260915_02` 和 `20260915_merge01`。`20260916_01` 将两个分支汇合，后续反馈及认证四表迁移在此基础上继续，保留已有版本号，无需手工 stamp。
 
 历史认证与身份同步迁移可执行 `alembic upgrade 20260915_02 --sql` 生成离线 SQL；会话数据搬迁需要读取旧记录，因此完整 `alembic upgrade head` 必须在线执行。`20260915_04` 校验会话表结构，并清理补表分支可能重新创建的空旧表；若新旧表同时存在且旧表有数据，则中止并保留记录供核对。
 
 最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
 
-认证三表为 `auth_session`、`auth_login_request`、`auth_event_log`。自动生成迁移会跳过仅在数据库中反射出来、未在当前模型中登记的表，避免误删历史测试表；确需删除表时手工编写并审核迁移。
+`20260917_01` 在 `20260916_01` 之后创建反馈模块三表；`20260917_auth01` 接在反馈迁移之后，将旧认证/同步六表合并为 `users`、`auth_sessions`、`operation_logs`、`iam_sync_receipts`，登录临时上下文改存 Redis。非空旧库迁移必须先完整备份并指定归档目录，详见 [认证升级与恢复](deploy/authentication.md#升级与恢复)。数据库包含仓库缺失的迁移版本时先补齐来源，不允许 stamp 回退。自动生成迁移继续跳过未在当前 ORM 登记的其他业务表。
 
 `20260915_02` 在此之后增加身份状态、角色授权和同步回执三表，并为会话的用户标识增加索引。回退该版本不删除已有登录会话或业务数据。
 
@@ -236,19 +236,20 @@ Python 测试覆盖单库配置、提交异常、缓存和对象客户端、各�
 
 | 表 | 保存内容 |
 | --- | --- |
-| `iam_identity_state` | 与 CAS 身份一致的 `subject`、账号状态、用户状态源版本和更新时间 |
-| `iam_identity_role` | `subject`、平台角色码、授权或撤权状态、该角色的源版本 |
-| `iam_sync_receipt` | 事件编号、内容摘要、处理数量、重试次数和接收时间，不保存完整推送原文 |
+| `users` | 平台 UUID、唯一 `iam_subject`、姓名、状态、`user/admin` 角色、用户/角色同步时间及创建/更新时间 |
+| `auth_sessions` | 关联用户 UUID 的共享会话、令牌/票据摘要、期限及撤销状态；包含提前登出票据标记 |
+| `operation_logs` | 成功操作的发起方、动作、对象、请求 UUID 及受控摘要；失败进入系统日志 |
+| `iam_sync_receipts` | 回执 UUID、规范化业务摘要、资源类型、动作、IAM `syncTime` 和本地创建时间 |
 
-没有姓名、手机号、工号映射、完整人员档案或组织树。角色首次推送前沿用模拟管理员名单；一旦收到该角色的授权或撤权记录，数据库结果优先。用户状态尚未推送时，允许已通过模拟 IAM 验票的账号登录，此兼容规则不适用于尚未实现的生产认证。
+只保存最小用户资料，不保存完整人员档案或组织树。首次模拟登录可按配置初始化管理员；已同步的授权或撤权优先，后续权限校验读取用户表。角色先到时创建 `pending` 用户，不能单凭角色事件激活。尚无状态同步且通过模拟 IAM 验票时才允许激活，此规则不适用于尚未实现的正式认证。资料、状态和角色变化时更新 `updated_at`，重复推送或仅推进同步时间不刷新它。
 
-请求包含 `eventId`、`appId=platform`、`resType`、`action`、`syncTime` 和最多 100 条 `data`，报文上限 64 KiB。用户事件使用 `resType=user`，每项为 `subject` 与 `status=active/disabled/deleted`；角色事件使用 `resType=userlinkedrole`，每项为 `subject`、内部能力码 `roleCode=platform_admin` 和 `status=authorized/unauthorized`。`action=recycle` 强制停用账号或撤销该角色，不受报文中原状态影响。`syncTime` 是源版本，模拟发送器默认使用毫秒时间戳；用户状态和角色各自比较版本，不用请求到达时间排序。
+请求包含 `appId=platform`、`resType`、`action`、`syncTime` 和最多 100 条 `data`，报文上限 64 KiB，不再要求或接受假设的 `eventId`。用户事件使用 `resType=user`，每项为 `subject`、`status=active/disabled/deleted` 和可选 `displayName`；角色事件使用 `resType=userlinkedrole`，每项为 `subject`、内部能力码 `roleCode=platform_admin` 和 `status=authorized/unauthorized`。`action=recycle` 强制停用账号或撤销该角色，不受报文中原状态影响。`syncTime` 原样保存，模拟发送器使用毫秒时间戳；正式协议单位待确认。用户与角色分别比较来源时间，不用请求到达顺序排序。
 
-相同 `eventId` 和内容重试时返回已有回执并标记 `duplicate=true`，统计数量仍指原事件；更换内容返回 409 `sync_event_conflict`。旧版本计入 `ignored`；相同版本且状态相同计入 `unchanged`，状态冲突返回 409 `sync_version_conflict`。批次内任一冲突会整体回滚，状态、会话撤销和回执不会部分生效。未知用户的停用或撤权也保留状态记录，防止迟到的旧推送重新启用。
+按已校验的业务字段规范化 JSON 并计算 SHA-256 去重：对象键排序、数组顺序保留，不包含密钥或 HTTP 请求编号。相同报文返回同一 `receiptId` 并标记 `duplicate=true`。旧时间戳忽略，同时间戳同内容不变，同时间戳内容冲突返回 409 `sync_version_conflict`。批次内任一冲突整体回滚，用户、会话撤销、成功日志和回执不会部分生效。未知用户的停用或撤权也保留状态及来源时间，防止迟到推送恢复权限。
 
 停用、注销或回收用户会撤销该用户全部平台会话，并阻止再次登录；之后重新启用必须重新登录，旧会话不会恢复。撤销管理员角色立即限制后续管理端请求，保留用户端会话；两端通过现有会话检查更新界面。登录回调和同步推送锁定同一身份行，避免停用之后迟到的回调重新建立会话。已在停用提交前通过权限检查的在途业务请求不在本轮强制中止范围内。
 
-成功响应在单库事务提交后返回。若收到 503 `commit_outcome_unknown` 或连接中断，使用同一事件文件重试；重试按已持久化的事件回执去重。`GET /api/v1/auth/mock/identity-sync/{eventId}` 使用同一来源密钥查询回执，可用于确认处理结果。
+成功响应在单库事务提交后返回，字段为 `receiptId/resultCode/resultMsg/resType/syncTime/duplicate`，不重复持久化处理统计。若收到 503 `commit_outcome_unknown` 或连接中断，用同一业务报文和 `syncTime` 重试。已获得编号时可通过 `GET /api/v1/auth/mock/identity-sync/{receiptId}` 查询，来源密钥要求相同。
 
 本地模拟推送命令会先将不含密钥的事件保存至忽略的 `.runtime/identity-sync/`，再使用根目录 `.env` 的配置发送：
 
@@ -257,7 +258,7 @@ Python 测试覆盖单库配置、提交异常、缓存和对象客户端、各�
 .\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-user --status active
 .\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-admin --resource userlinkedrole --status unauthorized
 .\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-admin --resource userlinkedrole --status authorized
-# 失败重试必须使用原事件文件，不重新生成版本和事件编号：
+# 失败重试必须使用原业务报文，不重新生成 syncTime：
 .\.venv\Scripts\python.exe -m scripts.mock_identity_sync --retry <上次输出的事件文件路径>
 ```
 

@@ -1,132 +1,160 @@
 import hashlib
 import json
-import time
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.db.transactions import commit_write, prepare_write
-from app.modules.common.auth.models import AuthSession
+from app.modules.common.auth.models import (
+    ActorType,
+    AuthSession,
+    OperationAction,
+    OperationTarget,
+    SessionRecordType,
+    User,
+    UserRole,
+    UserStatus,
+    utc_now,
+)
+from app.modules.common.auth.service import write_operation
 from app.modules.common.identity_sync.access import insert_missing, lock_identity
-from app.modules.common.identity_sync.models import IdentityRole, IdentityState, IdentitySyncReceipt
+from app.modules.common.identity_sync.models import IamSyncReceipt
 from app.modules.common.identity_sync.schemas import RoleChange, SyncBatch, SyncResult, UserChange
 
+logger = logging.getLogger(__name__)
 
-def result_for(receipt: IdentitySyncReceipt, *, is_duplicate: bool = False) -> SyncResult:
-    """将已保存回执转换为响应；重复请求沿用原处理统计。"""
+
+def result_for(receipt: IamSyncReceipt, *, is_duplicate: bool = False) -> SyncResult:
+    """回执证明事务已提交，重复推送复用编号但不重复更新。"""
     return SyncResult(
-        event_id=receipt.event_id,
+        receipt_id=receipt.id,
         resource_type=receipt.resource_type,
         sync_time=receipt.sync_time,
-        applied=receipt.applied,
-        ignored=receipt.ignored,
-        unchanged=receipt.unchanged,
-        revoked_sessions=receipt.revoked_sessions,
         duplicate=is_duplicate,
     )
 
 
-def compare_version(previous: int, incoming: int, is_same_value: bool) -> str:
-    """按源版本识别过期、重复或新变化；相同版本携带不同值时拒绝处理。"""
+def payload_hash(batch: SyncBatch) -> str:
+    """规范化已校验业务字段，数组保留原顺序，不包含传输认证或请求编号。"""
+    canonical = json.dumps(
+        batch.model_dump(mode="json", by_alias=True),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def compare_version(previous: int | None, incoming: int, is_same_value: bool) -> str:
+    """拒绝同时间戳内容冲突，忽略更旧推送，不使用本地到达顺序。"""
+    if previous is None or incoming > previous:
+        return "applied"
     if incoming < previous:
         return "ignored"
-    if incoming == previous:
-        if not is_same_value:
-            raise HTTPException(409, "sync_version_conflict")
-        return "unchanged"
-    return "applied"
+    if not is_same_value:
+        raise HTTPException(409, "sync_version_conflict")
+    return "unchanged"
 
 
-def apply_user(
-    db: Session, identity: IdentityState, change: UserChange, batch: SyncBatch
-) -> tuple[str, int]:
-    """应用较新的用户状态，停用或删除时在同一事务内撤销已有会话。"""
-    status = "disabled" if batch.action == "recycle" else change.status
-    outcome = compare_version(identity.sync_time, batch.sync_time, identity.status == status)
+def apply_user(db: Session, user: User, change: UserChange, batch: SyncBatch) -> tuple[bool, int]:
+    """更新资料和状态；较新同步时间始终保存，实际信息变化才刷新更新时间。"""
+    status = UserStatus.DISABLED if batch.action == "recycle" else UserStatus(change.status)
+    display_name = change.display_name if change.display_name is not None else user.display_name
+    is_same = user.status == status and user.display_name == display_name
+    outcome = compare_version(user.user_sync_time, batch.sync_time, is_same)
     revoked = 0
     if outcome == "applied":
-        identity.status, identity.sync_time = status, batch.sync_time
-        identity.updated_at = int(time.time())
-        if status != "active":
-            revoked = db.execute(
-                update(AuthSession)
-                .where(
-                    AuthSession.subject == identity.subject,
-                    AuthSession.revoked_at.is_(None),
-                )
-                .values(revoked_at=int(time.time()))
-            ).rowcount
-    return outcome, revoked
+        user.user_sync_time = batch.sync_time
+        if not is_same:
+            user.status, user.display_name, user.updated_at = status, display_name, utc_now()
+        if status != UserStatus.ACTIVE:
+            revoked = len(
+                db.execute(
+                    update(AuthSession)
+                    .where(
+                        AuthSession.user_id == user.id,
+                        AuthSession.record_type == SessionRecordType.SESSION,
+                        AuthSession.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=utc_now())
+                    .returning(AuthSession.id)
+                ).all()
+            )
+    return outcome == "applied" and not is_same, revoked
 
 
-def apply_role(db: Session, identity: IdentityState, change: RoleChange, batch: SyncBatch) -> str:
-    """按角色源版本更新授权；撤销管理员角色不撤销普通用户会话。"""
-    grant = db.get(IdentityRole, (identity.subject, change.role_code))
-    is_authorized = batch.action == "push" and change.status == "authorized"
-    outcome = compare_version(
-        grant.sync_time if grant else 0,
-        batch.sync_time,
-        grant.authorized == is_authorized if grant else False,
+def apply_role(user: User, change: RoleChange, batch: SyncBatch) -> bool:
+    """更新指定管理员授权，角色推送不得激活待确认或停用用户。"""
+    role = (
+        UserRole.ADMIN
+        if batch.action == "push" and change.status == "authorized"
+        else UserRole.USER
     )
+    is_same = user.role == role
+    outcome = compare_version(user.role_sync_time, batch.sync_time, is_same)
     if outcome == "applied":
-        if grant is None:
-            grant = IdentityRole(subject=identity.subject, role_code=change.role_code)
-            db.add(grant)
-        grant.authorized, grant.sync_time = is_authorized, batch.sync_time
-        grant.updated_at = int(time.time())
-    # 撤管理员角色只收回管理端权限，普通用户端的有效会话仍可使用。
-    return outcome
+        user.role_sync_time = batch.sync_time
+        if not is_same:
+            user.role, user.updated_at = role, utc_now()
+    return outcome == "applied" and not is_same
 
 
-def receive(db: Session, settings: Settings, batch: SyncBatch) -> SyncResult:
-    """原子处理身份批次和回执，按事件指纹幂等重试，冲突时整体回滚。"""
-    canonical = json.dumps(
-        batch.model_dump(mode="json", by_alias=True), sort_keys=True, separators=(",", ":")
-    )
-    fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
-    current = int(time.time())
-    prepare_write(db, settings)
-    values = dict(
-        event_id=batch.event_id,
-        payload_hash=fingerprint,
-        resource_type=batch.resource_type,
-        sync_time=batch.sync_time,
-        received_at=current,
-        last_received_at=current,
-        applied=0,
-        ignored=0,
-        unchanged=0,
-        revoked_sessions=0,
-        attempts=1,
-    )
-    if not insert_missing(db, IdentitySyncReceipt, values):
-        existing = db.scalar(
-            select(IdentitySyncReceipt)
-            .where(IdentitySyncReceipt.event_id == batch.event_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
+def receive(
+    db: Session, settings: Settings, batch: SyncBatch, *, request_id: str | None = None
+) -> SyncResult:
+    """通过摘要唯一键协调并发重试，用户、会话、成功日志与回执同事务提交。"""
+    try:
+        prepare_write(db, settings)
+        fingerprint = payload_hash(batch)
+        inserted = insert_missing(
+            db,
+            IamSyncReceipt,
+            dict(
+                payload_hash=fingerprint,
+                resource_type=batch.resource_type,
+                action=batch.action,
+                sync_time=batch.sync_time,
+            ),
+            conflict_columns=["payload_hash"],
         )
-        if existing is None or existing.payload_hash != fingerprint:
-            raise HTTPException(409, "sync_event_conflict")
-        # 重试更新回执次数后提交，核对上次结果不确定的事件，不重复应用身份变化。
-        existing.attempts += 1
-        existing.last_received_at = current
-        result = result_for(existing, is_duplicate=True)
+        receipt = db.scalars(
+            select(IamSyncReceipt).where(IamSyncReceipt.payload_hash == fingerprint)
+        ).one()
+        if inserted:
+            changed, revoked = 0, 0
+            for change in sorted(batch.data, key=lambda item: item.subject):
+                user = lock_identity(db, change.subject)
+                if isinstance(change, UserChange):
+                    updated, count = apply_user(db, user, change, batch)
+                    revoked += count
+                else:
+                    updated = apply_role(user, change, batch)
+                changed += int(updated)
+            if changed or revoked:
+                write_operation(
+                    db,
+                    action=OperationAction.SYNC,
+                    actor_type=ActorType.IAM,
+                    target_type=OperationTarget.IDENTITY_SYNC,
+                    target_id=receipt.id,
+                    request_id=request_id,
+                    data={"changedUsers": changed, "revokedSessions": revoked},
+                )
+        result = result_for(receipt, is_duplicate=not inserted)
         commit_write(db)
+        logger.info(
+            "identity_sync result=%s request_id=%s receipt_id=%s",
+            "applied" if inserted else "duplicate",
+            request_id,
+            receipt.id,
+        )
         return result
-
-    receipt = db.get(IdentitySyncReceipt, batch.event_id)
-    for change in sorted(batch.data, key=lambda item: item.subject):
-        identity = lock_identity(db, change.subject)
-        if isinstance(change, UserChange):
-            outcome, revoked = apply_user(db, identity, change, batch)
-            receipt.revoked_sessions += revoked
-        else:
-            outcome = apply_role(db, identity, change, batch)
-        setattr(receipt, outcome, getattr(receipt, outcome) + 1)
-    result = result_for(receipt)
-    # 状态、权限、会话撤销及回执在一个事务内提交；批次冲突时整体回滚。
-    commit_write(db)
-    return result
+    except (HTTPException, SQLAlchemyError) as error:
+        db.rollback()
+        logger.warning("identity_sync failed=%s request_id=%s", type(error).__name__, request_id)
+        raise

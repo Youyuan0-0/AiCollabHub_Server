@@ -2,7 +2,6 @@ import { createRequire } from 'node:module'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 
 const require = createRequire(resolve('../AiCollabHub_User/package.json'))
 const { chromium, expect } = require('@playwright/test')
@@ -192,7 +191,7 @@ try {
         return response.json()
       }
       const event = (resType, status) => ({
-        eventId: randomUUID(), appId: 'platform', action: 'push', resType, syncTime: ++syncVersion,
+        appId: 'platform', action: 'push', resType, syncTime: ++syncVersion,
         data: [{ subject: 'mock-admin', status, ...(resType === 'userlinkedrole' ? { roleCode: 'platform_admin' } : {}) }],
       })
       const refresh = async target => {
@@ -210,7 +209,7 @@ try {
         // 撤权期间，在途管理请求返回 403 正是预期的后端权限拦截。
         adminAccessRevoked = true
         const revoked = await deliver(revoke)
-        roleChanged = revoked.applied === 1
+        roleChanged = revoked.resultCode === 200
         expect(roleChanged).toBe(true)
         expect((await deliver(revoke)).duplicate).toBe(true)
         await refresh(page)
@@ -220,9 +219,9 @@ try {
         await expect(deniedPage.getByRole('alert')).toContainText('当前账号无管理端访问权限')
         await deniedPage.screenshot({ path: resolve(output, `${name}-identity-admin-revoked.png`), fullPage: true })
         const stale = { ...event('userlinkedrole', 'authorized'), syncTime: revoke.syncTime - 1 }
-        expect((await deliver(stale)).ignored).toBe(1)
+        expect((await deliver(stale)).resultCode).toBe(200)
         expect((await context.request.get(baseURL + '/api/v1/auth/session?scope=admin')).status()).toBe(403)
-        expect((await deliver(event('userlinkedrole', 'authorized'))).applied).toBe(1)
+        expect((await deliver(event('userlinkedrole', 'authorized'))).resultCode).toBe(200)
         roleChanged = false
         await refresh(deniedPage)
         await deniedPage.waitForURL(baseURL + '/admin/feedback')
@@ -230,7 +229,7 @@ try {
         await deniedPage.waitForLoadState('networkidle')
         adminAccessRevoked = false
         const disabled = await deliver(event('user', 'disabled'))
-        userChanged = disabled.applied === 1
+        userChanged = disabled.resultCode === 200
         expect(userChanged).toBe(true)
         for (const target of [page, deniedPage]) {
           await refresh(target)
@@ -238,7 +237,7 @@ try {
           await expect(target.getByRole('button', { name: '退出登录', exact: true })).toHaveCount(0)
         }
         await checkLayout('identity-user-disabled')
-        expect((await deliver(event('user', 'active'))).applied).toBe(1)
+        expect((await deliver(event('user', 'active'))).resultCode).toBe(200)
         userChanged = false
         // 恢复账号不会复活已撤销的旧会话，需要重新完成登录。
         for (const scope of ['user', 'admin']) {
@@ -252,8 +251,8 @@ try {
         await expect(deniedPage.getByRole('button', { name: '退出登录', exact: true })).toBeVisible()
       } finally {
         // 即使断言中途失败，也恢复本次改动的模拟账号，保证演示入口继续可用。
-        if (userChanged) expect((await deliver(event('user', 'active'))).applied).toBe(1)
-        if (roleChanged) expect((await deliver(event('userlinkedrole', 'authorized'))).applied).toBe(1)
+        if (userChanged) expect((await deliver(event('user', 'active'))).resultCode).toBe(200)
+        if (roleChanged) expect((await deliver(event('userlinkedrole', 'authorized'))).resultCode).toBe(200)
         adminAccessRevoked = false
       }
     }

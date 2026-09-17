@@ -11,6 +11,7 @@ click==8.5.0
 colorama==0.4.6
 defusedxml==0.7.1
 fastapi==0.141.1
+fakeredis==2.38.0
 greenlet==3.5.5
 h11==0.16.0
 httpcore==1.0.9
@@ -20,6 +21,7 @@ iniconfig==2.3.0
 Mako==1.4.1
 MarkupSafe==3.0.3
 minio==7.2.20
+lupa==2.8
 packaging==26.3
 pluggy==1.6.0
 psycopg==3.3.5
@@ -35,6 +37,7 @@ python-dotenv==1.2.3
 redis==7.4.1
 ruff==0.16.6
 SQLAlchemy==2.0.52
+sortedcontainers==2.4.0
 starlette==1.6.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
