@@ -11,7 +11,7 @@ def test_publication_defaults_use_login_name_without_inventing_organization(requ
     login(client, iam, subject="mock-user")
     defaults = client.get(path).json()
     assert defaults == {
-        "contact": "模拟普通用户",
+        "contact": "模拟用户A",
         "owner": "",
         "organizationId": "",
         "ownerAvailable": False,
@@ -35,7 +35,7 @@ def test_publications_use_login_subject_and_reject_demo_identity(request):
     assert saved.status_code == 201, saved.text
     record = saved.json()
     assert record["createdBy"] == "mock-user"
-    assert record["createdByName"] == "模拟普通用户"
+    assert record["createdByName"] == "模拟用户A"
     session = client.get("/api/v1/application-session").json()
     assert session["current"]["id"] == "mock-user"
     assert session["actors"] == []

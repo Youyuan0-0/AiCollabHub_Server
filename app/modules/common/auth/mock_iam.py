@@ -19,7 +19,14 @@ from starlette.middleware.base import RequestResponseEndpoint
 from app.core.config import Settings
 
 PREFIX = "/authn-api/v5/cas/platform"
-ACCOUNTS = {"mock-user": "模拟普通用户", "mock-admin": "模拟管理员"}
+# 原有两个身份作为 A 账号，保留标识以沿用历史会话及业务归属。
+ACCOUNTS = {
+    "mock-user": "模拟用户A",
+    "mock-user-b": "模拟用户B",
+    "mock-user-c": "模拟用户C",
+    "mock-admin": "模拟管理员A",
+    "mock-admin-b": "模拟管理员B",
+}
 
 
 @dataclass
@@ -115,13 +122,19 @@ def create_mock_iam(
                 return issue(service, session_key)
             challenge = secrets.token_urlsafe(32)
             challenges[challenge] = time.time() + 300
+        account_options = "".join(
+            '<label><input type="radio" name="subject"'
+            f' value="{escape(subject, quote=True)}"'
+            f"{' checked' if index == 0 else ''}>{escape(display_name)}</label>"
+            for index, (subject, display_name) in enumerate(ACCOUNTS.items())
+        )
         html = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>模拟统一认证</title><style>
         *{{box-sizing:border-box}}body{{margin:0;background:#f4f6f8;color:#202c3b;
         font:16px/1.6 system-ui,'Microsoft YaHei',sans-serif}}main{{max-width:440px;
-        margin:12vh auto;padding:28px}}h1{{font-size:24px;margin:0 0 8px}}p{{color:#536176}}
-        form{{display:grid;gap:18px}}label{{display:flex;gap:10px;align-items:center;
+        margin:8vh auto;padding:28px}}h1{{font-size:24px;margin:0 0 8px}}p{{color:#536176}}
+        form{{display:grid;gap:12px}}label{{display:flex;gap:10px;align-items:center;
         padding:12px;border:1px solid #c6cfd9;border-radius:6px;background:white}}
         button{{padding:12px;background:#236be8;color:white;border:0;border-radius:6px;
         font:inherit;cursor:pointer}}small{{color:#667085}}</style>
@@ -129,8 +142,7 @@ def create_mock_iam(
         <form method="post" action="{PREFIX}/login">
         <input type="hidden" name="service" value="{escape(service, quote=True)}">
         <input type="hidden" name="challenge" value="{challenge}">
-        <label><input type="radio" name="subject" value="mock-user" checked>模拟普通用户</label>
-        <label><input type="radio" name="subject" value="mock-admin">模拟管理员</label>
+        {account_options}
         <button type="submit">登录</button></form><p><small>此服务仅用于平台联调。</small></p>
         </main></html>"""
         response = HTMLResponse(html)

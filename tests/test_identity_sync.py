@@ -66,22 +66,26 @@ def test_user_status_revokes_both_portals_and_requires_new_login_after_reactivat
         assert sum(value.revoked_at is None for value in sessions) == 1
 
 
-def test_admin_revocation_overrides_mock_defaults_without_logging_out_user_portal(auth):
+@pytest.mark.parametrize("subject", ["mock-admin", "mock-admin-b"])
+def test_admin_revocation_overrides_mock_defaults_without_logging_out_user_portal(auth, subject):
     a, b, iam, engine = auth
-    login(a, iam, subject="mock-admin")
+    login(a, iam, subject=subject)
     b.cookies.update(a.cookies)
-    revoke = batch("mock-admin", "unauthorized", role=True)
+    revoke = batch(subject, "unauthorized", role=True)
     assert push(a, revoke).status_code == 200
     for client in (a, b):
         session = client.get("/api/v1/auth/session")
         assert session.status_code == 200 and not session.json()["user"]["canAccessAdmin"]
         assert client.get("/api/v1/admin/feedback").status_code == 403
-    assert push(b, batch("mock-admin", "authorized", 99, role=True)).status_code == 200
+    # 重新完成模拟登录也不能绕过已同步的撤权。
+    login(a, iam, subject=subject)
     assert a.get("/api/v1/auth/session?scope=admin").status_code == 403
-    assert push(b, batch("mock-admin", "authorized", 101, role=True)).status_code == 200
+    assert push(b, batch(subject, "authorized", 99, role=True)).status_code == 200
+    assert a.get("/api/v1/auth/session?scope=admin").status_code == 403
+    assert push(b, batch(subject, "authorized", 101, role=True)).status_code == 200
     assert a.get("/api/v1/auth/session?scope=admin").status_code == 200
     with Session(engine) as db:
-        assert db.scalar(select(User).where(User.iam_subject == "mock-admin")).role_sync_time == 101
+        assert db.scalar(select(User).where(User.iam_subject == subject)).role_sync_time == 101
 
 
 def test_role_and_user_versions_are_independent_and_role_push_cannot_enable_disabled_user(auth):

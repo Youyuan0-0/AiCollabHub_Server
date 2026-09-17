@@ -110,6 +110,55 @@ def notification(ticket):
     }
 
 
+@pytest.mark.parametrize(
+    ("subject", "display_name", "is_admin"),
+    [
+        ("mock-user", "模拟用户A", False),
+        ("mock-user-b", "模拟用户B", False),
+        ("mock-user-c", "模拟用户C", False),
+        ("mock-admin", "模拟管理员A", True),
+        ("mock-admin-b", "模拟管理员B", True),
+    ],
+)
+def test_mock_accounts_login_with_distinct_identities_and_correct_access(
+    auth, subject, display_name, is_admin
+):
+    """五个账号的身份、姓名和管理准入必须由实际登录结果决定。"""
+    a, b, iam, engine = auth
+    login(a, iam, subject=subject)
+    b.cookies.update(a.cookies)
+    for client in (a, b):
+        current = client.get("/api/v1/auth/session").json()["user"]
+        assert current == {
+            "id": subject,
+            "displayName": display_name,
+            "canAccessAdmin": is_admin,
+        }
+        assert client.get("/api/v1/admin/feedback").status_code == (200 if is_admin else 403)
+    with Session(engine) as db:
+        session = service.session_by_token(db, a.cookies.get("ach_session"))
+        assert session.user.iam_subject == subject
+        assert session.user.role == ("admin" if is_admin else "user")
+
+
+def test_new_mock_users_keep_independent_browser_sessions(auth):
+    """不同浏览器登录 B、C 后，退出 B 不得注销 C 或串用用户身份。"""
+    a, b, iam, engine = auth
+    login(a, iam, subject="mock-user-b")
+    # 清空模拟 IAM 浏览器 Cookie，表示第二个独立浏览器，保留服务端 B 会话。
+    iam.cookies.clear()
+    login(b, iam, subject="mock-user-c")
+    assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user-b"
+    assert b.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user-c"
+    with Session(engine) as db:
+        rows = db.scalars(select(User)).all()
+        assert {row.iam_subject for row in rows} == {"mock-user-b", "mock-user-c"}
+        assert len({row.id for row in rows}) == 2
+    assert a.post("/api/v1/auth/logout?global_logout=false", headers=csrf(a)).status_code == 200
+    assert a.get("/api/v1/auth/session").status_code == 401
+    assert b.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user-c"
+
+
 def test_applications_use_verified_identity_and_disable_demo_switch(auth):
     a, _, iam, _ = auth
     login(a, iam)
@@ -148,7 +197,7 @@ def test_cross_instance_callback_session_and_business_csrf(auth):
     assert response.headers["location"] == "/datasets?q=test"
     assert "HttpOnly" in response.headers["set-cookie"]
     a.cookies.update(b.cookies)
-    assert a.get("/api/v1/auth/session").json()["user"]["displayName"] == "模拟普通用户"
+    assert a.get("/api/v1/auth/session").json()["user"]["displayName"] == "模拟用户A"
     assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is False
     assert a.get("/api/v1/datasets").status_code == 200
     assert b.get("/api/v1/datasets").status_code == 200

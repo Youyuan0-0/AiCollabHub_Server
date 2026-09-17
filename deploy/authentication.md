@@ -2,6 +2,18 @@
 
 认证模块位于 `app/modules/common/auth/`，最小身份同步位于 `app/modules/common/identity_sync/`。当前支持开发环境中的模拟 IAM，正式集团 CAS、组织档案和完整角色映射仍需接入。
 
+## 模拟账号
+
+| 登录页名称 | IAM 标识 | 初始角色 |
+| --- | --- | --- |
+| 模拟用户A | `mock-user` | `user` |
+| 模拟用户B | `mock-user-b` | `user` |
+| 模拟用户C | `mock-user-c` | `user` |
+| 模拟管理员A | `mock-admin` | `admin` |
+| 模拟管理员B | `mock-admin-b` | `admin` |
+
+A 账号沿用原有标识，历史记录归属保持不变。新增账号首次成功登录时按需建档，无需新增数据表。`AUTH_MOCK_ADMIN_SUBJECTS` 默认包含两个管理员；已有环境若显式配置旧名单，需同步更新为 `["mock-admin","mock-admin-b"]`，并重启 API 与模拟 IAM。身份同步已记录的停用或撤权仍优先，不能通过重新登录恢复权限。
+
 ## 会话规则
 
 用户端和管理端共用 `ach_session` Cookie，路径为 `/api`，启用 HttpOnly 和 SameSite=Lax；HTTPS 环境需同时启用 Secure。管理端在后端逐次校验管理员准入，写请求校验 Origin 和 CSRF。

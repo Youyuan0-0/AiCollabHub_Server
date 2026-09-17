@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
     auth_session_ttl: int = Field(default=28800, ge=60, le=86400)
     auth_login_ttl: int = Field(default=300, ge=30, le=600)
-    auth_mock_admin_subjects: list[str] = ["mock-admin"]
+    auth_mock_admin_subjects: list[str] = ["mock-admin", "mock-admin-b"]
 
     @model_validator(mode="after")
     def assemble_service_urls(self) -> Settings:

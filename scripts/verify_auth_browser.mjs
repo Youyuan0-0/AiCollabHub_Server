@@ -11,6 +11,13 @@ const expectedWorkers = Number(process.env.EXPECTED_API_WORKERS || 2)
 if (!Number.isInteger(expectedWorkers) || expectedWorkers < 1) throw new Error('EXPECTED_API_WORKERS must be positive')
 const output = resolve('.runtime/auth-verification')
 const verifyIdentitySync = process.env.VERIFY_IDENTITY_SYNC === '1'
+const mockAccounts = [
+  { subject: 'mock-user', displayName: '模拟用户A', isAdmin: false },
+  { subject: 'mock-user-b', displayName: '模拟用户B', isAdmin: false },
+  { subject: 'mock-user-c', displayName: '模拟用户C', isAdmin: false },
+  { subject: 'mock-admin', displayName: '模拟管理员A', isAdmin: true },
+  { subject: 'mock-admin-b', displayName: '模拟管理员B', isAdmin: true },
+]
 // 模拟来源密钥只留在测试进程内，不注入页面、不写截图或验证结果。
 const syncKey = verifyIdentitySync ? execFileSync(resolve('.venv/Scripts/python.exe'), [
   '-c', 'from app.core.config import Settings; print(Settings().auth_mock_secret.get_secret_value(), end="")',
@@ -78,7 +85,11 @@ try {
     await checkLayout('user-login')
     await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
     await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
-    await page.getByLabel('模拟管理员', { exact: true }).check()
+    await expect(page.getByRole('radio')).toHaveCount(mockAccounts.length)
+    for (const account of mockAccounts) {
+      await expect(page.getByLabel(account.displayName, { exact: true })).toBeVisible()
+    }
+    await page.getByLabel('模拟管理员A', { exact: true }).check()
     await checkLayout('mock-iam')
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/applications?q=AI')
@@ -128,7 +139,7 @@ try {
     // 反向验证：直接在管理端登录，再通过实际入口打开用户端。
     await page.goto(baseURL + '/admin/services')
     await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
-    await page.getByLabel('模拟管理员', { exact: true }).check()
+    await page.getByLabel('模拟管理员A', { exact: true }).check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/admin/services')
     await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible()
@@ -157,7 +168,7 @@ try {
     await expect(page.getByRole('heading', { name: '登录平台' })).toBeVisible()
     // 普通用户无法通过直接访问管理路由绕过测试准入规则。
     await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
-    await page.getByLabel('模拟普通用户', { exact: true }).check()
+    await page.getByLabel('模拟用户A', { exact: true }).check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/applications')
     await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible()
@@ -172,7 +183,7 @@ try {
     const deniedPage = page
     page = await context.newPage()
     await page.goto(baseURL + '/api/v1/auth/login?scope=user&renew=true&return_to=/models')
-    await page.getByLabel('模拟管理员', { exact: true }).check()
+    await page.getByLabel('模拟管理员A', { exact: true }).check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/models')
     const switchedLoginRequests = loginRequests.length
@@ -261,6 +272,35 @@ try {
     expect(workers.size).toBe(expectedWorkers)
     results.push({ viewport: name, nativeLinkInterception: true, sameTabSwitchBothDirections: true, sharedLoginBothDirections: true, loginReturnPath: true, workers: workers.size, logoutBothDirections: true, csrfSubmission: true, adminDenied: true, accountSwitchShared: true, identitySync: verifyIdentitySync, errors: 0 })
     await context.close()
+  }
+  // 逐个走真实浏览器登录，验证新增账号的建档、显示名和两端权限。
+  for (const account of mockAccounts) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 } })
+    try {
+      const page = await context.newPage()
+      const target = account.isAdmin ? '/admin/services' : '/applications'
+      await page.goto(baseURL + target)
+      await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+      await page.getByLabel(account.displayName, { exact: true }).check()
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.waitForURL(baseURL + target)
+      await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible()
+      const session = await context.request.get(baseURL + '/api/v1/auth/session')
+      expect(session.status()).toBe(200)
+      expect((await session.json()).user).toEqual({
+        id: account.subject, displayName: account.displayName, canAccessAdmin: account.isAdmin,
+      })
+      const adminSession = await context.request.get(baseURL + '/api/v1/auth/session?scope=admin')
+      expect(adminSession.status()).toBe(account.isAdmin ? 200 : 403)
+      if (!account.isAdmin) {
+        await expect(page.getByRole('button', { name: '管理工作台', exact: true })).toHaveCount(0)
+      }
+      await page.getByRole('button', { name: '退出登录', exact: true }).click()
+      await expect(page.getByText('已退出登录', { exact: true })).toBeVisible()
+      results.push({ account: account.subject, correctDisplayName: true, correctAdminAccess: true })
+    } finally {
+      await context.close()
+    }
   }
   await writeFile(resolve(output, 'browser-results.json'), JSON.stringify(results, null, 2))
   console.log(JSON.stringify(results))
