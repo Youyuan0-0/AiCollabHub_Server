@@ -25,6 +25,7 @@ from app.modules.applications.database_values import current_time, date_value, i
 from app.modules.applications.demo_marketplace import LOCAL_FIELDS
 from app.modules.applications.identity import ACTORS, DEFAULT_USER
 from app.modules.applications.publication_schemas import APPLICATION_CATEGORIES
+from app.modules.common.auth.models import User
 
 
 class DatabaseApplicationSession(DatabaseActivityMixin, DatabasePublicationMixin):
@@ -88,16 +89,9 @@ class DatabaseApplicationSession(DatabaseActivityMixin, DatabasePublicationMixin
         """读取身份显示名，缺失时使用身份编号，不据此推断授权。"""
         if self.repository.settings.auth_mode == "disabled":
             return next((actor.name for actor in ACTORS if actor.id == subject), subject)
-        # 只借用公共认证模块的显示资料，不以会话存在与否建立业务归属或授权关系。
+        # 显示资料从稳定用户档案读取，不随登录会话到期或清理而丢失。
         return (
-            self.db.scalar(
-                text(
-                    "SELECT display_name FROM auth_session WHERE subject=:subject "
-                    "AND display_name IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"subject": subject},
-            )
-            or subject
+            self.db.scalar(select(User.display_name).where(User.iam_subject == subject)) or subject
         )
 
     def ensure_application(

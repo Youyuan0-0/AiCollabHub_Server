@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import bindparam, func, select, text
 
 from app.modules.applications.database_values import iso
+from app.modules.common.auth.models import User
 
 
 class DatabaseCatalogReader:
@@ -113,12 +114,9 @@ class DatabaseCatalogReader:
             else:
                 names = dict(
                     session.db.execute(
-                        text(
-                            "SELECT DISTINCT ON (subject) subject, display_name FROM auth_session "
-                            "WHERE subject IN :subjects AND display_name IS NOT NULL "
-                            "ORDER BY subject, created_at DESC"
-                        ).bindparams(bindparam("subjects", expanding=True)),
-                        {"subjects": sorted(subjects)},
+                        select(User.iam_subject, User.display_name).where(
+                            User.iam_subject.in_(subjects), User.display_name.is_not(None)
+                        )
                     ).all()
                 )
         for application_id in ids:

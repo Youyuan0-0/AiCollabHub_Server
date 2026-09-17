@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from legacy_auth_models import check_historical
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -48,8 +49,8 @@ def test_iam_revision_keeps_existing_records_and_only_downgrades_its_tables(migr
         }
 
     # 旧身份库已处于 02，合并后仅补会话分支，重复升级不得修改已有身份同步数据。
-    command.upgrade(config, "head")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
+    command.upgrade(config, "20260916_01")
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260916_01"
         assert connection.scalar(text("SELECT id FROM preserved_business")) == 7
@@ -66,7 +67,7 @@ def test_iam_revision_keeps_existing_records_and_only_downgrades_its_tables(migr
         for name, rows in before.items():
             assert connection.execute(text(f"SELECT * FROM {name}")).all() == rows
     assert {"conversations", "conversation_messages"}.issubset(inspect(engine).get_table_names())
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
 
     command.downgrade(config, "20260915_01")
     assert not set(table_names).intersection(inspect(engine).get_table_names())
@@ -86,8 +87,8 @@ def test_merge_repairs_missing_session_subject_index(migrated_database, previous
             text("INSERT INTO iam_identity_state VALUES ('existing','disabled',1,2)")
         )
 
-    command.upgrade(config, "head")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260916_01")
+    command.upgrade(config, "20260916_01")
     assert any(
         index["name"] == "ix_auth_session_subject" and index["column_names"] == ["subject"]
         for index in inspect(engine).get_indexes("auth_session")
@@ -96,7 +97,7 @@ def test_merge_repairs_missing_session_subject_index(migrated_database, previous
         assert connection.execute(text("SELECT * FROM iam_identity_state")).all() == [
             ("existing", "disabled", 1, 2)
         ]
-    command.check(config)
+    check_historical(engine)
 
 
 @pytest.mark.parametrize(

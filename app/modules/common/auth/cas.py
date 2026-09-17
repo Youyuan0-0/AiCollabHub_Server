@@ -33,6 +33,8 @@ class MockCasClient:
 
     def __init__(self, settings: Settings) -> None:
         self.base = str(settings.auth_mock_iam_url).rstrip("/") + "/authn-api/v5/cas/platform"
+        internal_origin = settings.auth_mock_iam_internal_url or settings.auth_mock_iam_url
+        self.validation_base = str(internal_origin).rstrip("/") + "/authn-api/v5/cas/platform"
         self.client = httpx.Client(
             timeout=5,
             follow_redirects=False,
@@ -56,7 +58,7 @@ class MockCasClient:
         """向模拟 IAM 验证票据，检查响应结构后返回可信账号。"""
         try:
             response = self.client.get(
-                self.base + "/p3/serviceValidate",
+                self.validation_base + "/p3/serviceValidate",
                 params={"ticket": ticket, "service": service, "format": "json"},
             )
             response.raise_for_status()

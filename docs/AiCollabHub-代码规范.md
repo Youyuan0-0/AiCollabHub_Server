@@ -19,6 +19,26 @@
 - 集合使用复数，例如 `applications`；CSS 类使用短横线，例如 `application-card`。
 - 前后端 JSON 字段使用小驼峰。已有接口字段、状态值和数据库列名不能因整理代码而随意更改。
 
+### 数据库与接口命名
+
+| 对象 | 规则 | 示例 |
+| --- | --- | --- |
+| 数据表 | 英文复数、小写下划线；复合名称的主体使用复数 | `users`、`auth_sessions`、`operation_logs`、`iam_sync_receipts` |
+| 数据库字段、Python ORM 属性 | 英文小写下划线，不使用驼峰或带引号的大小写名称 | `display_name`、`user_sync_time`、`record_type` |
+| ORM 模型类 | 英文单数、大驼峰 | `User`、`AuthSession`、`OperationLog`、`IamSyncReceipt` |
+| 主键、关联编号 | 主键统一为 `id`；关联字段为实体单数加 `_id` | `id`、`user_id`，不用 `users_id` |
+| 平台日期时间 | 使用 `_at` 后缀，类型为带时区的日期时间 | `created_at`、`updated_at`、`expires_at`、`revoked_at` |
+| 布尔、摘要字段 | 布尔使用 `is_`/`has_`；摘要使用 `_hash` | `is_enabled`、`has_permission`、`token_hash`、`payload_hash` |
+| 平台接口 JSON 字段 | 小驼峰，由接口模型显式映射 | `display_name` → `displayName`、`user_id` → `userId` |
+| 枚举值 | 项目自有值使用英文小写，多个单词用下划线 | `active`、`admin`、`ticket_revocation` |
+
+- 使用有业务含义的模块前缀，如 `auth_`、`iam_`；不增加 `t_`、`tbl_` 或项目名等无业务含义前缀，避免保留字表名如 `user`。
+- 本平台公开 JSON 契约使用小驼峰，数据库与 Python 内部使用下划线，通过已有接口模型/别名机制映射；不能对第三方报文做不加区分的自动改名。
+- IAM 等第三方接口保持其原有字段和枚举值，例如 `appId`、`syncTime`、`userlinkedrole`；接入层负责与内部字段对应，不修改甲方协议。
+- 第三方原始时间戳与平台日期时间分开：本次已确认的 `sync_time`、`user_sync_time`、`role_sync_time` 使用 `bigint` 保存 IAM `syncTime` 原值。注明来源及秒/毫秒等单位；协议未明确时标注待确认，不用本地接收时间代替。
+- 主键、唯一约束、检查约束、外键和索引遵循后端 `app/db/base.py` 的现有命名约定：`pk_<table>`、`uq_<table>_<column>`、`ck_<table>_<rule>`、`fk_<table>_<column>_<referred_table>`、`ix_<table>_<column>`；复合约束或部分索引使用能说明字段或用途的后缀。手写 DDL 显式命名时也遵循该约定。
+- 新表及尚未落地的设计按以上规则命名。已落地的表、列和已有接口不因规范整理直接重命名；需要调整时，随对应任务明确迁移、兼容与回滚方案。
+
 ## 2. 格式
 
 - Python 使用 **4 个空格**缩进；TypeScript、Vue、CSS、JSON 使用 **2 个空格**，不用 Tab。

@@ -85,7 +85,8 @@ def test_generated_migration_upgrades_and_downgrades(tmp_path, monkeypatch):
         command.revision(config, message="migration smoke test", autogenerate=True)
         command.upgrade(config, "head")
         assert "migration_probe" in inspect(engine).get_table_names()
-        command.downgrade(config, "base")
+        # 只回退本测试生成的迁移；历史认证合并需要通过备份恢复。
+        command.downgrade(config, "-1")
         assert "migration_probe" not in inspect(engine).get_table_names()
     finally:
         engine.dispose()

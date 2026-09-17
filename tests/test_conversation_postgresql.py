@@ -20,13 +20,22 @@ from app.services.conversations import service
 
 
 @pytest.fixture
-def migrated_database(tmp_path, monkeypatch):
+def migrated_database(tmp_path, monkeypatch, request):
     """创建独立迁移库，显式覆盖迁移账号配置，不读取开发数据库连接。"""
     url = f"sqlite:///{(tmp_path / 'postgresql-adaptation.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("DATABASE_MIGRATION_URL", url)
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    command.upgrade(config, "head")
+    target = (
+        "20260916_01"
+        if request.node.name
+        in {
+            "test_full_legacy_migration_and_downgrade_preserve_new_messages",
+            "test_invalid_legacy_record_aborts_before_replacing_tables",
+        }
+        else "head"
+    )
+    command.upgrade(config, target)
     engine = create_db_engine(url)
     try:
         yield engine, config
@@ -147,7 +156,8 @@ def test_full_legacy_migration_and_downgrade_preserve_new_messages(migrated_data
                 },
             ],
         )
-    command.upgrade(config, "head")
+    # 本段只验证会话历史回退，不越过需备份恢复的认证四表迁移。
+    command.upgrade(config, "20260916_01")
     with Session(engine) as session:
         store = SqlConversationStore(session)
         assert store.get(record.id) == record

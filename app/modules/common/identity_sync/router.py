@@ -1,5 +1,6 @@
 import hmac
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader
@@ -7,8 +8,8 @@ from pydantic import ValidationError
 
 from app.db.session import SessionDependency
 from app.modules.common.identity_sync import service
-from app.modules.common.identity_sync.models import IdentitySyncReceipt
-from app.modules.common.identity_sync.schemas import EventId, SyncBatch, SyncResult, request_schema
+from app.modules.common.identity_sync.models import IamSyncReceipt
+from app.modules.common.identity_sync.schemas import SyncBatch, SyncResult, request_schema
 
 router = APIRouter(prefix="/auth/mock/identity-sync", tags=["mock-identity-sync"])
 MOCK_IAM_KEY = APIKeyHeader(name="X-Mock-IAM-Key", auto_error=False)
@@ -61,13 +62,15 @@ def receive(
     request: Request, batch: Annotated[SyncBatch, Depends(read_batch)], db: SessionDependency
 ) -> SyncResult:
     """接收平台内部模拟事件；集团的编号、状态及签名必须经正式适配后才能接入。"""
-    return service.receive(db, request.app.state.settings, batch)
+    return service.receive(
+        db, request.app.state.settings, batch, request_id=request.state.request_id
+    )
 
 
-@router.get("/{event_id}", response_model=SyncResult, dependencies=[Depends(require_mock_source)])
-def receipt(event_id: EventId, db: SessionDependency) -> SyncResult:
-    """查询数据库中的处理回执；提交结果不确定时使用相同 eventId 和报文重试。"""
-    value = db.get(IdentitySyncReceipt, event_id)
+@router.get("/{receipt_id}", response_model=SyncResult, dependencies=[Depends(require_mock_source)])
+def receipt(receipt_id: UUID, db: SessionDependency) -> SyncResult:
+    """用返回的回执 UUID 查询；提交结果不确定时保持原报文重试。"""
+    value = db.get(IamSyncReceipt, receipt_id)
     if value is None:
-        raise HTTPException(404, "sync_event_not_found")
+        raise HTTPException(404, "sync_receipt_not_found")
     return service.result_for(value)

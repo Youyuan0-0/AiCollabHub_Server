@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--status")
     parser.add_argument("--action", choices=("push", "recycle"), default="push")
     parser.add_argument("--sync-time", type=int, help="明确指定源版本，便于验证乱序和相同版本冲突")
-    parser.add_argument("--retry", type=Path, help="重发已经留档的事件，不生成新的编号或版本")
+    parser.add_argument("--retry", type=Path, help="重发已经留档的业务报文，不改变同步时间")
     args = parser.parse_args()
     settings = Settings()
     if settings.auth_mode != "mock" or settings.app_env == "production":
@@ -40,7 +40,6 @@ def main() -> None:
                 item["roleCode"] = "platform_admin"
             batch = SyncBatch.model_validate(
                 {
-                    "eventId": str(uuid4()),
                     "appId": "platform",
                     "resType": args.resource,
                     "action": args.action,
@@ -54,7 +53,7 @@ def main() -> None:
                 Path(__file__).resolve().parents[1]
                 / ".runtime"
                 / "identity-sync"
-                / f"{batch.event_id}.json"
+                / f"{uuid4()}.json"
             )
             request_file.parent.mkdir(parents=True, exist_ok=True)
             # 留档只包含必要的模拟身份字段，不保存 IAM 密钥。

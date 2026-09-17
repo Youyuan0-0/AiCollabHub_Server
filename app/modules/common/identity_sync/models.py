@@ -1,54 +1,32 @@
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, String
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlalchemy import BigInteger, CheckConstraint, Index, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.modules.common.auth.models import UtcDateTime, utc_now
 
 
-class IdentityState(Base):
-    """保存身份状态及其源版本，为登录和用户状态推送提供共同锁定点。"""
+class IamSyncReceipt(Base):
+    """已提交批次的去重凭据，不重复保存操作统计或失败日志。"""
 
-    __tablename__ = "iam_identity_state"
+    __tablename__ = "iam_sync_receipts"
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'disabled', 'deleted')", name="valid_status"),
-        CheckConstraint("sync_time >= 0", name="valid_sync_time"),
+        CheckConstraint("resource_type IN ('user', 'userlinkedrole')", name="resource_type"),
+        CheckConstraint("action IN ('push', 'recycle')", name="action"),
+        CheckConstraint("sync_time > 0", name="sync_time"),
+        CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash").ddl_if(
+            dialect="postgresql"
+        ),
+        Index("ix_iam_sync_receipts_created_at", "created_at"),
     )
 
-    subject: Mapped[str] = mapped_column(String(200), primary_key=True)
-    status: Mapped[str] = mapped_column(String(16))
-    # 0 表示尚未收到用户状态推送，仅在模拟环境允许沿用已验票的身份。
-    sync_time: Mapped[int] = mapped_column(BigInteger)
-    updated_at: Mapped[int] = mapped_column(BigInteger)
-
-
-class IdentityRole(Base):
-    """保存身份的角色授权与独立源版本，保留撤权记录以防旧配置恢复权限。"""
-
-    __tablename__ = "iam_identity_role"
-    __table_args__ = (CheckConstraint("sync_time > 0", name="valid_sync_time"),)
-
-    subject: Mapped[str] = mapped_column(
-        ForeignKey("iam_identity_state.subject"),
-        primary_key=True,
-    )
-    role_code: Mapped[str] = mapped_column(String(64), primary_key=True)
-    authorized: Mapped[bool] = mapped_column(Boolean)
-    sync_time: Mapped[int] = mapped_column(BigInteger)
-    updated_at: Mapped[int] = mapped_column(BigInteger)
-
-
-class IdentitySyncReceipt(Base):
-    """保存同步事件指纹、处理结果和重试次数，支持幂等核对。"""
-
-    __tablename__ = "iam_sync_receipt"
-
-    event_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    payload_hash: Mapped[str] = mapped_column(String(64))
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    payload_hash: Mapped[str] = mapped_column(String(64), unique=True)
     resource_type: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(16))
     sync_time: Mapped[int] = mapped_column(BigInteger)
-    applied: Mapped[int] = mapped_column(default=0)
-    ignored: Mapped[int] = mapped_column(default=0)
-    unchanged: Mapped[int] = mapped_column(default=0)
-    revoked_sessions: Mapped[int] = mapped_column(default=0)
-    attempts: Mapped[int] = mapped_column(default=1)
-    received_at: Mapped[int] = mapped_column(BigInteger, index=True)
-    last_received_at: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, default=utc_now, server_default=func.now()
+    )
