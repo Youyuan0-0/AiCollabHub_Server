@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.modules.common import service
 from app.modules.common.catalog import find_sample
-from app.modules.common.schemas import AccessInput, FeedbackInput, InvocationInput, PublicationInput
+from app.modules.common.schemas import AccessInput, InvocationInput, PublicationInput
 
 router = APIRouter(tags=["common (mock)"])
 
@@ -20,18 +20,6 @@ def framework(request: Request) -> dict:
 
 
 # 看板由 app.api.overview 读取数据库快照，避免相同路径仍命中固定 Mock。
-
-
-@router.get("/feedback", response_model=None)
-def feedback() -> list[dict]:
-    """查询固定反馈样例列表。"""
-    return service.list_feedback()
-
-
-@router.post("/feedback", status_code=201, response_model=None)
-def submit_feedback(payload: FeedbackInput) -> dict:
-    """校验反馈请求并返回本次模拟回执。"""
-    return service.feedback_receipt(payload)
 
 
 @router.post("/resources/{resource_id}/invoke", response_model=None)

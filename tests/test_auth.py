@@ -142,7 +142,14 @@ def test_cross_instance_callback_session_and_business_csrf(auth):
     assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is False
     assert a.get("/api/v1/datasets").status_code == 200
     assert b.get("/api/v1/datasets").status_code == 200
-    payload = {"type": "问题", "module": "模型", "title": "测试", "description": "测试内容"}
+    payload = {
+        "type": "function_error",
+        "module": "models",
+        "title": "测试",
+        "description": "测试内容",
+        "contact": "1234",
+        "clientRequestId": "3c614bbe-466b-4fb2-8d57-d0b33b5c8cb4",
+    }
     assert a.post("/api/v1/feedback", json=payload).status_code == 403
     assert a.post("/api/v1/feedback", json=payload, headers=csrf(a)).status_code == 201
     assert b.get(callback).headers["location"].startswith("/login?error=login_request_expired")

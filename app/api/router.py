@@ -9,6 +9,7 @@ from app.modules.applications.router import router as applications_router
 from app.modules.applications.workflow_router import router as application_workflow_router
 from app.modules.common.router import router as common_router
 from app.modules.datasets.router import router as datasets_router
+from app.modules.feedback.router import router as feedback_router
 from app.modules.knowledge.router import router as knowledge_router
 from app.modules.models.router import router as models_router
 from app.modules.tools.router import router as tools_router
@@ -21,6 +22,7 @@ api_router.include_router(health_router)
 database_router = APIRouter(prefix="/api/v1")
 database_router.include_router(overview_router)
 database_router.include_router(conversations_router)
+database_router.include_router(feedback_router)
 
 # Mock 路由与基础设施探测分离；七个模块共用 /api/v1 契约，内部按领域组织。
 # 应用模块的 /application-publications 在这里挂载后，完整地址带上 /api/v1 前缀。

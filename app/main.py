@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from os import getpid
@@ -26,9 +28,12 @@ from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
 from app.modules.common.identity_sync.router import router as identity_sync_router
+from app.modules.feedback.maintenance import maintain_feedback
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
+
+logger = logging.getLogger(__name__)
 
 
 # settings 与 resources_factory 隔离实例配置和连接池；chat_provider 可注入回复实现，默认回显。
@@ -49,6 +54,9 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         resources = await run_in_threadpool(resources_factory, settings)
         application.state.resources = resources
+        application.state.feedback_upload_limiter = asyncio.Semaphore(
+            settings.feedback_upload_concurrency
+        )
         application.state.database_engine = resources.database
         if (
             settings.app_env != "production"
@@ -67,9 +75,15 @@ def create_app(
         application.state.cas_client = cas_client
         if settings.auth_mode == "mock" and cas_client is None:
             application.state.cas_client = MockCasClient(settings)
+        feedback_stopping = asyncio.Event()
+        feedback_maintenance = asyncio.create_task(
+            maintain_feedback(resources, settings, feedback_stopping)
+        )
         try:
             yield
         finally:
+            feedback_stopping.set()
+            await feedback_maintenance
             if settings.auth_mode == "mock" and cas_client is None:
                 application.state.cas_client.close()
             try:
@@ -120,8 +134,14 @@ def create_app(
                 # 看板和会话包含持久化数据，不能标记为无状态 Mock；样例板块由响应元信息区分。
                 database_path = request.url.path.split("/")[3:4]
                 response.headers["X-Data-Mode"] = (
-                    "development" if database_path in (["overview"], ["conversations"]) else "mock"
+                    "development"
+                    if database_path in (["overview"], ["conversations"], ["feedback"])
+                    else "mock"
                 )
+                if request.url.path.startswith(
+                    ("/api/v1/admin/feedback", "/api/v1/admin/overview")
+                ):
+                    response.headers["X-Data-Mode"] = "development"
                 scenario_path = request.url.path.removeprefix("/api/v1/").removeprefix("admin/")
                 if (
                     scenario_path.startswith("application")
@@ -137,6 +157,12 @@ def create_app(
     @application.exception_handler(SQLAlchemyError)
     async def database_unavailable(request: Request, error: SQLAlchemyError) -> JSONResponse:
         """将数据库异常转换为不含内部连接信息的服务错误。"""
+        logger.warning(
+            "Database request failed (%s, sqlstate=%s, request=%s)",
+            type(error).__name__,
+            getattr(getattr(error, "orig", None), "sqlstate", None),
+            request.state.request_id,
+        )
         return JSONResponse(status_code=503, content={"detail": "database_unavailable"})
 
     @application.exception_handler(StorageUnavailable)

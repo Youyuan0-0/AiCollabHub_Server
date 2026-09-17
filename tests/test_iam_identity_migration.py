@@ -51,7 +51,7 @@ def test_iam_revision_keeps_existing_records_and_only_downgrades_its_tables(migr
     command.upgrade(config, "head")
     command.upgrade(config, "head")
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260916_01"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "20260917_01"
         assert connection.scalar(text("SELECT id FROM preserved_business")) == 7
         for name, rows in before.items():
             assert connection.execute(text(f"SELECT * FROM {name}")).all() == rows
