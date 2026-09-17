@@ -17,6 +17,7 @@ class MemorySession:
 
     def __init__(self, state: dict) -> None:
         self.state = state
+        self.resource_warnings: list[str] = []
 
     def entries(self, kind: str) -> list[dict]:
         """读取指定种类的活动记录副本。"""

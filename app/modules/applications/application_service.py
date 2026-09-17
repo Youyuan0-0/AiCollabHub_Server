@@ -101,12 +101,18 @@ class ApplicationService:
             raise HTTPException(404, "申请不存在，请重新查询")
         return result
 
-    def resources(self, actor: Actor = DEFAULT_USER, *, is_admin: bool = False) -> list[dict]:
-        """列出可见应用；管理入口改为筛选当前身份有权管理的应用。"""
+    def resources(
+        self,
+        actor: Actor = DEFAULT_USER,
+        *,
+        is_admin: bool = False,
+        warnings: list[str] | None = None,
+    ) -> list[dict]:
+        """列出有权查看的应用，并可向目录页面传递资料不完整的提示。"""
         if is_admin:
             require_admin(actor)
         with self.repository.transaction(is_readonly=True) as session:
-            return [
+            items = [
                 item
                 for item in session.list_resources()
                 if (
@@ -115,6 +121,9 @@ class ApplicationService:
                     else visible(actor, item, session.get_visibility(item["id"]))
                 )
             ]
+            if warnings is not None:
+                warnings.extend(session.resource_warnings)
+            return items
 
     def resource(self, application_id: str, actor: Actor = DEFAULT_USER) -> dict:
         """读取有权访问的应用详情，并附带运行连接状态和版本发布权限。"""

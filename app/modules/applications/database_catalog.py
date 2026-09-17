@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.modules.applications.database_session import DatabaseApplicationSession
 
+import logging
 from collections import defaultdict
 from copy import deepcopy
 
@@ -15,6 +16,9 @@ from fastapi import HTTPException
 from sqlalchemy import bindparam, func, select, text
 
 from app.modules.applications.database_values import iso
+
+logger = logging.getLogger(__name__)
+SNAPSHOT_WARNING = "部分应用资料暂时无法读取，当前仅显示可用应用，请联系管理员恢复缺失资料。"
 
 
 class DatabaseCatalogReader:
@@ -26,6 +30,7 @@ class DatabaseCatalogReader:
         self.resources = {}
         self.visibility = {}
         self.list_ids = None
+        self.errors: dict[str, HTTPException] = {}
 
     def list_resources(self) -> list[dict]:
         """批量加载目录并返回有效资源的独立副本。"""
@@ -40,6 +45,8 @@ class DatabaseCatalogReader:
     def get_resource(self, application_id: str) -> dict | None:
         """读取单个资源副本，首次访问时补充当前事务缓存。"""
         self._ensure(application_id)
+        if application_id in self.errors:
+            raise self.errors[application_id]
         return deepcopy(self.resources[application_id])
 
     def get_visibility(self, application_id: str) -> dict:
@@ -134,11 +141,30 @@ class DatabaseCatalogReader:
             )
             if row and row["market_profile"] not in (None, session.marketplace.profile):
                 raise HTTPException(503, "application_marketplace_not_connected")
-            resource = (
-                session.marketplace.load(row["market_listing_id"], "listing")
-                if row and row["market_listing_id"]
-                else deepcopy(session.repository.seeds.get(application_id))
-            )
+            try:
+                resource = (
+                    session.marketplace.load(row["market_listing_id"], "listing")
+                    if row and row["market_listing_id"]
+                    else deepcopy(session.repository.seeds.get(application_id))
+                )
+            except HTTPException as error:
+                # 单条模拟资料损坏不阻断目录；详情仍返回错误，且不能用样例冒充已发布内容。
+                if error.status_code != 503 or error.detail not in (
+                    "application_demo_snapshot_unavailable",
+                    "application_demo_reference_invalid",
+                ):
+                    raise
+                self.errors[application_id] = error
+                self.resources[application_id] = None
+                if SNAPSHOT_WARNING not in session.resource_warnings:
+                    session.resource_warnings.append(SNAPSHOT_WARNING)
+                logger.warning(
+                    "Application snapshot unavailable: application=%s reference=%s code=%s",
+                    application_id,
+                    row["market_listing_id"],
+                    error.detail,
+                )
+                continue
             self.resources[application_id] = resource
             if resource is None:
                 continue

@@ -25,6 +25,7 @@ def overview() -> dict[str, int]:
     """读取管理端反馈概览的固定样例。"""
     return service.overview()
 
+    return {**query_resources(items, query), "warnings": warnings}
 
 @router.get("/feedback", response_model=None)
 def feedback(query: Annotated[FeedbackQuery, Query()]) -> dict:
@@ -41,8 +42,9 @@ def update_feedback(record_id: str, payload: FeedbackUpdate) -> dict:
 @router.get("/applications", response_model=None)
 def applications(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict:
     """分页查询当前身份有权管理的应用目录。"""
-    return query_resources(
-        application_service(request).resources(current_actor(request, True), is_admin=True), query
+    warnings: list[str] = []
+    items = application_service(request).resources(
+        current_actor(request, True), is_admin=True, warnings=warnings
     )
 
 

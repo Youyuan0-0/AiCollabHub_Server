@@ -46,6 +46,7 @@ class DatabaseApplicationSession(DatabaseActivityMixin, DatabasePublicationMixin
         self.is_dirty = False
         self._locks = set()
         self.is_readonly = is_readonly
+        self.resource_warnings: list[str] = []
         self.catalog = DatabaseCatalogReader(self) if is_readonly else None
 
     def table(self, name: str) -> Table:

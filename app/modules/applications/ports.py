@@ -9,6 +9,8 @@ from typing import Protocol
 class ApplicationSession(Protocol):
     """一次应用事务内的读写契约，返回资料不得泄露仓储内部可变引用。"""
 
+    resource_warnings: list[str]
+
     def entries(self, kind: str) -> list[dict]:
         """读取指定业务种类的全部活动记录。"""
         ...
