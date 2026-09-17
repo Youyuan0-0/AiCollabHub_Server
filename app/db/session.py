@@ -19,7 +19,7 @@ def create_db_engine(
     database_url: str,
     *,
     pool_size: int = 5,
-    max_overflow: int = 5,
+    max_overflow: int = 2,
     pool_timeout: float = 5,
     pool_recycle: int = 1800,
     connect_timeout: int = 5,

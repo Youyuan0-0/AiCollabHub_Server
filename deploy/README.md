@@ -59,10 +59,12 @@ docker build -t aicollabhub-admin:<版本> admin
 
 当前应用目录为 `/opt/aicollabhub-app`，其中 `compose.yaml` 来自本项目，`.env` 保存 `RELEASE_TAG`、`HTTP_PORT`、`SERVICES_NETWORK`，以及旧 Mock 账号迁移使用的 `AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS`。管理员名单按逗号分隔，与 `app.env` 的 `AUTH_MOCK_ADMIN_SUBJECTS` 对齐；非 Mock 环境留空。下列凭据文件权限均应为 `0600`，不进入镜像或版本库：
 
-- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 连接池为 2、溢出 1。
+- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 配置 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`、`DB_POOL_TIMEOUT=5`，两个 worker 合计最多 14 条连接；数据库总连接额度还须计入其他应用、迁移及运维连接。
 - `iam.env`：仅包含认证相关变量和用于配置校验的 `DATABASE_URL=sqlite://`，模拟 IAM 不连接业务库。模拟 IAM 必须单进程运行。
 - 两者共用随机 `AUTH_MOCK_SECRET`；公网 `AUTH_PUBLIC_ORIGIN`、`AUTH_MOCK_IAM_URL` 均为 `http://1.92.86.74`；`AUTH_INTERNAL_ORIGIN=http://api:8000`，`AUTH_MOCK_IAM_INTERNAL_URL=http://mock-iam:18002`。内网来源只用于票据校验和注销通知，浏览器回调始终保留公网来源。
 - `migration.env`：仅包含 `POSTGRES_MIGRATION_*`，使用同一库的 DDL 账号；正常 API 容器不加载此文件。
+
+开发联调数据库建议以 `max_connections=60`、`superuser_reserved_connections=3` 为连接预算起点，调整前核对主机及数据库容器的内存限额。普通账号共享剩余 57 条连接；例如三套各两个 worker 的后端合计最多 42 条，剩余 15 条供工具、迁移及其他连接使用。应用 `.env` 只控制本实例连接池，不会修改数据库服务端参数；服务端修改 `max_connections` 后必须重启 PostgreSQL，若参数来自 Docker 启动命令，则修改对应 Compose 配置并重建该数据库容器。
 
 API 挂载 `./data:/data`，属主为 `10001:10001`。配置 `APPLICATIONS_DEMO_DIRECTORY=/data/application-marketplace-demo`、`CONVERSATION_ATTACHMENT_DIR=/data/attachments`。这两处需要随数据库一起备份。数据库已有快照引用时必须迁移对应文件并核对内容摘要，不能用空目录覆盖。前端容器只读运行，API 使用两个 worker，模拟 IAM 独立单 worker。
 
