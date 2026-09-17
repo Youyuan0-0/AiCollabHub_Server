@@ -2,6 +2,88 @@
 
 当前架构为一个 Nginx 入口、两份前端产物、一套 FastAPI 服务，以及 PostgreSQL、Redis、MinIO 各一个实例。API 可在同机使用多个 worker，数据库读写统一访问同一实例。
 
+## 云服务器 Docker 部署
+
+`deploy/cloud/compose.yaml` 复用外部网络 `aicollabhub-cloud-dev_services`，不创建或删除基础服务。用户端 Nginx 作为公网入口，`/admin/` 转发到管理端容器，`/api/` 转发到 API，`/authn-api/v5/cas/platform/` 转发到独立模拟 IAM。三端各有 Dockerfile；API 镜像同时用于迁移和单进程 IAM。
+
+开发云主机入口：
+
+- 用户端：`http://1.92.86.74/`
+- 管理端：`http://1.92.86.74/admin/`
+- 新增安全组端口：TCP 80。浏览器不需要访问后端、IAM 或基础服务端口。
+- 点击“统一身份登录”，在当前模拟认证页选择普通用户或管理员。该环境保留开发模拟能力，未接入正式集团 IAM 或真实模型。
+
+### 构建和打包
+
+云主机内存较小，先在开发机完成前端构建，再把产物放入 Nginx 镜像。当前工作树修改也会进入发布包，`manifest.json` 记录提交号与修改状态，不会自动提交 Git。
+
+用户端 PowerShell：
+
+```powershell
+$env:VITE_ADMIN_URL='/admin/'
+$env:VITE_API_MODE='http'
+$env:VITE_API_SCOPE='all'
+$env:VITE_API_BASE_URL='/api/v1'
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+管理端 PowerShell：
+
+```powershell
+$env:VITE_BASE='/admin/'
+$env:VITE_USER_URL='/'
+$env:VITE_API_BASE_URL='/api/v1'
+npm ci
+npm run build
+```
+
+回到后端项目打包；默认从相邻 `AiCollabHub_User/dist`、`AiCollabHub_Admin/dist` 取产物，也可通过 `--user-dist`、`--admin-dist` 指定目录：
+
+```powershell
+.venv/Scripts/python.exe scripts/package_cloud_release.py --output .runtime/release.tar.gz
+```
+
+将发布包上传到服务器的 `/opt/aicollabhub-app/releases/<版本>/` 并解压，在该目录执行：
+
+```bash
+export DOCKER_BUILDKIT=0  # 仅适用于当前未安装 buildx 的云主机
+docker build -t aicollabhub-api:<版本> backend
+docker build -t aicollabhub-user:<版本> user
+docker build -t aicollabhub-admin:<版本> admin
+```
+
+基础镜像以摘要固定。镜像站可用 `--build-arg PYTHON_IMAGE=<地址@摘要>` 或 `--build-arg NGINX_IMAGE=<地址@摘要>` 指定，保持与官方摘要一致。后端使用 Python 3.13，按 `requirements-dev.lock` 约束安装运行依赖。
+
+### 云端配置与持久化
+
+当前应用目录为 `/opt/aicollabhub-app`，其中 `compose.yaml` 来自本项目，`.env` 保存 `RELEASE_TAG`、`HTTP_PORT`、`SERVICES_NETWORK`，以及旧 Mock 账号迁移使用的 `AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS`。管理员名单按逗号分隔，与 `app.env` 的 `AUTH_MOCK_ADMIN_SUBJECTS` 对齐；非 Mock 环境留空。下列凭据文件权限均应为 `0600`，不进入镜像或版本库：
+
+- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 连接池为 2、溢出 1。
+- `iam.env`：仅包含认证相关变量和用于配置校验的 `DATABASE_URL=sqlite://`，模拟 IAM 不连接业务库。模拟 IAM 必须单进程运行。
+- 两者共用随机 `AUTH_MOCK_SECRET`；公网 `AUTH_PUBLIC_ORIGIN`、`AUTH_MOCK_IAM_URL` 均为 `http://1.92.86.74`；`AUTH_INTERNAL_ORIGIN=http://api:8000`，`AUTH_MOCK_IAM_INTERNAL_URL=http://mock-iam:18002`。内网来源只用于票据校验和注销通知，浏览器回调始终保留公网来源。
+- `migration.env`：仅包含 `POSTGRES_MIGRATION_*`，使用同一库的 DDL 账号；正常 API 容器不加载此文件。
+
+API 挂载 `./data:/data`，属主为 `10001:10001`。配置 `APPLICATIONS_DEMO_DIRECTORY=/data/application-marketplace-demo`、`CONVERSATION_ATTACHMENT_DIR=/data/attachments`。这两处需要随数据库一起备份。数据库已有快照引用时必须迁移对应文件并核对内容摘要，不能用空目录覆盖。前端容器只读运行，API 使用两个 worker，模拟 IAM 独立单 worker。
+
+### 发布与检查
+
+1. 暂停所有连接该库的旧版本后端和同步发送器，再备份数据库以及 `data/`，保留旧版本镜像和配置；首次部署备份在 `backups/pre-app-20260916-01.dump`。使用与服务端兼容的 `pg_dump` 并验证恢复。
+2. 更新 `/opt/aicollabhub-app/.env` 的 `RELEASE_TAG` 并同步 Compose 配置，执行 `docker compose config --quiet`。
+3. 执行 `install -d -m 0700 -o 10001 -g 10001 backups/auth` 创建认证归档目录，再执行一次 `docker compose run --rm migrate`。迁移服务将旧认证数据归档到该持久化目录，确认迁移成功后再启动；这份归档不能代替整库备份。
+4. 执行 `docker compose up -d --wait --wait-timeout 120`。
+5. 执行 `docker compose exec -T api python -m scripts.verify_services`，并验证两端登录、切换、注销、应用详情以及会话附件。
+
+容器有健康检查、内存上限、日志轮转和 `unless-stopped` 重启策略。维护命令均在 `/opt/aicollabhub-app` 执行：
+
+```bash
+docker compose ps
+docker compose logs --tail 100 api mock-iam
+docker compose restart api
+```
+
+回退应用时，将 `RELEASE_TAG` 改回已保留的版本再执行 `docker compose up -d --wait`；先确认该版本兼容当前数据库结构。数据库恢复须按备份流程单独处理，不随应用回退自动降级或删除数据。模拟 IAM 重启会清空它的模拟单点登录状态，重新登录即可。
+
 ## 配置与数据
 
 根目录 [.env.example](../.env.example) 提供配置字段，实际配置写入本机 `.env`。已有基础服务可直接填写连接信息；新建服务可使用 [compose.yaml](../compose.yaml)，它只编排数据库、缓存和对象存储。

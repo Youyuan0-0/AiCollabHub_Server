@@ -1,0 +1,20 @@
+# 仅将运行代码和迁移送入构建上下文，禁止本地凭据与运行数据进入镜像。
+*
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!requirements-dev.lock
+!README.md
+!alembic.ini
+!app/
+!app/**
+!migrations/
+!migrations/**
+!config/
+!config/*.example.json
+!scripts/
+!scripts/verify_services.py
+**/__pycache__/
+**/.runtime/
+**/*.pyc
+**/.env*
