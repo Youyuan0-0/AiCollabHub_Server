@@ -157,8 +157,26 @@ def create_mock_iam(
         )
         return response
 
+    def expired_form(service: str) -> HTMLResponse:
+        """为已验证来源的回调返回 403 恢复页，引导重新建立平台登录请求。"""
+        scope = parse_qs(urlsplit(service).query).get("scope", ["user"])[0]
+        scope = "admin" if scope == "admin" else "user"
+        retry = origin + "/api/v1/auth/login?" + urlencode({"scope": scope, "renew": "true"})
+        # 不自动重试旧 POST，也不清除其他标签页的新 Cookie；用户点击后创建全新登录请求。
+        return HTMLResponse(
+            '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>请重新登录</title><main style="max-width:440px;margin:12vh auto;'
+            'padding:28px;font:16px/1.6 system-ui,sans-serif">'
+            '<h1>登录页面已失效</h1><p>页面已过期，或浏览器中的登录信息已更新。'
+            '请重新发起登录，不要刷新或重复提交此页面。</p>'
+            '<p>如果重新登录后仍出现此提示，请允许此站点使用 Cookie。</p>'
+            f'<a href="{escape(retry, quote=True)}">重新登录</a></main></html>',
+            status_code=403,
+        )
+
     @app.post(PREFIX + "/login", response_model=None)
-    async def login_submit(request: Request) -> RedirectResponse:
+    async def login_submit(request: Request) -> Response:
         """校验表单来源与挑战值，创建模拟会话并签发票据。"""
         if request.headers.get("origin") != iam_origin:
             raise HTTPException(403, "invalid_origin")
@@ -179,17 +197,24 @@ def create_mock_iam(
         except (UnicodeError, ValueError):
             raise HTTPException(400, "invalid_login_form") from None
         check_service(service)
-        if subject not in ACCOUNTS or not hmac.compare_digest(
+        if subject not in ACCOUNTS:
+            raise HTTPException(403, "invalid_login_form")
+        if not hmac.compare_digest(
             challenge.encode(), request.cookies.get("ach_mock_form", "").encode()
         ):
-            raise HTTPException(403, "invalid_login_form")
+            return expired_form(service)
+        # 失效表单不能先撤销当前账号；注销调用后的锁内检查仍保证挑战值只能消费一次。
+        with lock:
+            collect()
+            if challenge not in challenges:
+                return expired_form(service)
         # 切换模拟账号前撤销旧 IAM 会话，避免两个前端残留不同账号的登录状态。
         if not await run_in_threadpool(close_session, request.cookies.get("ach_mock_iam", "")):
             raise HTTPException(503, "previous_session_logout_incomplete")
         with lock:
             collect()
             if challenge not in challenges:
-                raise HTTPException(403, "expired_login_form")
+                return expired_form(service)
             del challenges[challenge]
             session_key = secrets.token_urlsafe(32)
             sessions[session_key] = IAMSession(subject, time.time() + settings.auth_session_ttl)

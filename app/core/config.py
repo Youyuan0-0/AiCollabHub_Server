@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     instance_id: str = Field(default="api", pattern=r"^[A-Za-z0-9_-]{1,40}$")
     applications_storage: Literal["memory", "database"] = "memory"
+    # 数据集用户端申请和活动独立选用存储，数据库模式需先执行 Alembic 迁移。
+    datasets_storage: Literal["memory", "database"] = "memory"
+    # 本地发布先完成平台上架；external 保留待同步，接入真实通道后替换适配器。
+    datasets_publication_mode: Literal["local", "external"] = "local"
     applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
     applications_agent_url: AnyHttpUrl | None = None
     applications_agent_key: SecretStr | None = None
@@ -233,6 +237,8 @@ class Settings(BaseSettings):
         """校验单库连接、缓存和存储服务所需配置。"""
         if self.applications_storage == "database" and self.database_url is None:
             raise ValueError("APPLICATIONS_STORAGE=database requires a PostgreSQL connection")
+        if self.datasets_storage == "database" and self.database_url is None:
+            raise ValueError("DATASETS_STORAGE=database requires a database connection")
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。
         if self.app_env == "production" and self.database_url is None:
             raise ValueError("POSTGRES_* or DATABASE_URL is required in production")

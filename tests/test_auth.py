@@ -1,4 +1,7 @@
+import re
+import time
 from datetime import timedelta
+from html import unescape
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
@@ -375,6 +378,58 @@ def test_simulator_validates_service_and_consumes_tickets_once(auth):
         "authenticationFailure"
         in iam.get(PREFIX + "/p3/serviceValidate", params=params).json()["serviceResponse"]
     )
+
+
+@pytest.mark.parametrize("scope", ["user", "admin"])
+@pytest.mark.parametrize("invalidated", ["missing_cookie", "replaced_cookie", "expired"])
+def test_stale_iam_form_offers_fresh_login_without_authenticating(
+    auth, monkeypatch, scope, invalidated
+):
+    """旧表单、丢失 Cookie 和过期请求须拒绝认证，并允许用户重新发起完整登录。"""
+    a, _, iam, _ = auth
+    start = a.get("/api/v1/auth/login", params={"scope": scope})
+    location = start.headers["location"]
+    service_url = parse_qs(urlsplit(location).query)["service"][0]
+    assert iam.get(location).status_code == 200
+    challenge = iam.cookies.get("ach_mock_form")
+    if invalidated == "missing_cookie":
+        iam.cookies.delete("ach_mock_form")
+    elif invalidated == "replaced_cookie":
+        # 同一浏览器另开认证页面会覆盖 Cookie，旧页面的隐藏令牌仍为原值。
+        assert iam.get(location).status_code == 200
+        assert iam.cookies.get("ach_mock_form") != challenge
+    with monkeypatch.context() as clock:
+        if invalidated == "expired":
+            current = time.time()
+            clock.setattr(time, "time", lambda: current + 301)
+        rejected = iam.post(
+            PREFIX + "/login",
+            data={"service": service_url, "subject": "mock-admin", "challenge": challenge},
+            headers={"Origin": "http://iam.test"},
+        )
+    assert rejected.status_code == 403
+    assert "text/html" in rejected.headers["content-type"]
+    assert "重新登录" in rejected.text
+    assert "ach_mock_iam" not in iam.cookies
+    assert a.get("/api/v1/auth/session").status_code == 401
+    retry = unescape(re.search(r'href="([^"]+)"', rejected.text)[1])
+    assert retry == f"http://testserver/api/v1/auth/login?scope={scope}&renew=true"
+    # 恢复入口必须重新建立平台浏览器绑定，不能沿用旧回调或自动提交旧表单。
+    fresh = a.get(retry)
+    fresh_location = fresh.headers["location"]
+    assert iam.get(fresh_location).status_code == 200
+    issued = iam.post(
+        PREFIX + "/login",
+        data={
+            "service": parse_qs(urlsplit(fresh_location).query)["service"][0],
+            "subject": "mock-admin",
+            "challenge": iam.cookies.get("ach_mock_form"),
+        },
+        headers={"Origin": "http://iam.test"},
+    )
+    assert issued.status_code == 303
+    assert a.get(issued.headers["location"]).status_code == 303
+    assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-admin"
 
 
 def test_mock_authentication_cannot_be_enabled_in_production():

@@ -59,7 +59,7 @@ docker build -t aicollabhub-admin:<版本> admin
 
 当前应用目录为 `/opt/aicollabhub-app`，其中 `compose.yaml` 来自本项目，`.env` 保存 `RELEASE_TAG`、`HTTP_PORT`、`SERVICES_NETWORK`，以及旧 Mock 账号迁移使用的 `AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS`。管理员名单按逗号分隔，与 `app.env` 的 `AUTH_MOCK_ADMIN_SUBJECTS` 对齐；非 Mock 环境留空。下列凭据文件权限均应为 `0600`，不进入镜像或版本库：
 
-- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 配置 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`、`DB_POOL_TIMEOUT=5`，两个 worker 合计最多 14 条连接；数据库总连接额度还须计入其他应用、迁移及运维连接。
+- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`、`DATASETS_STORAGE=database`、`DATASETS_PUBLICATION_MODE=local`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 配置 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`、`DB_POOL_TIMEOUT=5`，两个 worker 合计最多 14 条连接；数据库总连接额度还须计入其他应用、迁移及运维连接。
 - `iam.env`：仅包含认证相关变量和用于配置校验的 `DATABASE_URL=sqlite://`，模拟 IAM 不连接业务库。模拟 IAM 必须单进程运行。
 - 两者共用随机 `AUTH_MOCK_SECRET`；公网 `AUTH_PUBLIC_ORIGIN`、`AUTH_MOCK_IAM_URL` 均为 `http://1.92.86.74`；`AUTH_INTERNAL_ORIGIN=http://api:8000`，`AUTH_MOCK_IAM_INTERNAL_URL=http://mock-iam:18002`。内网来源只用于票据校验和注销通知，浏览器回调始终保留公网来源。
 - `migration.env`：仅包含 `POSTGRES_MIGRATION_*`，使用同一库的 DDL 账号；正常 API 容器不加载此文件。
@@ -92,7 +92,7 @@ docker compose restart api
 
 - 数据库：填写 `POSTGRES_HOST/PORT/DB/USER/PASSWORD`，也支持优先级更高的 `DATABASE_URL`。
 - 缓存与对象存储：按实际接入填写 `REDIS_*`、`MINIO_*`，并创建业务使用的 MinIO Bucket。
-- 框架迁移：发布时执行一次 `python -m alembic upgrade head`，不随 worker 启动重复执行。当前唯一迁移头为 `20260916_01`。
+- 框架迁移：发布时执行一次 `python -m alembic upgrade head`，不随 worker 启动重复执行。当前唯一迁移头为 `20260917_merge_ds_auth`，汇合数据集、反馈及认证迁移；已执行独立数据集迁移的库会先校验并保留现有表。
 - 场景应用：新库按 [数据库说明](../database/scenario-applications/README.md) 初始化 8 张业务表，再启用 `APPLICATIONS_STORAGE=database`。内存模式使用单 worker。
 - `APPLICATIONS_DEMO_DIRECTORY` 中的供应方模拟快照和 `CONVERSATION_ATTACHMENT_DIR` 中的附件属于运行数据，须保留在固定路径。
 

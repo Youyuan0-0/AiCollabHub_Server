@@ -8,6 +8,7 @@ from app.modules.applications.market_router import router as application_market_
 from app.modules.applications.router import router as applications_router
 from app.modules.applications.workflow_router import router as application_workflow_router
 from app.modules.common.router import router as common_router
+from app.modules.datasets.admin_router import router as dataset_admin_router
 from app.modules.datasets.router import router as datasets_router
 from app.modules.feedback.router import router as feedback_router
 from app.modules.knowledge.router import router as knowledge_router
@@ -29,6 +30,7 @@ database_router.include_router(feedback_router)
 mock_router = APIRouter(prefix="/api/v1")
 for router in (
     datasets_router,
+    dataset_admin_router,
     models_router,
     applications_router,
     application_workflow_router,

@@ -28,6 +28,9 @@ from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
 from app.modules.common.identity_sync.router import router as identity_sync_router
+from app.modules.datasets.publishing import create_dataset_publisher
+from app.modules.datasets.repository import DatasetRepository
+from app.modules.datasets.workspace import DatasetWorkspace
 from app.modules.feedback.maintenance import maintain_feedback
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
@@ -58,6 +61,12 @@ def create_app(
             settings.feedback_upload_concurrency
         )
         application.state.database_engine = resources.database
+        # 数据集与应用复用单库连接池，但申请及活动记录独立存储；启动时不自动建表。
+        if settings.app_env != "production" and settings.datasets_storage == "database":
+            application.state.dataset_workspace = DatasetWorkspace(
+                DatasetRepository(resources.database),
+                create_dataset_publisher(settings.datasets_publication_mode),
+            )
         if (
             settings.app_env != "production"
             and applications_factory is None
@@ -150,6 +159,14 @@ def create_app(
                     response.headers["X-Data-Mode"] = "development"
                     response.headers["X-Application-Storage"] = "postgresql"
                     response.headers["X-Application-Provider"] = settings.applications_runtime
+                if scenario_path.startswith("dataset"):
+                    response.headers["X-Dataset-Storage"] = settings.datasets_storage
+                    # 非生产诊断标识实际发布通道，避免将本地上架误认为第三方已集成。
+                    response.headers["X-Dataset-Publication-Mode"] = (
+                        settings.datasets_publication_mode
+                    )
+                    if settings.datasets_storage == "database":
+                        response.headers["X-Data-Mode"] = "development"
         if request.url.path.startswith("/api/v1/auth/"):
             response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -197,6 +214,10 @@ def create_app(
         application.include_router(identity_sync_router, prefix="/api/v1")
     # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
+        # 每个实例独立的演示状态；数据库模式在 lifespan 中替换为共享仓储。
+        application.state.dataset_workspace = DatasetWorkspace(
+            DatasetRepository(), create_dataset_publisher(settings.datasets_publication_mode)
+        )
         # 每个 FastAPI 实例创建一份场景应用业务对象，路由从 request.app.state 取出并复用。
         application.state.application_service = (
             applications_factory or create_demo_application_service

@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir --constraint requirements-dev.lock . \
     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin app \
     && mkdir -p /data/attachments /data/application-marketplace-demo \
     && chown -R app:app /data
-COPY alembic.ini ./
+# 镜像同时提供全量和数据集独立迁移入口，避免共享库部署时缺少配置文件。
+COPY alembic.ini alembic.datasets.ini ./
 COPY migrations/ ./migrations/
 COPY config/ ./config/
 COPY scripts/verify_services.py ./scripts/verify_services.py

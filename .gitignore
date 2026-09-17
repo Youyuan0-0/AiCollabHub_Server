@@ -32,6 +32,8 @@ node_modules/
 # 本地环境配置；示例模板需要纳入版本管理
 .env
 .env.*
+# 根目录按日期保存的环境快照也包含真实凭据，避免作为普通文件误提交。
+/[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9].env
 !.env.example
 
 # 本地需求资料目录沿用原有约定，包含非 Markdown 资料
@@ -64,5 +66,6 @@ Desktop.ini
 !/deploy/README.md
 !/deploy/authentication.md
 !/app/modules/applications/README.md
+!/app/modules/datasets/README.md
 !/database/scenario-applications/README.md
 !/database/feedback/README.md

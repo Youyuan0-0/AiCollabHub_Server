@@ -23,9 +23,15 @@ def framework(request: Request) -> dict:
 
 
 @router.post("/resources/{resource_id}/invoke", response_model=None)
-def invoke(resource_id: str, payload: InvocationInput) -> dict:
-    """验证样例资源存在后生成模拟调用结果。"""
+def invoke(resource_id: str, payload: InvocationInput, request: Request) -> dict:
+    """验证样例存在及数据集开放范围后生成模拟调用结果。"""
     resource = find_sample(resource_id)
+    # 通用入口同样检查数据集权限，避免绕过专属详情接口读取受限资源名称。
+    if resource["kind"] == "dataset":
+        from app.modules.applications.identity import current_actor
+        from app.modules.datasets.workspace import dataset_workspace
+
+        resource = dataset_workspace(request).resource(resource_id, current_actor(request))
     return {
         "id": service.receipt()["id"],
         "durationMs": 0,
