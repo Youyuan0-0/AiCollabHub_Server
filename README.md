@@ -93,7 +93,7 @@ APPLICATIONS_DEMO_DIRECTORY=D:/UGit/AiCollabHub_Server/.runtime/application-mark
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.configure_mock_auth --gateway-port 18880 --iam-port 18002
-.\scripts\start-local.ps1 -NginxRoot <已解压的Nginx目录> -ApiPort 18000 -Workers 2 -GatewayPort 18880 -MockIamPort 18002
+.\scripts\start-local.ps1 -NginxRoot <已解压的Nginx目录> -ApiPort 18000 -Workers 1 -GatewayPort 18880 -MockIamPort 18002
 ```
 
 用户端入口为 `http://127.0.0.1:18880/`，管理端为 `/admin/`。API 禁用带查询串的访问日志，避免记录 CAS 票据；停止服务使用 `scripts/stop-local.ps1 -ProcessRecord <启动输出的记录路径>`。
@@ -146,6 +146,14 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | 备份 | 数据库逻辑备份和隔离恢复；指定对象前缀备份及新桶恢复 | 不依赖已移除的业务表；定时独立备份尚未部署 |
 
 路由使用 `SessionDependency`，场景仓储从同一引擎建立独立事务，业务服务显式提交。每个 worker 独立建立连接池，数据库最大应用连接数为 `workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)`，另外预留迁移、运维和备份连接。2 万在线用户不对应 2 万条数据库连接，具体容量需按请求类型、耗时与缓存命中率压测。
+
+共享开发库默认使用 `DB_POOL_SIZE=1`、`DB_MAX_OVERFLOW=0`，本地启动脚本默认一个 worker；同时请求会等待归还连接，超过 `DB_POOL_TIMEOUT` 返回不可用，不会临时无限扩容。生产部署须显式规划连接池和 worker 数量并压测。修改 `.env` 后需要重启对应后端进程。
+
+PostgreSQL 14+ 的新应用连接设置 `DB_IDLE_SESSION_TIMEOUT=120`（秒），连续普通空闲两分钟后由数据库断开；`0` 关闭此机制。连接池借用前自动检查并重建已失效连接，不会自动重放业务 SQL 或写事务。此设置只作用于本项目新建的连接，不修改共享账号或服务器全局设置，也不改变事务中的空闲超时。健康检查、定时任务也会使用连接，所以不能以“没人打开网页”判断是否连续空闲。`DB_POOL_RECYCLE` 仅在借用时检查连接年龄，不是自动空闲回收。
+
+应用连接的 `application_name` 自动包含环境、`INSTANCE_ID`、主机名和进程号，最长 63 字节；名称过长时截短前缀，保留主机和进程号。不同实例可设置不同 `INSTANCE_ID` 以便排查；本项目显式程序名优先于 `PGAPPNAME` 和连接 URL 内的同名参数。旧进程和其他客户端的现有连接不会因此自动清理，仍应由各自维护者关闭不用的实例。
+
+可执行 `python -m scripts.verify_database_pool` 只读检查真实 PostgreSQL：最多占用一条连接，验证池上限、空闲释放、自动重连与复用、查询和事务不受普通空闲超时影响。测试连接临时使用 2 秒空闲超时，约十余秒完成后释放，不修改业务表、账号或数据库全局设置，也不改应用的 120 秒配置。执行时仍需有一个可用的普通连接名额。
 
 应用、迁移及恢复连接使用 `synchronous_commit=local`，等待本机 WAL 落盘后确认提交。显式写事务使用 `DB_STATEMENT_TIMEOUT_MS` 限制语句耗时，锁等待上限为 3 秒；提交遇到断连仍可能返回 `commit_outcome_unknown`，不能直接认定已回滚或盲目重试。身份同步已按事件编号处理幂等，其他正式业务按领域补齐。
 

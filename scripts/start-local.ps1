@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$NginxRoot,
     [ValidateRange(1, 65535)][int]$ApiPort = 18000,
-    [ValidateRange(1, 32)][int]$Workers = 2,
+    [ValidateRange(1, 32)][int]$Workers = 1,
     [ValidateRange(1, 65535)][int]$GatewayPort = 18880,
     [ValidateRange(0, 65535)][int]$MockIamPort = 0
 )

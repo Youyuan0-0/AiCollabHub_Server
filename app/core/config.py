@@ -55,11 +55,13 @@ class Settings(BaseSettings):
     # 连接串及分字段密码均使用 SecretStr 隐藏展示，并非加密存储。
     database_url: SecretStr | None = None
     database_migration_url: SecretStr | None = None
-    db_pool_size: int = Field(default=5, ge=1)
-    db_max_overflow: int = Field(default=5, ge=0)
+    # 共享开发库默认每进程最多 1 条；生产容量按总实例数和压测结果显式配置。
+    db_pool_size: int = Field(default=1, ge=1)
+    db_max_overflow: int = Field(default=0, ge=0)
     db_pool_timeout: float = Field(default=5, gt=0)
     db_pool_recycle: int = Field(default=1800, ge=1)
     db_connect_timeout: int = Field(default=5, ge=1)
+    db_idle_session_timeout: int = Field(default=120, ge=0, le=86400)
 
     redis_host: str | None = None
     redis_port: int = Field(default=6379, ge=1, le=65535)
