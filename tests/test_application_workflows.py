@@ -274,6 +274,46 @@ def test_schema_remote_references_are_not_fetched(client, monkeypatch):
     assert result.status_code == 422 and "外部引用" in result.json()["detail"]
 
 
+def test_runtime_notification_filter_excludes_review_messages(client):
+    select(client, "demo-admin")
+    app_id = approve(client, submit(client))["applicationId"]
+    policy(client, failureThreshold=1)
+    result = client.post(
+        f"{API}/applications/{app_id}/runs",
+        json={
+            "requestId": str(uuid4()),
+            "input": {"question": "核查通知"},
+            "simulateFailure": True,
+        },
+    )
+    assert result.json()["status"] == "failed"
+    path = API + "/admin/application-notifications"
+    assert {item["kind"] for item in client.get(path).json()} == {"review", "run_failure"}
+    notifications = client.get(path, params={"kind": "run_failure"}).json()
+    assert len(notifications) == 1 and notifications[0]["kind"] == "run_failure"
+    assert client.get(path, params={"kind": "invalid"}).status_code == 422
+    select(client, "demo-reader", audience="admin")
+    assert client.get(path, params={"kind": "run_failure"}).status_code == 403
+
+
+def test_rating_sort_can_be_configured_and_handles_ties(client):
+    from app.modules.common.catalog import query_resources
+    from app.modules.common.schemas import CatalogQuery
+
+    saved = policy(client, defaultSort="rating")
+    assert saved["defaultSort"] == "rating"
+    assert client.get(API + "/application-presentation").json()["defaultSort"] == "rating"
+    base = {"name": "核查", "description": "", "owner": "", "category": "", "tags": []}
+    items = [
+        {**base, "id": key, "rating": rating}
+        for key, rating in [("none", None), ("b", 5), ("low", 2), ("a", 5)]
+    ]
+    result = query_resources(items, CatalogQuery(sort="rating", page_size=2))
+    assert [item["id"] for item in result["items"]] == ["a", "b"]
+    next_page = query_resources(items, CatalogQuery(sort="rating", page_size=2, page=2))
+    assert [item["id"] for item in next_page["items"]] == ["low", "none"]
+
+
 def test_concurrent_repeated_run_invokes_provider_once(client, app_id, monkeypatch):
     provider = client.app.state.application_service.provider
     original, calls = provider.invoke, []

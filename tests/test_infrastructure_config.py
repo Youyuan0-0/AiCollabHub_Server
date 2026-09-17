@@ -54,7 +54,40 @@ def test_database_connection_uses_writable_target_and_local_durability(monkeypat
             engine.connect()
         assert captured["target_session_attrs"] == "read-write"
         assert "search_path=isolated" in captured["options"]
+        assert "-c idle_session_timeout=120s" in captured["options"]
         assert captured["options"].endswith("-c synchronous_commit=local")
+    finally:
+        engine.dispose()
+
+
+def test_database_connection_identifies_machine_and_process_and_can_disable_idle_timeout(
+    monkeypatch,
+):
+    """程序名前缀过长时仍保留主机和 PID，0 超时明确覆盖 URL 中的旧设置。"""
+    captured = {}
+
+    def connect(*args, **kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("connection inspected")
+
+    monkeypatch.setattr("psycopg.connect", connect)
+    monkeypatch.setattr("app.db.session.socket.gethostname", lambda: "dev-machine")
+    monkeypatch.setattr("app.db.session.os.getpid", lambda: 12345)
+    engine = create_db_engine(
+        "postgresql://user:password@localhost/platform"
+        "?options=-c%20idle_session_timeout%3D10s&application_name=legacy",
+        idle_session_timeout=0,
+        application_name="feedback-" * 20,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="connection inspected"):
+            engine.connect()
+        name = captured["application_name"]
+        assert len(name.encode("utf-8")) == 63
+        assert name.startswith("feedback-") and name.endswith(":dev-machine:12345")
+        assert captured["options"].endswith(
+            "-c idle_session_timeout=0s -c synchronous_commit=local"
+        )
     finally:
         engine.dispose()
 
@@ -71,6 +104,8 @@ def test_services_are_optional():
     [
         {"db_pool_size": 0},
         {"db_max_overflow": -1},
+        {"db_idle_session_timeout": -1},
+        {"db_idle_session_timeout": 86401},
         {"redis_default_ttl": 0},
         {"redis_timeout": 0},
         {"minio_timeout": 0},

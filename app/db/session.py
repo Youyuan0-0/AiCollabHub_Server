@@ -1,3 +1,6 @@
+import os
+import re
+import socket
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -23,23 +26,37 @@ def create_db_engine(
     pool_timeout: float = 5,
     pool_recycle: int = 1800,
     connect_timeout: int = 5,
+    idle_session_timeout: int = 120,
+    application_name: str = "aicollabhub",
 ) -> Engine:
-    """创建单库同步连接池，并统一 PostgreSQL 驱动与本机持久化提交。"""
+    """创建有界连接池；PostgreSQL 空闲回收以秒计，0 关闭，仅影响本引擎连接。"""
     # 从连接池取出连接时检查存活状态，减少长时间闲置后使用失效连接的风险。
     options = {}
     url = normalize_database_url(database_url)
     if url.get_backend_name() == "postgresql":
+        # PostgreSQL 程序名最多 63 字节；保留主机和 PID，便于区分同一出口下的实例。
+        host = re.sub(r"[^A-Za-z0-9_.-]", "_", socket.gethostname())[:20]
+        suffix = f":{host}:{os.getpid()}"
+        prefix = re.sub(r"[^A-Za-z0-9_:.-]", "_", application_name)
         connect_args = {
             "connect_timeout": connect_timeout,
             "target_session_attrs": "read-write",
+            "application_name": prefix[: 63 - len(suffix)] + suffix,
+            # 普通空闲由服务端回收，pre_ping 在下次借用时重连；不改变事务空闲超时。
             # local 仍等待本机 WAL 落盘；连接级设置避免继承旧环境的远端确认策略。
-            "options": (str(url.query.get("options", "")) + " -c synchronous_commit=local").strip(),
+            "options": (
+                str(url.query.get("options", ""))
+                + f" -c idle_session_timeout={idle_session_timeout}s"
+                + " -c synchronous_commit=local"
+            ).strip(),
         }
         options.update(
             pool_size=pool_size,
             max_overflow=max_overflow,
             pool_timeout=pool_timeout,
             pool_recycle=pool_recycle,
+            # 优先复用最近归还的连接，让较少使用的连接有机会达到空闲回收时限。
+            pool_use_lifo=True,
             connect_args=connect_args,
         )
     return create_engine(url, pool_pre_ping=True, **options)

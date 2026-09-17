@@ -68,12 +68,13 @@ def create_version_publication(application_id: str, request: Request) -> dict:
 def resources(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict:
     """按开放范围筛选应用，再按目录条件排序和分页。"""
     service = application_service(request)
-    items = service.resources(current_actor(request))
+    warnings: list[str] = []
+    items = service.resources(current_actor(request), warnings=warnings)
     policy = service.workflows.policy()
     if policy["recommendedIds"] or policy["revision"] > 1:
         for item in items:
             item["badge"] = "推荐" if item["id"] in policy["recommendedIds"] else ""
-    return query_resources(items, query)
+    return {**query_resources(items, query), "warnings": warnings}
 
 
 # 按路径中的应用编号返回完整详情，交给前端 ApplicationDetailDrawer 显示。

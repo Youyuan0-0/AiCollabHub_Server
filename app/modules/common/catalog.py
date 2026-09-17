@@ -69,7 +69,7 @@ def query_resources(resources: list[dict], query: CatalogQuery) -> dict:
         "downloads": lambda resource: resource.get("downloadCount") or 0,
         "favorites": lambda resource: resource.get("favoriteCount") or 0,
     }
-    if query.sort in ("recent_download", "downloads", "favorites"):
+    if query.sort in ("rating", "recent_download", "downloads", "favorites"):
         # 相同统计值按编号固定顺序，翻页时不会因并列指标交换位置。
         items.sort(key=lambda resource: resource["id"])
     items.sort(key=keys[query.sort], reverse=True)

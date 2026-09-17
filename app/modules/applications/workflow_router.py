@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import Field
@@ -209,11 +209,14 @@ def admin_syncs(request: Request) -> list[dict]:
 
 
 @router.get("/admin/application-notifications", response_model=None)
-def admin_notifications(request: Request) -> list[dict]:
-    """校验管理角色后读取应用通知。"""
+def admin_notifications(
+    request: Request, kind: Literal["review", "new_version", "run_failure"] | None = None
+) -> list[dict]:
+    """按管理身份和可选通知类型读取消息，运行页不混入审核结果。"""
     actor = current_actor(request, True)
     require_admin(actor)
-    return application_service(request).workflows.activity(actor)["notifications"]
+    notifications = application_service(request).workflows.activity(actor)["notifications"]
+    return [item for item in notifications if kind is None or item["kind"] == kind]
 
 
 @router.post("/application-toolchain/development-publications", response_model=None)

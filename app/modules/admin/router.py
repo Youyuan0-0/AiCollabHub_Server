@@ -4,8 +4,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.modules.admin import service
-from app.modules.admin.schemas import FeedbackQuery, FeedbackUpdate
 from app.modules.applications.admin_queries import ApplicationReviewQuery, query_publications
 from app.modules.applications.application_service import application_service
 from app.modules.applications.configuration import SaveApplicationConfiguration
@@ -20,30 +18,14 @@ from app.modules.common.schemas import CatalogQuery
 router = APIRouter(prefix="/admin", tags=["admin (mock)"])
 
 
-@router.get("/overview", response_model=None)
-def overview() -> dict[str, int]:
-    """读取管理端反馈概览的固定样例。"""
-    return service.overview()
-
-
-@router.get("/feedback", response_model=None)
-def feedback(query: Annotated[FeedbackQuery, Query()]) -> dict:
-    """分页查询反馈样例。"""
-    return service.feedback_page(query)
-
-
-@router.patch("/feedback/{record_id}", response_model=None)
-def update_feedback(record_id: str, payload: FeedbackUpdate) -> dict:
-    """返回反馈修改预览，当前模拟接口不保存修改。"""
-    return service.preview_update(record_id, payload)
-
-
 @router.get("/applications", response_model=None)
 def applications(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict:
     """分页查询当前身份有权管理的应用目录。"""
-    return query_resources(
-        application_service(request).resources(current_actor(request, True), is_admin=True), query
+    warnings: list[str] = []
+    items = application_service(request).resources(
+        current_actor(request, True), is_admin=True, warnings=warnings
     )
+    return {**query_resources(items, query), "warnings": warnings}
 
 
 @router.get("/applications/{application_id}", response_model=None)

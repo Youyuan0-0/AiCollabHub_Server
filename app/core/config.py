@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     db_pool_timeout: float = Field(default=5, gt=0)
     db_pool_recycle: int = Field(default=1800, ge=1)
     db_connect_timeout: int = Field(default=5, ge=1)
+    db_idle_session_timeout: int = Field(default=120, ge=0, le=86400)
 
     redis_host: str | None = None
     redis_port: int = Field(default=6379, ge=1, le=65535)
@@ -79,7 +80,8 @@ class Settings(BaseSettings):
     minio_bucket: str = Field(default="aicollabhub-files", min_length=3, max_length=63)
     minio_region: str = "us-east-1"
     minio_timeout: float = Field(default=5, gt=0)
-    minio_max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
+    minio_max_upload_bytes: int = Field(default=1024**3, ge=1)
+    feedback_upload_concurrency: int = Field(default=2, ge=1, le=16)
     cors_origins: list[str] = []
     # 临时附件目录必须由同一部署的 API 实例共享；后续替换仓库无需修改消息契约。
     conversation_attachment_dir: Path = (

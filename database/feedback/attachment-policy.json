@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "maxAttachmentsPerFeedback": 3,
+  "maxFileSizeBytes": 1073741824,
+  "maxTotalFileSizeBytes": 3221225472,
+  "allowEmptyFiles": false,
+  "allowedFileTypes": [
+    { "extensions": [".png"], "contentType": "image/png" },
+    { "extensions": [".jpg", ".jpeg"], "contentType": "image/jpeg" },
+    { "extensions": [".pdf"], "contentType": "application/pdf" },
+    {
+      "extensions": [".docx"],
+      "contentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    }
+  ],
+  "temporaryRetentionSeconds": 86400,
+  "objectKeyPrefix": "feedback/attachments/",
+  "downloadThroughPlatformBackend": true
+}

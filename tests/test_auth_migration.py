@@ -79,7 +79,7 @@ def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monke
     ],
 )
 def test_merged_migrations_preserve_both_branch_histories(tmp_path, monkeypatch, legacy_revision):
-    """两个分支的旧库均可直接 upgrade head，不能跳过看板或重建已有认证数据。"""
+    """两个分支的旧库均可升级到历史汇合点，不能跳过看板或重建已有认证数据。"""
     project = Path(__file__).resolve().parents[1]
     url = f"sqlite:///{tmp_path / 'legacy.db'}"
     monkeypatch.setenv("DATABASE_URL", url)

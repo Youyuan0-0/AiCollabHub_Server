@@ -56,17 +56,6 @@ class CatalogQuery(PageQuery):
             raise HTTPException(422, "invalid_catalog_filters") from None
 
 
-class FeedbackInput(Payload):
-    """用户反馈资料，限制标题、说明和附件名称长度。"""
-
-    type: str = Field(min_length=1, max_length=40)
-    module: str = Field(min_length=1, max_length=80)
-    title: str = Field(min_length=1, max_length=60)
-    description: str = Field(min_length=1, max_length=5000)
-    contact: str = Field(default="", max_length=200)
-    attachment_name: str = Field(default="", max_length=180)
-
-
 class InvocationInput(Payload):
     """资源调用的提示词、输出格式与目标版本。"""
 

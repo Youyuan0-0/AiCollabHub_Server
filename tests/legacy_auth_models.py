@@ -121,10 +121,10 @@ class IdentitySyncReceipt(Base):
 
 
 def historical_metadata():
-    """保留业务表并替换认证部分，避免历史迁移测试被当前 ORM 定义污染。"""
+    """仅比较 20260916_01 已有的业务表和认证表，排除后续新增表。"""
     metadata = MetaData(naming_convention=ApplicationBase.metadata.naming_convention)
     for table in ApplicationBase.metadata.tables.values():
-        if table.name not in {"users", "auth_sessions", "operation_logs", "iam_sync_receipts"}:
+        if table.name in {"overview_snapshots", "conversations", "conversation_messages"}:
             table.to_metadata(metadata)
     for table in Base.metadata.tables.values():
         table.to_metadata(metadata)
@@ -143,4 +143,5 @@ def check_historical(engine):
                 )
             },
         )
-        assert compare_metadata(context, metadata) == []
+        differences = compare_metadata(context, metadata)
+        assert differences == [], differences

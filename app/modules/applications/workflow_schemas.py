@@ -51,7 +51,7 @@ class WorkflowPolicy(ApplicationPayload):
     announcement: str = Field(default="", max_length=1000)
     recommended_ids: list[str] = Field(default_factory=list, max_length=12)
     hot_categories: list[str] = Field(default_factory=list, max_length=5)
-    default_sort: Literal["recommended", "recent_download", "downloads", "favorites"] = (
+    default_sort: Literal["recommended", "rating", "recent_download", "downloads", "favorites"] = (
         "recommended"
     )
     page_size: Literal[6, 12, 24] = 12

@@ -41,9 +41,6 @@ def test_all_pages_have_http_samples_without_authentication(clients):
         "/applications",
         "/tools",
         "/knowledge-bases",
-        "/feedback",
-        "/admin/feedback",
-        "/admin/overview",
     ):
         response = a.get("/api/v1" + path)
         assert response.status_code == 200, (path, response.text)
@@ -70,30 +67,6 @@ def test_catalog_combines_filters_and_paginates(clients):
     assert a.get("/api/v1/datasets?page=0").status_code == 422
 
 
-def test_feedback_actions_echo_but_do_not_create_real_business_state(clients):
-    a, b = clients
-    original = a.get("/api/v1/feedback").json()
-    response = a.post(
-        "/api/v1/feedback",
-        json={
-            "type": "体验建议",
-            "module": "数据集",
-            "title": "接口示例",
-            "description": "演示请求",
-            "attachmentName": "demo.pdf",
-        },
-    )
-    assert response.status_code == 201
-    assert response.json()["title"] == "接口示例"
-    assert b.get("/api/v1/feedback").json() == original
-    changed = a.patch(
-        "/api/v1/admin/feedback/" + original[0]["id"],
-        json={"status": "已解决", "reply": "演示处理"},
-    )
-    assert changed.status_code == 200 and changed.json()["reply"] == "演示处理"
-    assert a.get("/api/v1/feedback").json() == original
-
-
 def test_knowledge_and_tools_return_mock_contracts(clients):
     a, b = clients
     # 多轮会话不再属于无状态 Mock，其历史与持久化由专用用例覆盖。
@@ -114,5 +87,5 @@ def test_production_does_not_mount_mock_routes(tmp_path):
     settings = Settings(app_env="production", database_url=f"sqlite:///{tmp_path / 'db'}")
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/v1/datasets").status_code == 404
-        assert client.get("/api/v1/admin/feedback").status_code == 404
+        assert client.get("/api/v1/admin/feedback").status_code == 401
         assert client.get("/api/v1/health/live").status_code == 200

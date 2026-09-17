@@ -36,6 +36,8 @@ def create_resources(settings: Settings) -> ApplicationResources:
                 pool_timeout=settings.db_pool_timeout,
                 pool_recycle=settings.db_pool_recycle,
                 connect_timeout=settings.db_connect_timeout,
+                idle_session_timeout=settings.db_idle_session_timeout,
+                application_name=f"aicollabhub:{settings.app_env}:{settings.instance_id}",
             )
             cleanup.callback(database.dispose)
         if settings.redis_url is not None:

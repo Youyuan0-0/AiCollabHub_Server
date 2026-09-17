@@ -91,11 +91,8 @@ try {
     expect(cookie.httpOnly).toBe(true)
     expect(cookie.sameSite).toBe('Lax')
     await page.goto(baseURL + '/feedback')
-    await page.locator('input[maxlength="60"]').fill('单点登录联通测试')
-    await page.locator('textarea').fill('验证登录后的 Mock 请求与 CSRF，不创建真实业务记录。')
-    const submitted = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/feedback' && response.request().method() === 'POST')
-    await page.getByRole('button', { name: '提交反馈', exact: true }).click()
-    expect((await submitted).status()).toBe(201)
+    // 反馈现已持久化，完整提交与 CSRF 验收移至 verify_feedback_browser.mjs。
+    await expect(page.getByRole('button', { name: '提交反馈', exact: true })).toBeEnabled()
     const initialLoginRequests = loginRequests.length
     await page.getByRole('button', { name: '管理工作台', exact: true }).click()
     await page.waitForURL(baseURL + '/admin/applications')

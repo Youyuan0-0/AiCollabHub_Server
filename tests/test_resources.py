@@ -70,6 +70,36 @@ def test_partial_resource_initialization_cleans_up_previous_clients(monkeypatch)
     database.dispose.assert_called_once()
 
 
+def test_application_resources_pass_connection_budget_and_identity(monkeypatch):
+    """非默认配置经资源入口到达引擎，关机时仍只释放本应用的连接池。"""
+    database = Mock()
+    factory = Mock(return_value=database)
+    monkeypatch.setattr("app.core.resources.create_db_engine", factory)
+    settings = Settings(
+        database_url="postgresql://writer:placeholder@localhost/platform",
+        instance_id="preview",
+        db_pool_size=2,
+        db_max_overflow=0,
+        db_pool_timeout=7,
+        db_idle_session_timeout=45,
+    )
+    resources = create_resources(settings)
+    try:
+        factory.assert_called_once_with(
+            settings.database_url.get_secret_value(),
+            pool_size=2,
+            max_overflow=0,
+            pool_timeout=7,
+            pool_recycle=1800,
+            connect_timeout=5,
+            idle_session_timeout=45,
+            application_name="aicollabhub:development:preview",
+        )
+    finally:
+        resources.close()
+    database.dispose.assert_called_once()
+
+
 def test_close_failure_still_closes_other_resources_and_clears_state():
     cleanup = ExitStack()
     final_close = Mock()
