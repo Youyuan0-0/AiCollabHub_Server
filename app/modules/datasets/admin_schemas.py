@@ -6,11 +6,25 @@ from typing import Annotated, Literal, Self
 from pydantic import ConfigDict, Field, model_validator
 
 from app.modules.applications.publication_schemas import ApplicationVisibility
-from app.modules.common.schemas import PageQuery, Payload
+from app.modules.common.schemas import CatalogQuery, PageQuery, Payload
 
 DatasetDecision = Literal["approved", "rejected", "needs_changes"]
 DATASET_STATUSES = ("draft", "pending", "approved", "rejected", "needs_changes")
 Score = Annotated[int, Field(ge=1, le=5, strict=True)]
+
+
+class DatasetListing(Payload):
+    """独立管理目录上下架；revision 为当前状态修订号，0 表示尚未手动调整。"""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["listed", "unlisted"]
+    revision: int = Field(ge=0, strict=True)
+
+
+class DatasetAdminQuery(CatalogQuery):
+    """后台目录支持上下架筛选；空值同时返回已上架和已下架资源。"""
+
+    listing_status: Literal["", "listed", "unlisted"] = Field(default="", alias="listingStatus")
 
 
 class DatasetVisibility(ApplicationVisibility):
