@@ -160,7 +160,7 @@ def create_app(
                     else "mock"
                 )
                 if request.url.path.startswith(
-                    ("/api/v1/admin/feedback", "/api/v1/admin/overview")
+                    ("/api/v1/admin/feedback", "/api/v1/admin/overview", "/api/v1/admin/logs")
                 ):
                     response.headers["X-Data-Mode"] = "development"
                 scenario_path = request.url.path.removeprefix("/api/v1/").removeprefix("admin/")

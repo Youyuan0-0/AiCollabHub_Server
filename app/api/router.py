@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.conversations import router as conversations_router
 from app.api.health import router as health_router
 from app.api.overview import router as overview_router
+from app.modules.admin.logs.router import router as logs_router
 from app.modules.admin.router import router as admin_router
 from app.modules.applications.market_router import router as application_market_router
 from app.modules.applications.router import router as applications_router
@@ -18,6 +19,8 @@ from app.modules.tools.router import router as tools_router
 # 平台接口统一使用版本前缀，后续业务模块的路由在此集中挂载。
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router)
+# 日志接口自行核验管理员会话，匿名演示与生产配置均不能绕过此依赖。
+api_router.include_router(logs_router)
 # 数据库业务单独挂载，create_app 为其接入与场景应用相同的登录和 CSRF 检查。
 # 健康检查不依赖登录；看板、会话仍保留各自的环境限制。
 database_router = APIRouter(prefix="/api/v1")
