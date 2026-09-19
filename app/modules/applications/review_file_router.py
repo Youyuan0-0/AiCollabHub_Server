@@ -1,15 +1,10 @@
 """应用审核报告上传、暂存列表、移除和受控预览接口。"""
 
-import asyncio
-from collections.abc import AsyncIterator
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
 from starlette.datastructures import UploadFile
-from starlette.formparsers import MultiPartException, MultiPartParser
 
 from app.modules.applications.application_service import application_service
 from app.modules.applications.identity import current_actor
@@ -23,14 +18,10 @@ from app.modules.applications.review_files import (
     save_report,
 )
 from app.modules.applications.tutorial_documents import DOCUMENT_LIMIT
-from app.modules.applications.tutorial_router import byte_range
-from app.storage.client import ObjectNotFound, StorageDependency
+from app.modules.common.file_transfer import limited_upload_form, object_response
+from app.storage.client import StorageDependency
 
 router = APIRouter(prefix="/admin/application-publications", tags=["application review reports"])
-
-
-class ReportUploadLimit(MultiPartException):
-    """超限时让 multipart 解析器清理临时文件。"""
 
 
 @router.get("/{publication_id}/report-files")
@@ -55,33 +46,14 @@ async def upload_report(
             check_pending(checked_publication(session, publication_id, actor), revision)
 
     await run_in_threadpool(check_access)
-    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
-        raise HTTPException(415, "请使用文件上传表单")
-    limiter = request.app.state.tutorial_upload_limiter
-    try:
-        await asyncio.wait_for(limiter.acquire(), timeout=0.1)
-    except TimeoutError:
-        raise HTTPException(429, "当前上传较多，请稍后重试") from None
-    count = 0
-    form = None
-    parser = None
-
-    async def limited_stream() -> AsyncIterator[bytes]:
-        nonlocal count
-        async for block in request.stream():
-            count += len(block)
-            if count > DOCUMENT_LIMIT + 64 * 1024:
-                raise ReportUploadLimit("报告文档不能超过 20 MiB")
-            yield block
-
-    try:
-        parser = MultiPartParser(request.headers, limited_stream(), max_files=1, max_fields=0)
-        try:
-            form = await parser.parse()
-        except ReportUploadLimit as error:
-            raise HTTPException(413, str(error)) from None
-        except MultiPartException:
-            raise HTTPException(422, "每次请选择一个报告文件") from None
+    async with limited_upload_form(
+        request,
+        request.app.state.tutorial_upload_limiter,
+        max_bytes=DOCUMENT_LIMIT + 64 * 1024,
+        max_fields=0,
+        too_large_message="报告文档不能超过 20 MiB",
+        invalid_form_message="每次请选择一个报告文件",
+    ) as form:
         file = form.get("file")
         if len(form.multi_items()) != 1 or not isinstance(file, UploadFile) or not file.filename:
             raise HTTPException(422, "请选择一个报告文件")
@@ -89,13 +61,6 @@ async def upload_report(
         return await run_in_threadpool(
             save_report, service, storage, actor, publication_id, revision, file.filename, content
         )
-    finally:
-        if form is not None:
-            await form.close()
-        elif parser is not None:
-            for temporary in parser._files_to_close_on_error:
-                temporary.close()
-        limiter.release()
 
 
 @router.delete("/{publication_id}/report-files/{identifier}", status_code=204)
@@ -127,41 +92,13 @@ def report_content(
     )
     if file["bucket"] != storage.bucket:
         raise HTTPException(503, "报告存储配置已变化，请联系管理员")
-    key = file["previewKey"] if preview else file["objectKey"]
-    media_type = file["previewContentType"] if preview else file["contentType"]
-    try:
-        info = storage.stat_object(key)
-    except ObjectNotFound:
-        raise HTTPException(404, "报告文件已不可用，请联系管理员") from None
-    start, end, status = byte_range(request.headers.get("range"), info.size)
-    length = end - start + 1
-    disposition = "inline" if preview else "attachment"
-    headers = {
-        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(file['name'], safe='')}",
-        "Content-Length": str(length),
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
-    }
-    if media_type == "text/html":
-        headers["Content-Security-Policy"] = (
-            "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
-            "frame-ancestors 'self'; sandbox"
-        )
-    if status == 206:
-        headers["Content-Range"] = f"bytes {start}-{end}/{info.size}"
-    if request.method == "HEAD":
-        return Response(status_code=status, headers=headers, media_type=media_type)
-
-    def chunks():
-        with storage.open_object(key, offset=start, length=length) as stream:
-            remaining = length
-            while remaining:
-                block = stream.read(min(64 * 1024, remaining))
-                if not block:
-                    break
-                remaining -= len(block)
-                yield block
-
-    return StreamingResponse(chunks(), status_code=status, headers=headers, media_type=media_type)
+    return object_response(
+        request,
+        storage,
+        key=file["previewKey"] if preview else file["objectKey"],
+        filename=file["name"],
+        media_type=file["previewContentType"] if preview else file["contentType"],
+        preview=preview,
+        missing_message="报告文件已不可用，请联系管理员",
+        cache_control="private, no-store",
+    )

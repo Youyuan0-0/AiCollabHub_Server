@@ -19,6 +19,8 @@
 
 七项评分字段复用 `modules/common/review_schemas.py`；应用和数据集保留独立审核请求模型，各自决定哪些审核结论必须填写评分，不设置统一及格线。
 
+教程和审核报告通过 `modules/common/file_transfer.py` 共用有界表单解析、上传名额及临时文件释放、Range/HEAD 和流式下载。路由先验证权限，并分别传入大小、表单字段、缓存策略；文件登记、业务归属及审核状态仍由各自服务处理。
+
 供应方市场和智能体运行分别由 `APPLICATIONS_MARKET`、`APPLICATIONS_RUNTIME` 配置。模拟实现仍参与开发流程，真实服务接入按实际协议、账号和权限配置，凭据不进入前端或资料 JSON。
 
 发布审核、存储、市场和身份集成的回归用例位于根目录 `tests/test_application_*.py`。接口细节可查看路由源码及开发环境 OpenAPI。
