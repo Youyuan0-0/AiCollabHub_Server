@@ -66,6 +66,7 @@ def main() -> None:
             "requirements-dev.lock",
             "README.md",
             "alembic.ini",
+            "alembic.datasets.ini",
             "app",
             "migrations",
             "scripts/verify_services.py",

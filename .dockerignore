@@ -6,6 +6,7 @@
 !requirements-dev.lock
 !README.md
 !alembic.ini
+!alembic.datasets.ini
 !app/
 !app/**
 !migrations/
