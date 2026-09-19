@@ -26,6 +26,8 @@ TABLE_NAMES = (
     "scene_review_note",
     "scene_notification",
     "scene_configuration",
+    "scene_tutorial_file",
+    "scene_review_report_file",
 )
 
 

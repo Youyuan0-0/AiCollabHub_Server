@@ -1,7 +1,7 @@
 digraph scene_v2_1 {
   graph [rankdir=LR, bgcolor="white", pad="0.30", nodesep="0.28", ranksep="0.55",
     fontname="Microsoft YaHei", fontsize=20, labelloc=t,
-    label="场景应用 V2.1 · 对方接口与本地补充（8 张表）\n虚线：接口或配置关联　实线：主要表关系", splines=polyline];
+    label="场景应用 V2.3 · 对方接口与本地补充（10 张表）\n虚线：接口或配置关联　实线：主要表关系", splines=polyline];
   node [shape=box, style="rounded,filled", fontname="Microsoft YaHei", fontsize=12,
     width=3.7, margin="0.22,0.15", fillcolor="#eef5ff", color="#5d83bd"];
   edge [fontname="Microsoft YaHei", fontsize=10, color="#64748b", fontcolor="#475569", arrowsize=0.65];
@@ -16,6 +16,14 @@ digraph scene_v2_1 {
   review [label="⑥ 审核补充留痕\nscene_review_note\n人工评分 · 补材料意见 · 审计\n最终审核状态以对方确认为准"];
   notification [label="⑦ 个人站内通知\nscene_notification\n消息 · 接收人 · 已读时间"];
   config [label="⑧ 平台配置\nscene_configuration\n表单 · 展示 · 本地评分 · 通知\n热门分类仅存外部编号"];
+  tutorial [label="⑨ 教程文件\nscene_tutorial_file\n原件 / 预览索引 · 密级 · 上传人"];
+  report [label="⑩ 审核报告附件\nscene_review_report_file\n原件 / 预览索引 · 申请 · 审核记录"];
+  minio [label="现有 MinIO 文件服务\n保存教程和报告文件正文", fillcolor="#f3f4f6"];
+  app -> tutorial [style=dashed,label="教程条目引用"];
+  app -> report [label="1 对多"];
+  review -> report [label="0 至 3 个报告"];
+  tutorial -> minio [style=dashed,label="对象键"];
+  report -> minio [style=dashed,label="桶名 / 对象键"];
   agent -> app [style=dashed,label="接口 / 编号"];
   market -> app [style=dashed,label="接口 / 编号"];
   iam -> app [style=dashed,label="用户 / 组织编号"];

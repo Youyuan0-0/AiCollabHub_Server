@@ -8,7 +8,15 @@ from app.core.config import Settings
 from app.main import create_app
 
 API = "/api/v1"
-SCORES = {"completeness": 4, "usability": 4, "security": 4}
+SCORES = {
+    "formatCompliance": 4,
+    "safetyCompliance": 4,
+    "annotationCompliance": 4,
+    "structuralCompleteness": 4,
+    "authenticity": 4,
+    "consistency": 4,
+    "cleanliness": 4,
+}
 
 
 @pytest.fixture
@@ -88,8 +96,8 @@ def test_quality_scoring_security_and_history(client):
     path = f"{API}/admin/application-publications/{record['id']}"
     report = client.get(path + "/quality").json()
     assert all(check["passed"] for check in report["checks"])
-    assert report["minimumScore"] == 3 and report["suggestions"]
-    for scores in (None, {**SCORES, "security": 2}):
+    assert "minimumScore" not in report and report["suggestions"]
+    for scores in (None, {**SCORES, "safetyCompliance": 0}, {**SCORES, "cleanliness": True}):
         response = client.post(
             path + "/review", json={"decision": "approved", "revision": 1, "scores": scores}
         )
@@ -117,6 +125,46 @@ def test_quality_scoring_security_and_history(client):
     assert approved["reviews"][0]["data"] == record["data"]
     for url in ("/admin/application-review-history", "/admin/application-review-queue"):
         assert client.get(API + url + "?start=2026-09-15&end=2026-09-01").status_code == 422
+
+
+@pytest.mark.parametrize("decision", ["approved", "rejected", "needs_changes"])
+def test_seven_scores_allow_low_scores_and_ignore_legacy_threshold(client, decision):
+    """旧配置不再形成门槛，三类结论都保留完整七项分数及用户评分独立性。"""
+    assert "minimumQualityScore" not in policy(client, minimumQualityScore=5)
+    record = submit(client)
+    scores = dict.fromkeys(SCORES, 1)
+    response = client.post(
+        f"{API}/admin/application-publications/{record['id']}/review",
+        json={"revision": 1, "decision": decision, "reason": "人工审核结论", "scores": scores},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["reviews"][-1]["scores"] == scores
+    if decision == "approved":
+        resource = client.get(f"{API}/applications/{record['applicationId']}").json()
+        assert resource["rating"] is None
+
+
+@pytest.mark.parametrize(
+    "scores",
+    [
+        {"completeness": 4, "usability": 4, "security": 4},
+        {key: value for key, value in SCORES.items() if key != "cleanliness"},
+        {**SCORES, "cleanliness": 1.5},
+        {**SCORES, "cleanliness": 6},
+    ],
+)
+def test_review_rejects_incomplete_or_invalid_seven_scores(client, scores):
+    """完整七项与合法整数仍由服务端校验，禁止旧三项或异常分值绕过。"""
+    record = submit(client)
+    response = client.post(
+        f"{API}/admin/application-publications/{record['id']}/review",
+        json={"revision": 1, "decision": "approved", "scores": scores},
+    )
+    assert response.status_code == 422
+    assert (
+        client.get(f"{API}/admin/application-publications/{record['id']}").json()["status"]
+        == "pending"
+    )
 
 
 @pytest.mark.parametrize(

@@ -26,9 +26,9 @@ async function main() {
     VALUES ('${id}','${app}','user-a','${op}','${request}',repeat('a',64),'${mode}','${status}',
       ${['succeeded','failed','timed_out','unchanged'].includes(status) ? 'now()' : 'NULL'},100)`;
   try {
-    await check('8 张业务表和 2 个视图可完整创建', async () => {
+    await check('10 张业务表和 2 个视图可完整创建', async () => {
       await db.exec(sql);
-      assert.equal((await query("SELECT * FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")).length, 8);
+      assert.equal((await query("SELECT * FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")).length, 10);
       assert.equal((await query("SELECT * FROM information_schema.views WHERE table_schema='public'")).length, 2);
       assert.equal((await query('SELECT * FROM scene_configuration')).length, 2);
     });
@@ -84,9 +84,9 @@ async function main() {
       INSERT INTO scene_submission_extension(id,application_id,submission_key,created_by_subject)
       VALUES ('extra-duplicate','app-a','publication-duplicate','user-a')`, '23505'));
     const review = `INSERT INTO scene_review_note(id,application_id,submission_extension_id,reviewer_subject,
-      recommendation,completeness_score,usability_score,security_score,minimum_score,policy_snapshot)`;
+      recommendation,score_schema,quality_scores,policy_snapshot)`;
     await check('审核前必须冻结补充资料', () => reject(`${review}
-      VALUES ('premature','app-a','extra-a','admin','approved',4,4,4,3,'{}')`, '23514'));
+      VALUES ('premature','app-a','extra-a','admin','approved',2,'{"formatCompliance":1,"safetyCompliance":1,"annotationCompliance":1,"structuralCompleteness":1,"authenticity":1,"consistency":1,"cleanliness":1}','{}')`, '23514'));
     await check('冻结后可以补登记外部审核编号', async () => {
       await db.exec(`UPDATE scene_submission_extension SET local_fields='{"tutorials":[]}',frozen_at=now() WHERE id='extra-a';
         UPDATE scene_submission_extension SET market_profile='market-test',external_submission_id='S001',external_version_id='MV001'
@@ -96,16 +96,16 @@ async function main() {
       "UPDATE scene_submission_extension SET local_fields='{}' WHERE id='extra-a'", '23514'));
     await check('冻结后的外部编号不可调包', () => reject(
       "UPDATE scene_submission_extension SET external_submission_id='S002' WHERE id='extra-a'", '23514'));
-    await check('审核建议通过不可漏掉三项评分', () => reject(`${review}
-      VALUES ('no-score','app-a','extra-a','admin','approved',NULL,NULL,NULL,3,'{}')`, '23514'));
-    await check('审核评分必须满足阈值', () => reject(`${review}
-      VALUES ('low-score','app-a','extra-a','admin','approved',2,4,4,3,'{}')`, '23514'));
-    await check('审核操作与本申请关联，保存本地评分建议', async () => {
+    await check('审核建议通过不可漏掉七项评分', () => reject(`${review}
+      VALUES ('no-score','app-a','extra-a','admin','approved',2,NULL,'{}')`, '23514'));
+    await check('审核评分不能缺项', () => reject(`${review}
+      VALUES ('low-score','app-a','extra-a','admin','approved',2,'{}','{}')`, '23514'));
+    await check('审核操作与本申请关联，全部一分仍可保存通过结论', async () => {
       await db.exec(`${activity('decision-a','review_decision','live','queued')};
         UPDATE scene_activity SET submission_extension_id='extra-a' WHERE id='decision-a';
         INSERT INTO scene_review_note(id,application_id,submission_extension_id,decision_activity_id,
-          reviewer_subject,recommendation,completeness_score,usability_score,security_score,minimum_score,policy_snapshot)
-        VALUES ('review-a','app-a','extra-a','decision-a','admin','approved',4,4,4,3,'{}')`);
+          reviewer_subject,recommendation,score_schema,quality_scores,policy_snapshot)
+        VALUES ('review-a','app-a','extra-a','decision-a','admin','approved',2,'{"formatCompliance":1,"safetyCompliance":1,"annotationCompliance":1,"structuralCompleteness":1,"authenticity":1,"consistency":1,"cleanliness":1}','{}')`);
       assert.equal((await query("SELECT status FROM scene_activity WHERE id='decision-a'"))[0].status, 'queued');
     });
     await check('审核留痕不可修改', () => reject(
@@ -194,7 +194,7 @@ async function main() {
     });
     const version = (await query('SELECT version() AS version'))[0].version;
     fs.writeFileSync(path.join(__dirname,'validation-result.json'),JSON.stringify({
-      checkedAt:new Date().toISOString(), schemaVersion:'2.1', tables:8, engine:version, passed:checks.length,
+      checkedAt:new Date().toISOString(), schemaVersion:'2.3', tables:10, engine:version, passed:checks.length,
       schemaSha256:createHash('sha256').update(sql).digest('hex'), checks,
       scope:'独立 PGlite；未连接项目数据库；未验证真实并发、主备或外部接口',
     },null,2)+'\n');

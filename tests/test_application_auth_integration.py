@@ -97,7 +97,15 @@ def test_login_publication_can_be_reviewed_with_admin_session(request):
         json={
             "decision": "approved",
             "revision": record["revision"],
-            "scores": {"completeness": 4, "usability": 4, "security": 4},
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
         },
         headers=csrf(client, "admin"),
     )

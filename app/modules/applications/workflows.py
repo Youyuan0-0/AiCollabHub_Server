@@ -51,9 +51,11 @@ class ApplicationWorkflows:
     @staticmethod
     def policy_in(session: ApplicationSession) -> dict:
         """读取当前事务的业务策略，未保存时采用默认策略。"""
-        return session.entry("policy", "current") or WorkflowPolicy(revision=1).model_dump(
+        current = session.entry("policy", "current") or WorkflowPolicy(revision=1).model_dump(
             by_alias=True
         )
+        current = {key: value for key, value in current.items() if key != "minimumQualityScore"}
+        return current
 
     def policy(self, actor: Actor | None = None, payload: WorkflowPolicy | None = None) -> dict:
         """读取或按版本保存策略；未传身份时仅返回公开展示配置。"""
@@ -186,7 +188,6 @@ class ApplicationWorkflows:
                 "checkedAt": now(),
                 "checks": checks,
                 "suggestions": suggestions,
-                "minimumScore": self.policy_in(session)["minimumQualityScore"],
                 "basis": "本平台资料规则检查；不代表实际模型效果评测",
             }
 

@@ -101,7 +101,15 @@ def test_submit_review_and_catalog_share_one_application(client, details):
     assert client.get("/api/v1/applications", params={"q": details["name"]}).json()["total"] == 0
     decision = {
         "decision": "approved",
-        "scores": {"completeness": 4, "usability": 4, "security": 4},
+        "scores": {
+            "formatCompliance": 4,
+            "safetyCompliance": 4,
+            "annotationCompliance": 4,
+            "structuralCompleteness": 4,
+            "authenticity": 4,
+            "consistency": 4,
+            "cleanliness": 4,
+        },
         "reason": "资料齐全",
         "revision": record["revision"],
     }
@@ -139,6 +147,15 @@ def test_rejection_requires_reason_and_preserves_reviewed_snapshot(client, detai
         json={
             "decision": "rejected",
             "reason": "补充使用限制",
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
             "revision": 1,
         },
     ).json()
@@ -272,7 +289,15 @@ def test_admin_configuration_changes_form_validation_without_breaking_pending(cl
         f"{ADMIN}/{pending['id']}/review",
         json={
             "decision": "approved",
-            "scores": {"completeness": 4, "usability": 4, "security": 4},
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
             "revision": pending["revision"],
         },
     )
@@ -409,7 +434,15 @@ def test_already_pending_submission_keeps_its_frozen_rules(client, details):
         json={
             "decision": "approved",
             "revision": record["revision"],
-            "scores": {"completeness": 4, "usability": 4, "security": 4},
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
         },
     )
     assert response.status_code == 200, response.text
@@ -463,7 +496,15 @@ def test_new_version_keeps_old_release_until_approval_and_preserves_history(clie
         f"{ADMIN}/{first['id']}/review",
         json={
             "decision": "approved",
-            "scores": {"completeness": 4, "usability": 4, "security": 4},
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
             "revision": 1,
         },
     )
@@ -501,6 +542,15 @@ def test_new_version_keeps_old_release_until_approval_and_preserves_history(clie
             "decision": "needs_changes",
             "revision": pending["revision"],
             "reason": "补充输出说明",
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
         },
     ).json()
     assert changes["status"] == "needs_changes"
@@ -512,7 +562,15 @@ def test_new_version_keeps_old_release_until_approval_and_preserves_history(clie
         review_path,
         json={
             "decision": "approved",
-            "scores": {"completeness": 4, "usability": 4, "security": 4},
+            "scores": {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
             "revision": resubmitted["revision"],
         },
     )
@@ -609,7 +667,15 @@ def test_new_version_preserves_download_and_favorite_statistics(client):
             f"{ADMIN}/{draft['id']}/review",
             json={
                 "decision": "approved",
-                "scores": {"completeness": 4, "usability": 4, "security": 4},
+                "scores": {
+                    "formatCompliance": 4,
+                    "safetyCompliance": 4,
+                    "annotationCompliance": 4,
+                    "structuralCompleteness": 4,
+                    "authenticity": 4,
+                    "consistency": 4,
+                    "cleanliness": 4,
+                },
                 "revision": pending["revision"],
             },
         ).status_code

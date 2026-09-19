@@ -23,6 +23,14 @@ class ApplicationSession(Protocol):
         """在当前事务中写入活动记录。"""
         ...
 
+    def review_files(self, publication_id: str) -> list[dict]:
+        """读取指定申请的报告附件索引。"""
+        ...
+
+    def remove_review_file(self, key: str) -> None:
+        """在事务中移除未提交的报告索引。"""
+        ...
+
     def list_resources(self) -> list[dict]:
         """读取已发布的应用目录。"""
         ...

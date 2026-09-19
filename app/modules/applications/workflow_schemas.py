@@ -56,7 +56,8 @@ class WorkflowPolicy(ApplicationPayload):
     )
     page_size: Literal[6, 12, 24] = 12
     sensitive_terms: list[str] = Field(default_factory=lambda: ["演示拦截词"], max_length=100)
-    minimum_quality_score: int = Field(default=3, ge=1, le=5)
+    # 兼容旧客户端提交的配置；不再返回、保存或用作通过门槛。
+    minimum_quality_score: int | None = Field(default=None, ge=1, le=5, exclude=True)
     notifications_enabled: bool = True
     notification_template: str = Field(default="{name}：{status}", max_length=300)
     failure_threshold: int = Field(default=3, ge=1, le=100)
