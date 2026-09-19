@@ -152,9 +152,23 @@ def receive(
             "applied" if inserted else "duplicate",
             request_id,
             receipt.id,
+            extra={
+                "event": "identity_sync_applied" if inserted else "identity_sync_duplicate",
+                "request_id": request_id,
+                "details": {"receiptId": receipt.id, "resourceType": batch.resource_type},
+            },
         )
         return result
     except (HTTPException, SQLAlchemyError) as error:
         db.rollback()
-        logger.warning("identity_sync failed=%s request_id=%s", type(error).__name__, request_id)
+        logger.warning(
+            "identity_sync failed=%s request_id=%s",
+            type(error).__name__,
+            request_id,
+            extra={
+                "event": "identity_sync_failed",
+                "request_id": request_id,
+                "details": {"errorType": type(error).__name__, "resourceType": batch.resource_type},
+            },
+        )
         raise

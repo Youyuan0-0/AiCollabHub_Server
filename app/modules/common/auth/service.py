@@ -73,7 +73,17 @@ def write_operation(
 
 def system_event(request: Request, action: str, result: str) -> None:
     """记录请求级认证诊断，不输出票据、Cookie 或供应方原始报文。"""
-    logger.info("auth action=%s result=%s request_id=%s", action, result, request.state.request_id)
+    logger.warning(
+        "auth action=%s result=%s request_id=%s",
+        action,
+        result,
+        request.state.request_id,
+        extra={
+            "source": "auth",
+            "event": f"auth_{action}_failed",
+            "details": {"action": action, "result": result},
+        },
+    )
 
 
 def session_by_token(db: Session, raw: str) -> AuthSession | None:

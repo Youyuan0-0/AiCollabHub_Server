@@ -17,6 +17,7 @@ from app.db.conversations import Conversation, StoredConversationMessage  # noqa
 from app.db.overview import OverviewSnapshot  # noqa: F401
 from app.modules.common.auth import models  # noqa: F401
 from app.modules.common.identity_sync import models as identity_models  # noqa: F401
+from app.modules.common.system_logs import SystemLog  # noqa: F401
 
 
 def verify(

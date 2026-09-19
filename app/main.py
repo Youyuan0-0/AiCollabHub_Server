@@ -3,20 +3,23 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from os import getpid
-from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.router import api_router, database_router, mock_router
 from app.core.config import Settings
 from app.core.resources import ApplicationResources, create_resources
+from app.core.system_log_middleware import SystemLogContextMiddleware
+from app.core.system_logging import SystemLogWriter, capture_system_logs
 from app.modules.applications.application_service import ApplicationService
 from app.modules.applications.demo_store import (
     create_database_application_service,
@@ -55,51 +58,60 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        resources = await run_in_threadpool(resources_factory, settings)
-        application.state.resources = resources
-        application.state.feedback_upload_limiter = asyncio.Semaphore(
-            settings.feedback_upload_concurrency
-        )
-        application.state.database_engine = resources.database
-        # 数据集与应用复用单库连接池，但申请及活动记录独立存储；启动时不自动建表。
-        if settings.app_env != "production" and settings.datasets_storage == "database":
-            application.state.dataset_workspace = DatasetWorkspace(
-                DatasetRepository(resources.database),
-                create_dataset_publisher(settings.datasets_publication_mode),
-            )
-        if (
-            settings.app_env != "production"
-            and applications_factory is None
-            and settings.applications_storage == "database"
-        ):
-            application.state.application_service = create_database_application_service(
-                application.state.database_engine, settings
-            )
-        if settings.app_env != "production" and settings.applications_runtime == "agent_dev":
-            from app.modules.applications.runtime import AgentDevProvider
-
-            service = application.state.application_service
-            service.provider = AgentDevProvider(service.provider, settings)
-            service.workflows.provider = service.provider
-        application.state.cas_client = cas_client
-        if settings.auth_mode == "mock" and cas_client is None:
-            application.state.cas_client = MockCasClient(settings)
-        feedback_stopping = asyncio.Event()
-        feedback_maintenance = asyncio.create_task(
-            maintain_feedback(resources, settings, feedback_stopping)
-        )
+        """先停止业务后台任务，再排空日志队列，最后释放公共连接池。"""
         try:
-            yield
+            async with AsyncExitStack() as cleanup:
+                resources = await run_in_threadpool(resources_factory, settings)
+                cleanup.push_async_callback(run_in_threadpool, resources.close)
+                writer = SystemLogWriter(resources.database, settings.instance_id)
+                cleanup.push_async_callback(run_in_threadpool, writer.close)
+                cleanup.enter_context(capture_system_logs(writer))
+                application.state.system_log_writer = writer
+                application.state.resources = resources
+                application.state.feedback_upload_limiter = asyncio.Semaphore(
+                    settings.feedback_upload_concurrency
+                )
+                application.state.database_engine = resources.database
+                # 数据集与应用复用单库连接池，但申请及活动记录独立存储；启动时不自动建表。
+                if settings.app_env != "production" and settings.datasets_storage == "database":
+                    application.state.dataset_workspace = DatasetWorkspace(
+                        DatasetRepository(resources.database),
+                        create_dataset_publisher(settings.datasets_publication_mode),
+                    )
+                if (
+                    settings.app_env != "production"
+                    and applications_factory is None
+                    and settings.applications_storage == "database"
+                ):
+                    application.state.application_service = create_database_application_service(
+                        application.state.database_engine, settings
+                    )
+                if (
+                    settings.app_env != "production"
+                    and settings.applications_runtime == "agent_dev"
+                ):
+                    from app.modules.applications.runtime import AgentDevProvider
+
+                    service = application.state.application_service
+                    service.provider = AgentDevProvider(service.provider, settings)
+                    service.workflows.provider = service.provider
+                application.state.cas_client = cas_client
+                if settings.auth_mode == "mock" and cas_client is None:
+                    application.state.cas_client = MockCasClient(settings)
+                    cleanup.callback(application.state.cas_client.close)
+                feedback_stopping = asyncio.Event()
+                feedback_maintenance = asyncio.create_task(
+                    maintain_feedback(resources, settings, feedback_stopping)
+                )
+                try:
+                    yield
+                finally:
+                    feedback_stopping.set()
+                    await feedback_maintenance
         finally:
-            feedback_stopping.set()
-            await feedback_maintenance
-            if settings.auth_mode == "mock" and cas_client is None:
-                application.state.cas_client.close()
-            try:
-                await run_in_threadpool(resources.close)
-            finally:
-                application.state.database_engine = None
-                application.state.resources = None
+            application.state.system_log_writer = None
+            application.state.database_engine = None
+            application.state.resources = None
 
     # 生产环境关闭交互文档和 OpenAPI 描述，减少不必要的接口信息暴露。
     development_docs = settings.app_env != "production"
@@ -125,11 +137,11 @@ def create_app(
     )
     application.state.database_engine = None
     application.state.resources = None
+    application.state.system_log_writer = None
 
     @application.middleware("http")
     async def request_context(request: Request, call_next: RequestResponseEndpoint) -> Response:
         """为请求和响应补充追踪标识与数据模式，并限制接口响应缓存。"""
-        request.state.request_id = str(uuid4())
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-App-Instance"] = settings.instance_id
@@ -179,18 +191,58 @@ def create_app(
             type(error).__name__,
             getattr(getattr(error, "orig", None), "sqlstate", None),
             request.state.request_id,
+            extra={
+                "source": "database",
+                "event": "database_request_failed",
+                "details": {
+                    "errorType": type(error).__name__,
+                    "sqlState": getattr(getattr(error, "orig", None), "sqlstate", None),
+                },
+            },
         )
         return JSONResponse(status_code=503, content={"detail": "database_unavailable"})
 
     @application.exception_handler(StorageUnavailable)
     async def storage_unavailable(request: Request, error: StorageUnavailable) -> JSONResponse:
         """将存储访问失败转换为统一服务不可用响应。"""
+        logger.warning(
+            "Object storage unavailable",
+            extra={"source": "storage", "event": "object_storage_unavailable"},
+        )
         return JSONResponse(status_code=503, content={"detail": "object_storage_unavailable"})
 
     @application.exception_handler(ObjectNotFound)
     async def object_not_found(request: Request, error: ObjectNotFound) -> JSONResponse:
         """将存储对象缺失转换为统一资源不存在响应。"""
         return JSONResponse(status_code=404, content={"detail": "object_not_found"})
+
+    @application.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, error: StarletteHTTPException) -> Response:
+        """记录权限拒绝与服务失败，保留框架原有的状态码、响应体和响应头。"""
+        if error.status_code == 403 or error.status_code >= 500:
+            logger.warning(
+                "Request failed (status=%s)",
+                error.status_code,
+                extra={
+                    "source": "http",
+                    "event": "request_denied" if error.status_code == 403 else "request_failed",
+                    "details": {
+                        "statusCode": error.status_code,
+                        "method": request.method,
+                        "route": getattr(request.scope.get("route"), "path", "<unmatched>"),
+                    },
+                },
+            )
+        return await http_exception_handler(request, error)
+
+    @application.exception_handler(Exception)
+    async def unhandled_error(request: Request, error: Exception) -> JSONResponse:
+        """未捕获异常已由日志中间件记录，此处仅返回无内部信息的响应。"""
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal_server_error"},
+            headers={"X-Request-ID": request.state.request_id, "Cache-Control": "no-store"},
+        )
 
     # Vue 使用同源开发代理时无需 CORS；独立跨域访问须显式配置允许的来源。
     if settings.cors_origins:
@@ -202,6 +254,8 @@ def create_app(
                 "Content-Type",
             ],
         )
+    # 放在其他用户中间件外层，覆盖同步依赖、异常处理和流式响应的完整生命周期。
+    application.add_middleware(SystemLogContextMiddleware)
     application.include_router(api_router)
     # 持久化接口与 Mock 业务共用认证开关，健康检查和登录入口保持独立。
     business_dependencies = (
