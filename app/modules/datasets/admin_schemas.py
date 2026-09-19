@@ -1,16 +1,16 @@
 """数据集后台查询与审核契约，状态和评分均由服务端校验。"""
 
 from datetime import date
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
 from app.modules.applications.publication_schemas import ApplicationVisibility
+from app.modules.common.review_schemas import ReviewQualityScores
 from app.modules.common.schemas import CatalogQuery, PageQuery, Payload
 
 DatasetDecision = Literal["approved", "rejected", "needs_changes"]
 DATASET_STATUSES = ("draft", "pending", "approved", "rejected", "needs_changes")
-Score = Annotated[int, Field(ge=1, le=5, strict=True)]
 
 
 class DatasetListing(Payload):
@@ -42,17 +42,8 @@ class DatasetVisibility(ApplicationVisibility):
         return self
 
 
-class DatasetScores(Payload):
+class DatasetScores(ReviewQualityScores):
     """管理员填写的七维质量评分，每项为 1–5 分整数；旧三项仅保留在历史快照中。"""
-
-    model_config = ConfigDict(extra="forbid")
-    format_compliance: Score
-    safety_compliance: Score
-    annotation_compliance: Score
-    structural_completeness: Score
-    authenticity: Score
-    consistency: Score
-    cleanliness: Score
 
 
 class ReviewDataset(Payload):

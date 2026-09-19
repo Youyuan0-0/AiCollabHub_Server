@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.modules.applications.schema_validation import parse_schema
+from app.modules.common.review_schemas import ReviewQualityScores
 from app.modules.common.schemas import Payload
 
 APPLICATION_CATEGORIES = ("文档创作", "会议办公", "数据处理", "翻译沟通", "法律合规")
@@ -167,16 +168,10 @@ class ApplicationDetails(ApplicationPayload):
         return labels
 
 
-class QualityScores(ApplicationPayload):
+class QualityScores(ReviewQualityScores):
     """应用审核的七项质量评分，每项为 1 至 5 分整数，不设置及格线。"""
 
-    format_compliance: int = Field(ge=1, le=5, strict=True)
-    safety_compliance: int = Field(ge=1, le=5, strict=True)
-    annotation_compliance: int = Field(ge=1, le=5, strict=True)
-    structural_completeness: int = Field(ge=1, le=5, strict=True)
-    authenticity: int = Field(ge=1, le=5, strict=True)
-    consistency: int = Field(ge=1, le=5, strict=True)
-    cleanliness: int = Field(ge=1, le=5, strict=True)
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 # 前端保存申请的 JSON 在这里解析；字段格式不合规则由 FastAPI 返回 422。
