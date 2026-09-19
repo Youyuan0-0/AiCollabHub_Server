@@ -1,5 +1,5 @@
 -- 场景应用数据库设计 V2.1：按已提供接口保存最少本地数据，2026-09-15
--- PostgreSQL 16/17，UTF-8。共 8 张本地业务表，2 个统计视图。
+-- PostgreSQL 16/17，UTF-8。共 9 张本地业务表，2 个统计视图（含教程附件索引）。
 -- 目标：Agent Dev 提供智能体/版本/运行，HiMarket 提供分类/目录/草稿/发布/审核/资源包。
 -- 这是接入目标设计，不代表现场已开通 HiMarket；现有演示代码尚未使用这些表。
 -- 本地保存关联编号、平台扩展、权限、个人操作、补充审核和必要记录。
@@ -225,6 +225,23 @@ COMMENT ON COLUMN scene_activity.idempotency_scope IS
     '同步按用户和请求去重，其他操作按用户/类型/应用/请求去重；迟到的 application_id 不改变同步去重范围';
 
 -- 06 审核补充留痕：记录本平台三项评分及建议，不把本地建议当作 HiMarket 最终审批状态。
+CREATE OR REPLACE FUNCTION scene_valid_review_scores(value jsonb)
+RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN jsonb_typeof(value) = 'object' THEN
+        value ?& ARRAY['formatCompliance','safetyCompliance','annotationCompliance',
+            'structuralCompleteness','authenticity','consistency','cleanliness']
+        AND value - ARRAY['formatCompliance','safetyCompliance','annotationCompliance',
+            'structuralCompleteness','authenticity','consistency','cleanliness'] = '{}'::jsonb
+        AND value->'formatCompliance' IN ('1','2','3','4','5')
+        AND value->'safetyCompliance' IN ('1','2','3','4','5')
+        AND value->'annotationCompliance' IN ('1','2','3','4','5')
+        AND value->'structuralCompleteness' IN ('1','2','3','4','5')
+        AND value->'authenticity' IN ('1','2','3','4','5')
+        AND value->'consistency' IN ('1','2','3','4','5')
+        AND value->'cleanliness' IN ('1','2','3','4','5')
+    ELSE false END
+$$;
+
 CREATE TABLE scene_review_note (
     id varchar(80) PRIMARY KEY,
     application_id varchar(80) NOT NULL,
@@ -236,7 +253,9 @@ CREATE TABLE scene_review_note (
     completeness_score smallint CHECK (completeness_score BETWEEN 1 AND 5),
     usability_score smallint CHECK (usability_score BETWEEN 1 AND 5),
     security_score smallint CHECK (security_score BETWEEN 1 AND 5),
-    minimum_score smallint NOT NULL CHECK (minimum_score BETWEEN 1 AND 5),
+    minimum_score smallint CHECK (minimum_score BETWEEN 1 AND 5),
+    score_schema smallint NOT NULL DEFAULT 1,
+    quality_scores jsonb,
     policy_snapshot jsonb NOT NULL CHECK (jsonb_typeof(policy_snapshot) = 'object'),
     evidence_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(evidence_snapshot) = 'object'),
     reviewed_at timestamptz NOT NULL DEFAULT now(),
@@ -244,11 +263,20 @@ CREATE TABLE scene_review_note (
         REFERENCES scene_submission_extension(application_id, id),
     CONSTRAINT fk_scene_review_activity FOREIGN KEY (decision_activity_id) REFERENCES scene_activity(id),
     CONSTRAINT uq_scene_review_round UNIQUE (submission_extension_id),
-    CONSTRAINT ck_scene_review_scores CHECK (num_nonnulls(completeness_score, usability_score, security_score) IN (0,3)),
-    CONSTRAINT ck_scene_review_approve CHECK (recommendation <> 'approved' OR (
+    CONSTRAINT ck_scene_review_scores CHECK (
+    (score_schema = 1 AND quality_scores IS NULL
+        AND num_nonnulls(completeness_score, usability_score, security_score) IN (0,3))
+    OR (score_schema = 2 AND quality_scores IS NOT NULL
+        AND COALESCE(scene_valid_review_scores(quality_scores), false)
+        AND num_nonnulls(completeness_score, usability_score, security_score, minimum_score) = 0)
+),
+    CONSTRAINT ck_scene_review_approve CHECK (
+    score_schema = 2 OR recommendation <> 'approved' OR (
         completeness_score IS NOT NULL AND usability_score IS NOT NULL AND security_score IS NOT NULL
+        AND minimum_score IS NOT NULL
         AND completeness_score >= minimum_score AND usability_score >= minimum_score AND security_score >= minimum_score
-    )),
+    )
+),
     CONSTRAINT ck_scene_review_reason CHECK (recommendation = 'approved' OR btrim(reason) <> '')
 );
 CREATE INDEX ix_scene_review_history ON scene_review_note(reviewer_subject, reviewed_at DESC);
@@ -380,7 +408,7 @@ CREATE TRIGGER scene_visibility_no_update BEFORE UPDATE ON scene_visibility_targ
 -- {"marketProfile":"配置名","categoryId":"对方编号"} 引用；名称和分类详情通过接口取。
 INSERT INTO scene_configuration(key,value) VALUES
 ('form','{"requiredFields":["name","version","category","owner","summary"],"fieldHints":{},"managementColumns":["category","owner","version","usage","updatedAt"]}'),
-('workflow','{"toolchainUrl":"","announcement":"","recommendedIds":[],"hotCategoryRefs":[],"defaultSort":"recommended","pageSize":12,"sensitiveTerms":[],"minimumQualityScore":3,"notificationsEnabled":true,"notificationTemplate":"{name}：{status}","failureThreshold":3}');
+('workflow','{"toolchainUrl":"","announcement":"","recommendedIds":[],"hotCategoryRefs":[],"defaultSort":"recommended","pageSize":12,"sensitiveTerms":[],"notificationsEnabled":true,"notificationTemplate":"{name}：{status}","failureThreshold":3}');
 
 -- 视图只汇总本平台实际发生的操作，不充当对方全局计量。
 CREATE VIEW scene_run_metrics AS
@@ -475,3 +503,46 @@ COMMIT;
 -- 10. 范式：主体按应用、个人互动、补充提交、审核和操作拆开；用户资料复用公共身份模块。
 --     范围类型用于复合外键，规则/证据快照用于历史追溯，JSON 用于有限扩展；不宣称严格全表三范式。
 --     此文件只用于尚未创建场景表的库；若已执行 V2，须先做显式数据迁移，不可直接重跑。
+
+-- 已有场景数据库的增量变更；只新增教程文件元信息表，不修改历史业务数据。
+CREATE TABLE IF NOT EXISTS scene_tutorial_file (
+    id text PRIMARY KEY,
+    created_by_subject text NOT NULL,
+    organization_id text NOT NULL DEFAULT '',
+    original_name text NOT NULL CHECK (length(original_name) BETWEEN 1 AND 200),
+    byte_size bigint NOT NULL CHECK (byte_size > 0 AND byte_size <= 104857600),
+    content_type text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('document', 'video')),
+    security_level text NOT NULL CHECK (security_level IN ('internal', 'public')),
+    object_key text NOT NULL UNIQUE,
+    preview_key text NOT NULL,
+    preview_content_type text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE scene_tutorial_file IS '教程原文件与阅读预览的持久化索引；内容存于受控文件服务，访问需检查应用或发布申请权限';
+
+-- 增量迁移：只增加应用审核报告索引，不修改已有应用和审核记录。
+CREATE TABLE IF NOT EXISTS scene_review_report_file (
+    id text PRIMARY KEY,
+    application_id varchar(80) NOT NULL REFERENCES scene_application(id),
+    publication_id varchar(80) NOT NULL,
+    publication_revision integer NOT NULL CHECK (publication_revision > 0),
+    review_note_id varchar(80) REFERENCES scene_review_note(id),
+    created_by_subject text NOT NULL,
+    original_name text NOT NULL CHECK (length(original_name) BETWEEN 1 AND 200),
+    byte_size bigint NOT NULL CHECK (byte_size > 0 AND byte_size <= 20971520),
+    content_type text NOT NULL,
+    bucket_name text NOT NULL,
+    object_key text NOT NULL,
+    preview_key text NOT NULL,
+    preview_content_type text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (bucket_name, object_key)
+);
+CREATE INDEX IF NOT EXISTS ix_scene_review_report_publication
+    ON scene_review_report_file(publication_id, publication_revision);
+CREATE INDEX IF NOT EXISTS ix_scene_review_report_note ON scene_review_report_file(review_note_id);
+COMMENT ON TABLE scene_review_report_file IS
+    '可选质量评测报告；文件存于 MinIO，上传暂存后与审核记录在同一事务中关联';
+COMMENT ON COLUMN scene_review_report_file.review_note_id IS
+    '未提交审核时为空；提交后固定归属本次审核，后续版本不覆盖原报告';

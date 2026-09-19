@@ -24,13 +24,35 @@ class DatabasePublicationMixin:
             key=lambda row: row["round_no"],
         )
 
-    def list_publications(self) -> list[dict]:
-        """按申请编号组合发布资料和审核历史。"""
+    def list_publications(self, *, warnings: list[str] | None = None) -> list[dict]:
+        """组合发布资料；列表可显式收集快照缺失提示，写入流程仍严格报错。"""
         table = self.table("submission_extension")
         ids = self.db.execute(table.select().with_only_columns(table.c.submission_key).distinct())
-        return [
-            record for key in sorted(row[0] for row in ids) if (record := self.get_publication(key))
-        ]
+        records = []
+        for key in sorted(row[0] for row in ids):
+            try:
+                record = self.get_publication(key)
+            except HTTPException as error:
+                if (
+                    warnings is None
+                    or error.status_code != 503
+                    or error.detail
+                    not in (
+                        "application_demo_snapshot_unavailable",
+                        "application_demo_reference_invalid",
+                    )
+                ):
+                    raise
+                message = (
+                    "部分申请资料暂时无法读取，当前列表和数量仅包含可用申请，"
+                    "请联系管理员恢复缺失资料。"
+                )
+                if message not in warnings:
+                    warnings.append(message)
+                continue
+            if record:
+                records.append(record)
+        return records
 
     def publication_data(self, extension: dict) -> dict:
         """根据扩展记录读取对应的供应方发布资料。"""
@@ -66,6 +88,9 @@ class DatabasePublicationMixin:
             record["submissionRules"] = deepcopy(latest["form_rules_snapshot"])
             record["formRevision"] = latest["form_rules_snapshot"].get("revision")
         note_table = self.table("review_note")
+        from app.modules.applications.review_files import public_report
+
+        report_files = self.review_files(publication_id)
         for extension in extensions:
             note = self.one("review_note", note_table.c.submission_extension_id == extension["id"])
             if note is None:
@@ -79,8 +104,8 @@ class DatabasePublicationMixin:
             result = self.marketplace.load(decision["external_request_id"], "decision")
             if extension["id"] == latest["id"]:
                 record["status"] = result["status"]
-            scores = None
-            if note["completeness_score"] is not None:
+            scores = deepcopy(note.get("quality_scores"))
+            if scores is None and note["completeness_score"] is not None:
                 scores = {
                     "completeness": note["completeness_score"],
                     "usability": note["usability_score"],
@@ -94,6 +119,11 @@ class DatabasePublicationMixin:
                     "reviewerId": note["reviewer_subject"],
                     "reviewerName": self.display_name(note["reviewer_subject"]),
                     "scores": scores,
+                    "reportFiles": [
+                        public_report(file)
+                        for file in report_files
+                        if file["reviewId"] == note["id"]
+                    ],
                     "reviewedAt": iso(note["reviewed_at"]),
                     "submittedAt": iso(extension["frozen_at"]),
                     "data": self.publication_data(extension)["data"],
@@ -234,13 +264,9 @@ class DatabasePublicationMixin:
                 reviewer_subject=review["reviewerId"],
                 recommendation=review["decision"],
                 reason=review["reason"],
-                completeness_score=scores.get("completeness"),
-                usability_score=scores.get("usability"),
-                security_score=scores.get("security"),
-                minimum_score=policy["minimumQualityScore"],
-                policy_snapshot={
-                    key: policy[key] for key in ("minimumQualityScore", "sensitiveTerms")
-                },
+                score_schema=2,
+                quality_scores=scores,
+                policy_snapshot={"sensitiveTerms": policy["sensitiveTerms"]},
                 evidence_snapshot={"externalVersionId": extension["external_version_id"]},
                 reviewed_at=date_value(review["reviewedAt"]),
             )

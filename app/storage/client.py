@@ -135,11 +135,14 @@ class MinioStorage:
             self._translate_error(error)
 
     @contextmanager
-    def open_object(self, key: str) -> Iterator[HTTPResponse]:
-        """打开对象读取流，并确保读取结束或中断后归还连接。"""
+    def open_object(self, key: str, *, offset: int = 0, length: int = 0) -> Iterator[HTTPResponse]:
+        """打开对象或指定字节范围，读取结束或中断后归还连接。"""
         self._validate_key(key)
+        if offset < 0 or length < 0:
+            raise ValueError("Invalid object range")
         try:
-            response = self.client.get_object(self.bucket, key)
+            options = {"offset": offset, "length": length} if offset or length else {}
+            response = self.client.get_object(self.bucket, key, **options)
         except (MinioException, HTTPError, OSError) as error:
             self._translate_error(error)
         try:

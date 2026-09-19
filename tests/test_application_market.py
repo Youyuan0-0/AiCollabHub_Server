@@ -155,7 +155,18 @@ def setup_market(tmp_path, monkeypatch):
 def mutate(workflow, app_id, action, **extra):
     is_admin = action in ("review_decision", "publish")
     if action == "review_decision" and extra.get("decision") == "approved":
-        extra.setdefault("scores", {"completeness": 4, "usability": 4, "security": 4})
+        extra.setdefault(
+            "scores",
+            {
+                "formatCompliance": 4,
+                "safetyCompliance": 4,
+                "annotationCompliance": 4,
+                "structuralCompleteness": 4,
+                "authenticity": 4,
+                "consistency": 4,
+                "cleanliness": 4,
+            },
+        )
     payload = MarketMutation(requestId="request-" + action, action=action, **extra)
     return workflow.execute(
         app_id, DEFAULT_ADMIN if is_admin else DEFAULT_USER, payload, is_admin=is_admin

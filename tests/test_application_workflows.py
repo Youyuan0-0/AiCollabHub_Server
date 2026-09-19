@@ -8,7 +8,15 @@ from app.core.config import Settings
 from app.main import create_app
 
 API = "/api/v1"
-SCORES = {"completeness": 4, "usability": 4, "security": 4}
+SCORES = {
+    "formatCompliance": 4,
+    "safetyCompliance": 4,
+    "annotationCompliance": 4,
+    "structuralCompleteness": 4,
+    "authenticity": 4,
+    "consistency": 4,
+    "cleanliness": 4,
+}
 
 
 @pytest.fixture
@@ -88,8 +96,8 @@ def test_quality_scoring_security_and_history(client):
     path = f"{API}/admin/application-publications/{record['id']}"
     report = client.get(path + "/quality").json()
     assert all(check["passed"] for check in report["checks"])
-    assert report["minimumScore"] == 3 and report["suggestions"]
-    for scores in (None, {**SCORES, "security": 2}):
+    assert "minimumScore" not in report and report["suggestions"]
+    for scores in (None, {**SCORES, "safetyCompliance": 0}, {**SCORES, "cleanliness": True}):
         response = client.post(
             path + "/review", json={"decision": "approved", "revision": 1, "scores": scores}
         )
@@ -117,6 +125,46 @@ def test_quality_scoring_security_and_history(client):
     assert approved["reviews"][0]["data"] == record["data"]
     for url in ("/admin/application-review-history", "/admin/application-review-queue"):
         assert client.get(API + url + "?start=2026-09-15&end=2026-09-01").status_code == 422
+
+
+@pytest.mark.parametrize("decision", ["approved", "rejected", "needs_changes"])
+def test_seven_scores_allow_low_scores_and_ignore_legacy_threshold(client, decision):
+    """旧配置不再形成门槛，三类结论都保留完整七项分数及用户评分独立性。"""
+    assert "minimumQualityScore" not in policy(client, minimumQualityScore=5)
+    record = submit(client)
+    scores = dict.fromkeys(SCORES, 1)
+    response = client.post(
+        f"{API}/admin/application-publications/{record['id']}/review",
+        json={"revision": 1, "decision": decision, "reason": "人工审核结论", "scores": scores},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["reviews"][-1]["scores"] == scores
+    if decision == "approved":
+        resource = client.get(f"{API}/applications/{record['applicationId']}").json()
+        assert resource["rating"] is None
+
+
+@pytest.mark.parametrize(
+    "scores",
+    [
+        {"completeness": 4, "usability": 4, "security": 4},
+        {key: value for key, value in SCORES.items() if key != "cleanliness"},
+        {**SCORES, "cleanliness": 1.5},
+        {**SCORES, "cleanliness": 6},
+    ],
+)
+def test_review_rejects_incomplete_or_invalid_seven_scores(client, scores):
+    """完整七项与合法整数仍由服务端校验，禁止旧三项或异常分值绕过。"""
+    record = submit(client)
+    response = client.post(
+        f"{API}/admin/application-publications/{record['id']}/review",
+        json={"revision": 1, "decision": "approved", "scores": scores},
+    )
+    assert response.status_code == 422
+    assert (
+        client.get(f"{API}/admin/application-publications/{record['id']}").json()["status"]
+        == "pending"
+    )
 
 
 @pytest.mark.parametrize(
@@ -296,13 +344,13 @@ def test_runtime_notification_filter_excludes_review_messages(client):
     assert client.get(path, params={"kind": "run_failure"}).status_code == 403
 
 
-def test_rating_sort_can_be_configured_and_handles_ties(client):
+def test_legacy_rating_setting_maps_to_comprehensive_sort_and_handles_ties(client):
     from app.modules.common.catalog import query_resources
     from app.modules.common.schemas import CatalogQuery
 
     saved = policy(client, defaultSort="rating")
-    assert saved["defaultSort"] == "rating"
-    assert client.get(API + "/application-presentation").json()["defaultSort"] == "rating"
+    assert saved["defaultSort"] == "recommended"
+    assert client.get(API + "/application-presentation").json()["defaultSort"] == "recommended"
     base = {"name": "核查", "description": "", "owner": "", "category": "", "tags": []}
     items = [
         {**base, "id": key, "rating": rating}
@@ -312,6 +360,65 @@ def test_rating_sort_can_be_configured_and_handles_ties(client):
     assert [item["id"] for item in result["items"]] == ["a", "b"]
     next_page = query_resources(items, CatalogQuery(sort="rating", page_size=2, page=2))
     assert [item["id"] for item in next_page["items"]] == ["low", "none"]
+
+
+@pytest.mark.parametrize("stored_sort", ["recommended", "rating"])
+def test_comprehensive_sort_reads_legacy_policy_without_rewriting_it(client, stored_sort):
+    current = client.get(API + "/admin/application-policy").json()
+    assert current["defaultSort"] == "recommended"
+    repository = client.app.state.application_service.repository
+    with repository.transaction() as session:
+        session.put_entry("policy", "current", {**current, "defaultSort": stored_sort})
+
+    for path in ("/admin/application-policy", "/application-presentation"):
+        received = client.get(API + path).json()
+        assert received["defaultSort"] == "recommended"
+        assert received["revision"] == current["revision"]
+    with repository.transaction(is_readonly=True) as session:
+        assert session.entry("policy", "current")["defaultSort"] == stored_sort
+
+    saved = policy(client, defaultSort="recommended")
+    assert saved["defaultSort"] == "recommended"
+    assert saved["revision"] == current["revision"] + 1
+    assert policy(client, defaultSort="downloads")["defaultSort"] == "downloads"
+
+
+@pytest.mark.parametrize(
+    ("sort", "expected"),
+    [
+        (None, ["a", "b", "popular", "curated", "unrated"]),
+        ("recommended", ["a", "b", "popular", "curated", "unrated"]),
+        ("rating", ["a", "b", "popular", "curated", "unrated"]),
+    ],
+)
+def test_comprehensive_sort_uses_rating_ignores_recommendation_and_has_stable_pages(
+    client, monkeypatch, sort, expected
+):
+    base = {"name": "排序核查", "description": "", "owner": "", "category": "", "tags": []}
+    items = [
+        {**base, "id": "popular", "rating": 2, "badge": "热门", "usage": 1000},
+        {**base, "id": "unrated", "rating": None, "badge": "新上线", "usage": 100},
+        {**base, "id": "b", "rating": 5, "badge": "", "usage": 200},
+        {**base, "id": "a", "rating": 5, "badge": "", "usage": 200},
+        {**base, "id": "curated", "rating": 1, "badge": "", "usage": 1},
+    ]
+    monkeypatch.setattr(
+        client.app.state.application_service,
+        "resources",
+        lambda *args, **kwargs: [dict(item) for item in items],
+    )
+    monkeypatch.setattr(
+        client.app.state.application_service.workflows,
+        "policy",
+        lambda: {"recommendedIds": ["curated"], "revision": 1},
+    )
+    params = {"pageSize": 2, **({"sort": sort} if sort else {})}
+    received = []
+    for page in (1, 2, 3):
+        response = client.get(API + "/applications", params={**params, "page": page})
+        assert response.status_code == 200
+        received.extend(item["id"] for item in response.json()["items"])
+    assert received == expected
 
 
 def test_concurrent_repeated_run_invokes_provider_once(client, app_id, monkeypatch):

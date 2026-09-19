@@ -281,13 +281,8 @@ class MarketWorkflows:
                     raise HTTPException(503, "该审核结论尚未配置外部状态值，请向供应方确认")
                 if payload.decision != "approved" and not payload.comment:
                     raise HTTPException(422, "驳回或补充材料时请填写原因")
-                if payload.decision == "approved":
-                    threshold = self.service.workflows.policy_in(session)["minimumQualityScore"]
-                    if (
-                        payload.scores is None
-                        or min(payload.scores.model_dump().values()) < threshold
-                    ):
-                        raise HTTPException(422, "请完成完整性、可用性和安全性评分，并达到通过阈值")
+                if payload.scores is None:
+                    raise HTTPException(422, "请完成七项质量评分")
                 known = {item.get("result", {}).get("submissionId") for item in records}
                 if payload.submission_id not in known:
                     raise HTTPException(404, "该审核记录未在当前应用中登记")
@@ -309,7 +304,7 @@ class MarketWorkflows:
                 "resourceId": binding.resource_id,
                 "submissionId": payload.submission_id,
                 "expectedDecision": config.decision_status.get(payload.decision),
-                "scores": payload.scores.model_dump() if payload.scores else None,
+                "scores": payload.scores.model_dump(by_alias=True) if payload.scores else None,
                 "comment": payload.comment,
                 "expectedDraftHash": digest(
                     payload.draft.model_dump(by_alias=True, exclude_none=True)

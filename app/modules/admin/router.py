@@ -81,10 +81,11 @@ def application_review_queue(
     request: Request, query: Annotated[ApplicationReviewQuery, Query()]
 ) -> dict:
     """筛选并分页返回审核队列和各状态数量。"""
-    return query_publications(
-        application_service(request).publications(current_actor(request, True), is_admin=True),
-        query,
+    warnings: list[str] = []
+    records = application_service(request).publications(
+        current_actor(request, True), is_admin=True, warnings=warnings
     )
+    return {**query_publications(records, query), "warnings": warnings}
 
 
 @router.get("/application-configuration", response_model=None)

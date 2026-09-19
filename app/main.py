@@ -57,6 +57,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         resources = await run_in_threadpool(resources_factory, settings)
         application.state.resources = resources
+        application.state.tutorial_upload_limiter = asyncio.Semaphore(2)
         application.state.feedback_upload_limiter = asyncio.Semaphore(
             settings.feedback_upload_concurrency
         )

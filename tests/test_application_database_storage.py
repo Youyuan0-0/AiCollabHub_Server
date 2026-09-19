@@ -17,7 +17,15 @@ from app.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 API = "/api/v1"
-SCORES = {"completeness": 4, "usability": 4, "security": 4}
+SCORES = {
+    "formatCompliance": 4,
+    "safetyCompliance": 4,
+    "annotationCompliance": 4,
+    "structuralCompleteness": 4,
+    "authenticity": 4,
+    "consistency": 4,
+    "cleanliness": 4,
+}
 
 
 @pytest.fixture
@@ -92,7 +100,7 @@ def review(client, record, decision="approved"):
         json={
             "revision": record["revision"],
             "decision": decision,
-            "scores": SCORES if decision == "approved" else None,
+            "scores": SCORES,
             "reason": "请补充使用说明" if decision != "approved" else "",
         },
     )
@@ -120,6 +128,136 @@ def test_publication_metadata_survives_restart_review_and_new_version(database_a
         assert all(resource[key] == value for key, value in metadata.items())
         draft = client.post(path + "/version-publications").json()
         assert all(draft["data"][key] == value for key, value in metadata.items())
+
+
+def test_review_queue_reports_missing_snapshot_without_losing_valid_applications(database_app):
+    """坏快照只影响该申请；队列有提示，单条读取仍失败，禁止编造审核资料。"""
+    factory, engine = database_app
+    with factory() as client:
+        missing = submit(client, name="缺失资料")
+        valid = submit(client, name="可审核资料")
+        with engine.connect() as connection:
+            reference = connection.scalar(
+                text(
+                    "SELECT external_version_id FROM scene_submission_extension "
+                    "WHERE submission_key=:key"
+                ),
+                {"key": missing["id"]},
+            )
+        store = client.app.state.application_service.repository.marketplace
+        (store.directory / "submission" / f"{reference}.json").write_text("{}", encoding="utf-8")
+        response = client.get(f"{API}/admin/application-review-queue")
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()["items"]] == [valid["id"]]
+        assert response.json()["warnings"]
+        assert (
+            client.get(f"{API}/admin/application-publications/{missing['id']}").status_code == 503
+        )
+        review(client, valid)
+        history = client.get(f"{API}/admin/application-review-history")
+        assert history.status_code == 200
+        assert [item["publicationId"] for item in history.json()["items"]] == [valid["id"]]
+        assert history.json()["total"] == 1
+        assert history.json()["warnings"]
+
+
+def test_low_seven_scores_and_decision_survive_restart(database_app):
+    """数据库持久化低分通过，重启后七项原值及结论保持一致。"""
+    factory, _ = database_app
+    scores = dict.fromkeys(SCORES, 1)
+    with factory() as client:
+        record = submit(client)
+        response = client.post(
+            f"{API}/admin/application-publications/{record['id']}/review",
+            json={
+                "revision": record["revision"],
+                "decision": "approved",
+                "scores": scores,
+            },
+        )
+        assert response.status_code == 200, response.text
+    with factory() as client:
+        saved = client.get(f"{API}/admin/application-publications/{record['id']}").json()
+        assert saved["status"] == "approved"
+        assert saved["reviews"][-1]["scores"] == scores
+
+
+def test_review_report_drafts_and_history_survive_restart(database_app):
+    """报告暂存及审核绑定在数据库中持久化，重复迁移不改变既有资料。"""
+    from tests.test_application_review_files import (
+        ReportStorage,
+        review_with_reports,
+        upload_report,
+    )
+
+    factory, engine = database_app
+    storage = ReportStorage()
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        record = submit(client)
+        response = upload_report(client, record)
+        assert response.status_code == 201, response.text
+        file = response.json()
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        assert client.get(
+            f"{API}/admin/application-publications/{record['id']}/report-files"
+        ).json() == [file]
+        result = review_with_reports(client, record, [file["id"]])
+        assert result.status_code == 200, result.text
+    with engine.begin() as connection:
+        migration = (
+            ROOT / "database/scenario-applications/add-review-reports-20260918.sql"
+        ).read_text(encoding="utf-8")
+        connection.exec_driver_sql(migration)
+        connection.exec_driver_sql(migration)
+        row = connection.execute(
+            text("SELECT review_note_id, bucket_name, original_name FROM scene_review_report_file")
+        ).one()
+        assert row[0] == result.json()["reviews"][-1]["id"]
+        assert row[1:] == (storage.bucket, file["name"])
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        saved = client.get(f"{API}/admin/application-publications/{record['id']}").json()
+        assert saved["reviews"][-1]["reportFiles"] == [file]
+        assert (
+            client.get(
+                f"{API}/admin/application-publications/{record['id']}/report-files/{file['id']}/content"
+            ).content
+            == b"report evidence"
+        )
+
+
+def test_tutorial_upload_survives_api_restart_and_version_publication(database_app):
+    """文件元信息及版本关联由数据库恢复，原文件由共享文件服务提供。"""
+    from test_application_tutorials import TutorialStorage, tutorial, upload
+
+    factory, engine = database_app
+    storage = TutorialStorage()
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        response = upload(client, "版本指南.txt", "持久化教程正文".encode())
+        assert response.status_code == 201, response.text
+        file = response.json()
+        record = submit(client, tutorials=[tutorial(file)])
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM scene_tutorial_file")) == 1
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        saved = client.get(f"{API}/application-publications/{record['id']}").json()
+        assert saved["data"]["tutorials"] == [tutorial(file)]
+        review(client, saved)
+        response = client.get(
+            f"{API}/application-tutorial-files/{file['id']}/content",
+            params={"applicationId": record["applicationId"]},
+        )
+        assert response.content == "持久化教程正文".encode()
+    with factory() as client:
+        client.app.state.resources.storage = storage
+        draft = client.post(
+            f"{API}/applications/{record['applicationId']}/version-publications"
+        ).json()
+        assert draft["data"]["tutorials"] == [tutorial(file)]
 
 
 def test_restart_keeps_publication_interactions_runs_downloads(database_app):
