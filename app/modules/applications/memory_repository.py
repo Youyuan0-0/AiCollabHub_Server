@@ -53,7 +53,7 @@ class MemorySession:
         """保存资源副本，避免后续外部修改污染快照。"""
         self.state["resources"][resource["id"]] = deepcopy(resource)
 
-    def list_publications(self) -> list[dict]:
+    def list_publications(self, *, warnings: list[str] | None = None) -> list[dict]:
         """读取全部发布申请的独立副本。"""
         return deepcopy(list(self.state["publications"].values()))
 

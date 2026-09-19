@@ -43,7 +43,7 @@ class ApplicationSession(Protocol):
         """在当前事务中保存已发布应用资料。"""
         ...
 
-    def list_publications(self) -> list[dict]:
+    def list_publications(self, *, warnings: list[str] | None = None) -> list[dict]:
         """读取发布申请列表。"""
         ...
 

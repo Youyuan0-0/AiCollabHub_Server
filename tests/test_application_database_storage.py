@@ -130,6 +130,37 @@ def test_publication_metadata_survives_restart_review_and_new_version(database_a
         assert all(draft["data"][key] == value for key, value in metadata.items())
 
 
+def test_review_queue_reports_missing_snapshot_without_losing_valid_applications(database_app):
+    """坏快照只影响该申请；队列有提示，单条读取仍失败，禁止编造审核资料。"""
+    factory, engine = database_app
+    with factory() as client:
+        missing = submit(client, name="缺失资料")
+        valid = submit(client, name="可审核资料")
+        with engine.connect() as connection:
+            reference = connection.scalar(
+                text(
+                    "SELECT external_version_id FROM scene_submission_extension "
+                    "WHERE submission_key=:key"
+                ),
+                {"key": missing["id"]},
+            )
+        store = client.app.state.application_service.repository.marketplace
+        (store.directory / "submission" / f"{reference}.json").write_text("{}", encoding="utf-8")
+        response = client.get(f"{API}/admin/application-review-queue")
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()["items"]] == [valid["id"]]
+        assert response.json()["warnings"]
+        assert (
+            client.get(f"{API}/admin/application-publications/{missing['id']}").status_code == 503
+        )
+        review(client, valid)
+        history = client.get(f"{API}/admin/application-review-history")
+        assert history.status_code == 200
+        assert [item["publicationId"] for item in history.json()["items"]] == [valid["id"]]
+        assert history.json()["total"] == 1
+        assert history.json()["warnings"]
+
+
 def test_low_seven_scores_and_decision_survive_restart(database_app):
     """数据库持久化低分通过，重启后七项原值及结论保持一致。"""
     factory, _ = database_app

@@ -140,7 +140,13 @@ class ApplicationService:
                 "runtimeConnection": connection,
             }
 
-    def publications(self, actor: Actor = DEFAULT_USER, *, is_admin: bool = False) -> list[dict]:
+    def publications(
+        self,
+        actor: Actor = DEFAULT_USER,
+        *,
+        is_admin: bool = False,
+        warnings: list[str] | None = None,
+    ) -> list[dict]:
         """按更新时间倒序返回可编辑或可管理的发布申请。"""
         if is_admin:
             require_admin(actor)
@@ -148,7 +154,7 @@ class ApplicationService:
             return sorted(
                 [
                     item
-                    for item in session.list_publications()
+                    for item in session.list_publications(warnings=warnings)
                     if (can_manage(actor, item) if is_admin else can_edit(actor, item))
                 ],
                 key=lambda item: item["updatedAt"],

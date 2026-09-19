@@ -344,13 +344,13 @@ def test_runtime_notification_filter_excludes_review_messages(client):
     assert client.get(path, params={"kind": "run_failure"}).status_code == 403
 
 
-def test_rating_sort_can_be_configured_and_handles_ties(client):
+def test_legacy_rating_setting_maps_to_comprehensive_sort_and_handles_ties(client):
     from app.modules.common.catalog import query_resources
     from app.modules.common.schemas import CatalogQuery
 
     saved = policy(client, defaultSort="rating")
-    assert saved["defaultSort"] == "rating"
-    assert client.get(API + "/application-presentation").json()["defaultSort"] == "rating"
+    assert saved["defaultSort"] == "recommended"
+    assert client.get(API + "/application-presentation").json()["defaultSort"] == "recommended"
     base = {"name": "核查", "description": "", "owner": "", "category": "", "tags": []}
     items = [
         {**base, "id": key, "rating": rating}
@@ -360,6 +360,65 @@ def test_rating_sort_can_be_configured_and_handles_ties(client):
     assert [item["id"] for item in result["items"]] == ["a", "b"]
     next_page = query_resources(items, CatalogQuery(sort="rating", page_size=2, page=2))
     assert [item["id"] for item in next_page["items"]] == ["low", "none"]
+
+
+@pytest.mark.parametrize("stored_sort", ["recommended", "rating"])
+def test_comprehensive_sort_reads_legacy_policy_without_rewriting_it(client, stored_sort):
+    current = client.get(API + "/admin/application-policy").json()
+    assert current["defaultSort"] == "recommended"
+    repository = client.app.state.application_service.repository
+    with repository.transaction() as session:
+        session.put_entry("policy", "current", {**current, "defaultSort": stored_sort})
+
+    for path in ("/admin/application-policy", "/application-presentation"):
+        received = client.get(API + path).json()
+        assert received["defaultSort"] == "recommended"
+        assert received["revision"] == current["revision"]
+    with repository.transaction(is_readonly=True) as session:
+        assert session.entry("policy", "current")["defaultSort"] == stored_sort
+
+    saved = policy(client, defaultSort="recommended")
+    assert saved["defaultSort"] == "recommended"
+    assert saved["revision"] == current["revision"] + 1
+    assert policy(client, defaultSort="downloads")["defaultSort"] == "downloads"
+
+
+@pytest.mark.parametrize(
+    ("sort", "expected"),
+    [
+        (None, ["a", "b", "popular", "curated", "unrated"]),
+        ("recommended", ["a", "b", "popular", "curated", "unrated"]),
+        ("rating", ["a", "b", "popular", "curated", "unrated"]),
+    ],
+)
+def test_comprehensive_sort_uses_rating_ignores_recommendation_and_has_stable_pages(
+    client, monkeypatch, sort, expected
+):
+    base = {"name": "排序核查", "description": "", "owner": "", "category": "", "tags": []}
+    items = [
+        {**base, "id": "popular", "rating": 2, "badge": "热门", "usage": 1000},
+        {**base, "id": "unrated", "rating": None, "badge": "新上线", "usage": 100},
+        {**base, "id": "b", "rating": 5, "badge": "", "usage": 200},
+        {**base, "id": "a", "rating": 5, "badge": "", "usage": 200},
+        {**base, "id": "curated", "rating": 1, "badge": "", "usage": 1},
+    ]
+    monkeypatch.setattr(
+        client.app.state.application_service,
+        "resources",
+        lambda *args, **kwargs: [dict(item) for item in items],
+    )
+    monkeypatch.setattr(
+        client.app.state.application_service.workflows,
+        "policy",
+        lambda: {"recommendedIds": ["curated"], "revision": 1},
+    )
+    params = {"pageSize": 2, **({"sort": sort} if sort else {})}
+    received = []
+    for page in (1, 2, 3):
+        response = client.get(API + "/applications", params={**params, "page": page})
+        assert response.status_code == 200
+        received.extend(item["id"] for item in response.json()["items"])
+    assert received == expected
 
 
 def test_concurrent_repeated_run_invokes_provider_once(client, app_id, monkeypatch):

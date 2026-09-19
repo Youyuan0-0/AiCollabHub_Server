@@ -71,9 +71,12 @@ def resources(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict
     warnings: list[str] = []
     items = service.resources(current_actor(request), warnings=warnings)
     policy = service.workflows.policy()
-    if policy["recommendedIds"] or policy["revision"] > 1:
-        for item in items:
-            item["badge"] = "推荐" if item["id"] in policy["recommendedIds"] else ""
+    # 推荐仅来自后台配置，样例的“热门”“新上线”标签不参与推荐优先级。
+    for item in items:
+        item["badge"] = "推荐" if item["id"] in policy["recommendedIds"] else ""
+    if query.sort == "recommended":
+        # 场景应用的综合排序统一按用户平均评分，未评分最后，同分按编号稳定分页。
+        query = query.model_copy(update={"sort": "rating"})
     return {**query_resources(items, query), "warnings": warnings}
 
 

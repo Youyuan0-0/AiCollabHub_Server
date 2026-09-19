@@ -62,6 +62,12 @@ class WorkflowPolicy(ApplicationPayload):
     notification_template: str = Field(default="{name}：{status}", max_length=300)
     failure_threshold: int = Field(default=3, ge=1, le=100)
 
+    @field_validator("default_sort")
+    @classmethod
+    def normalize_default_sort(cls, value: str) -> str:
+        """将旧评分排序配置归并到综合排序，保留旧客户端提交的兼容性。"""
+        return "recommended" if value == "rating" else value
+
     @field_validator("toolchain_url")
     @classmethod
     def toolchain_url_valid(cls, value: str) -> str:

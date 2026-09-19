@@ -55,6 +55,9 @@ class ApplicationWorkflows:
             by_alias=True
         )
         current = {key: value for key, value in current.items() if key != "minimumQualityScore"}
+        # 读取历史配置时归并旧排序名称，不重写数据库中的策略及修订号。
+        if current.get("defaultSort") == "rating":
+            return {**current, "defaultSort": "recommended"}
         return current
 
     def policy(self, actor: Actor | None = None, payload: WorkflowPolicy | None = None) -> dict:
@@ -641,7 +644,8 @@ class ApplicationWorkflows:
 
     def history(self, actor: Actor, query: HistoryQuery) -> dict:
         """筛选当前管理员可查看的审核历史，并返回分页结果和审核人列表。"""
-        records = self.service.publications(actor, is_admin=True)
+        warnings: list[str] = []
+        records = self.service.publications(actor, is_admin=True, warnings=warnings)
         items = []
         for record in records:
             for review in record["reviews"]:
@@ -678,4 +682,5 @@ class ApplicationWorkflows:
         return {
             **paginate(items, query.page, query.page_size),
             "reviewers": list(reviewers.values()),
+            "warnings": warnings,
         }
