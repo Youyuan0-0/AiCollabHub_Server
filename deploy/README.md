@@ -68,6 +68,8 @@ docker build -t aicollabhub-admin:<版本> admin
 
 API 挂载 `./data:/data`，属主为 `10001:10001`。配置 `APPLICATIONS_DEMO_DIRECTORY=/data/application-marketplace-demo`、`CONVERSATION_ATTACHMENT_DIR=/data/attachments`。这两处需要随数据库一起备份。数据库已有快照引用时必须迁移对应文件并核对内容摘要，不能用空目录覆盖。前端容器只读运行，API 使用两个 worker，模拟 IAM 独立单 worker。
 
+反馈单附件上限为 1 GiB，用户端 Nginx 对 `/api/v1/feedback/attachments` 单独配置 1025 MiB 请求上限并关闭请求缓冲。发布前执行 `install -d -m 0700 -o 10001 -g 10001 data/tmp`；API 的 `TMPDIR=/data/tmp` 用于磁盘临时文件，上传结束会关闭并删除暂存文件，运行数据备份可排除此目录。
+
 ### 发布与检查
 
 1. 暂停所有连接该库的旧版本后端和同步发送器，再备份数据库以及 `data/`，保留旧版本镜像和配置；首次部署备份在 `backups/pre-app-20260916-01.dump`。使用与服务端兼容的 `pg_dump` 并验证恢复。

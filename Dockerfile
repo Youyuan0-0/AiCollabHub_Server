@@ -9,7 +9,7 @@ COPY app/ ./app/
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir --constraint requirements-dev.lock . \
     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin app \
-    && mkdir -p /data/attachments /data/application-marketplace-demo \
+    && mkdir -p /data/attachments /data/application-marketplace-demo /data/tmp \
     && chown -R app:app /data
 # 镜像同时提供全量和数据集独立迁移入口，避免共享库部署时缺少配置文件。
 COPY alembic.ini alembic.datasets.ini ./
