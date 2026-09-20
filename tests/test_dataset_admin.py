@@ -234,3 +234,40 @@ def test_authenticated_admin_scope_and_csrf(auth, data):
     reviewed = client.post(path + "/review", json=payload, headers=csrf(client, "admin"))
     assert reviewed.status_code == 200
     assert reviewed.json()["reviews"][0]["reviewerId"] == "mock-admin"
+
+
+def test_audit_options_scope_exact_reviewer_and_reason(data):
+    """审核人选项不受分页影响且隔离组织，相似编号精确筛选，意见按历史检索。"""
+    workspace = DatasetWorkspace(DatasetRepository())
+    service = DatasetAdminService(workspace)
+    reviewers = [
+        Actor("reviewer-1", "审核员甲", "admin", "org-group"),
+        Actor("reviewer-10", "审核员乙", "admin", "org-group"),
+        Actor("hidden-reviewer", "其他组织审核员", "admin", "org-group"),
+    ]
+    other_publisher = Actor("other-publisher", "其他单位发布者", "publisher", "org-production")
+    for index, reviewer in enumerate(reviewers):
+        publisher = ACTORS[0] if index < 2 else other_publisher
+        record = workspace.save(SaveDataset(data=DatasetInput(**data), submit=True), publisher)
+        service.review(
+            record["id"],
+            ReviewDataset(decision="needs_changes", reason="补充脱敏依据", revision=1),
+            reviewer,
+        )
+        # 重提后修改名称不应替换审核历史的检索资料。
+        workspace.save(
+            SaveDataset(data=DatasetInput(**{**data, "name": "修改后的名称"}), revision=2),
+            publisher,
+            record["id"],
+        )
+    expected_reviewers = [{"id": item.id, "name": item.name} for item in reviewers[:2]]
+    page = service.audit(DatasetAuditQuery(q="脱敏依据", pageSize=1), ACTORS[3])
+    assert page["total"] == 2 and len(page["items"]) == 1
+    assert page["reviewers"] == expected_reviewers
+    assert page["items"][0]["data"]["name"] == data["name"]
+    selected = service.audit(DatasetAuditQuery(reviewer="reviewer-1"), ACTORS[3])
+    assert selected["total"] == 1
+    assert selected["items"][0]["reviewerId"] == "reviewer-1"
+    empty = service.audit(DatasetAuditQuery(q="修改后的名称", page=99), ACTORS[3])
+    assert empty["items"] == [] and empty["total"] == 0
+    assert empty["reviewers"] == expected_reviewers

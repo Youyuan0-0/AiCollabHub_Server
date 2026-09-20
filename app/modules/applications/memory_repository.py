@@ -31,6 +31,16 @@ class MemorySession:
         """将活动记录副本保存到当前事务快照。"""
         self.state["activities"].setdefault(kind, {})[key] = deepcopy(value)
 
+    def review_files(self, publication_id: str) -> list[dict]:
+        """读取指定申请的报告索引副本。"""
+        return [
+            item for item in self.entries("review_files") if item["publicationId"] == publication_id
+        ]
+
+    def remove_review_file(self, key: str) -> None:
+        """移除未提交的报告索引。"""
+        self.state["activities"].get("review_files", {}).pop(key, None)
+
     def list_resources(self) -> list[dict]:
         """读取应用目录的独立副本。"""
         return deepcopy(list(self.state["resources"].values()))
@@ -43,7 +53,7 @@ class MemorySession:
         """保存资源副本，避免后续外部修改污染快照。"""
         self.state["resources"][resource["id"]] = deepcopy(resource)
 
-    def list_publications(self) -> list[dict]:
+    def list_publications(self, *, warnings: list[str] | None = None) -> list[dict]:
         """读取全部发布申请的独立副本。"""
         return deepcopy(list(self.state["publications"].values()))
 

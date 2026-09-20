@@ -5,9 +5,17 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from app.modules.applications.schema_validation import parse_schema
+from app.modules.common.review_schemas import ReviewQualityScores
 from app.modules.common.schemas import Payload
 
 APPLICATION_CATEGORIES = ("文档创作", "会议办公", "数据处理", "翻译沟通", "法律合规")
@@ -20,17 +28,52 @@ class ApplicationPayload(Payload):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+class TutorialFile(ApplicationPayload):
+    """教程附件的公开元信息；保存时按附件编号从后端重新核对。"""
+
+    id: str = Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    )
+    name: str = Field(min_length=1, max_length=200)
+    size: int = Field(gt=0, le=100 * 1024 * 1024)
+    content_type: str = Field(min_length=1, max_length=128)
+    security_level: Literal["internal", "public"]
+
+
 class Tutorial(ApplicationPayload):
-    """应用教程资料，支持文档或视频链接。"""
+    """应用教程资料，兼容原有链接，并支持上传的文档或视频。"""
 
     title: str = Field(min_length=1, max_length=120)
     kind: Literal["document", "video"] = "document"
-    url: str = Field(min_length=1, max_length=2000)
+    url: str = Field(default="", max_length=2000)
+    source: Literal["link", "file"] = "link"
+    attachment: TutorialFile | None = None
+
+    @model_validator(mode="after")
+    def valid_source(self) -> Tutorial:
+        """链接和附件二选一，未完成的上传不能保存为教程。"""
+        if self.source == "file":
+            if self.attachment is None or self.url:
+                raise ValueError("请上传教程文件，或切换为填写链接")
+        elif not self.url or self.attachment is not None:
+            raise ValueError("请填写教程链接")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_tutorial(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """保留旧链接教程的响应形状，附件教程输出新增字段。"""
+        data = handler(self)
+        if self.source == "link":
+            data.pop("source", None)
+            data.pop("attachment", None)
+        return data
 
     @field_validator("url")
     @classmethod
     def safe_url(cls, value: str) -> str:
         """允许无凭据的 HTTP(S) 链接或站内路径，拒绝反斜线和控制字符。"""
+        if not value:
+            return value
         if "\\" in value or any(ord(char) < 32 for char in value):
             raise ValueError("教程链接格式不正确")
         parsed = urlsplit(value)
@@ -125,12 +168,10 @@ class ApplicationDetails(ApplicationPayload):
         return labels
 
 
-class QualityScores(ApplicationPayload):
-    """发布审核的完整性、可用性和安全性评分，每项为 1 至 5 分。"""
+class QualityScores(ReviewQualityScores):
+    """应用审核的七项质量评分，每项为 1 至 5 分整数，不设置及格线。"""
 
-    completeness: int = Field(ge=1, le=5)
-    usability: int = Field(ge=1, le=5)
-    security: int = Field(ge=1, le=5)
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 # 前端保存申请的 JSON 在这里解析；字段格式不合规则由 FastAPI 返回 422。
@@ -152,10 +193,19 @@ class SaveApplicationPublication(ApplicationPayload):
 class ReviewApplicationPublication(ApplicationPayload):
     """审核决定、理由、评分和申请版本，由业务服务执行状态校验。"""
 
-    scores: QualityScores | None = None
+    scores: QualityScores
     decision: Literal["approved", "rejected", "needs_changes"]
     reason: str = Field(default="", max_length=2000)
     revision: int = Field(ge=1)
+    report_file_ids: list[str] = Field(default_factory=list, max_length=3)
+
+    @field_validator("report_file_ids")
+    @classmethod
+    def unique_report_files(cls, values: list[str]) -> list[str]:
+        """拒绝重复或无效报告编号，归属由服务层校验。"""
+        if len(set(values)) != len(values) or any(not item or len(item) > 80 for item in values):
+            raise ValueError("报告附件编号无效或重复")
+        return values
 
 
 class ApplicationVisibility(ApplicationPayload):

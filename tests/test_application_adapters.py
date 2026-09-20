@@ -44,7 +44,15 @@ def test_concurrent_reviews_commit_once():
                 record["id"],
                 ReviewApplicationPublication(
                     decision="approved",
-                    scores={"completeness": 4, "usability": 4, "security": 4},
+                    scores={
+                        "formatCompliance": 4,
+                        "safetyCompliance": 4,
+                        "annotationCompliance": 4,
+                        "structuralCompleteness": 4,
+                        "authenticity": 4,
+                        "consistency": 4,
+                        "cleanliness": 4,
+                    },
                     revision=record["revision"],
                 ),
             )
@@ -73,7 +81,15 @@ def test_repository_failure_rolls_back_approval_and_catalog(monkeypatch):
             record["id"],
             ReviewApplicationPublication(
                 decision="approved",
-                scores={"completeness": 4, "usability": 4, "security": 4},
+                scores={
+                    "formatCompliance": 4,
+                    "safetyCompliance": 4,
+                    "annotationCompliance": 4,
+                    "structuralCompleteness": 4,
+                    "authenticity": 4,
+                    "consistency": 4,
+                    "cleanliness": 4,
+                },
                 revision=1,
             ),
         )

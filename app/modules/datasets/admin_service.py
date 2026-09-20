@@ -9,12 +9,15 @@ from app.modules.applications.identity import Actor, can_manage
 from app.modules.common.schemas import PageQuery
 from app.modules.datasets.admin_schemas import (
     DATASET_STATUSES,
+    DatasetAdminQuery,
     DatasetAuditQuery,
+    DatasetListing,
     DatasetReviewQuery,
     DatasetVisibility,
     ReviewDataset,
 )
 from app.modules.datasets.schemas import DatasetInput, validate_submission
+from app.modules.datasets.service import list_resources
 from app.modules.datasets.workspace import DatasetWorkspace, timestamp
 
 
@@ -59,10 +62,44 @@ class DatasetAdminService:
     def __init__(self, workspace: DatasetWorkspace) -> None:
         self.workspace = workspace
 
+    def catalog(self, query: DatasetAdminQuery, actor: Actor) -> dict:
+        """返回含上下架状态和操作权限的目录，状态过滤先于分页及总数计算。"""
+        require_dataset_admin(actor)
+        resources = self.workspace.resources(actor, include_unlisted=True)
+        for resource in resources:
+            resource["canManageListing"] = can_manage(actor, resource)
+        return list_resources(
+            query,
+            [
+                item
+                for item in resources
+                if not query.listing_status or item["listing"]["status"] == query.listing_status
+            ],
+        )
+
+    def listing(self, dataset_id: str, payload: DatasetListing, actor: Actor) -> dict:
+        """校验可信归属并原子保存上下架；保留发布快照、开放范围和用户活动。"""
+        require_dataset_admin(actor)
+        resource = self.workspace.resource(dataset_id, include_unlisted=True)
+        if not can_manage(actor, resource):
+            raise HTTPException(403, "只能上下架有管理权限的数据集")
+        # 仅既有目录资源可调整状态，未审核或待同步申请不能通过此接口直接上架。
+        value = self.workspace.repository.save(
+            "listing:" + dataset_id,
+            {
+                **payload.model_dump(),
+                "datasetId": dataset_id,
+                "updatedAt": timestamp(),
+                "updatedBy": actor.id,
+            },
+            payload.revision or None,
+        )
+        return {key: value[key] for key in ("status", "revision")}
+
     def visibility(self, dataset_id: str, payload: DatasetVisibility, actor: Actor) -> dict:
         """仅允许有资源管理权的身份按修订号保存范围，数据库与内存均原子防覆盖。"""
         require_dataset_admin(actor)
-        resource = self.workspace.resource(dataset_id)
+        resource = self.workspace.resource(dataset_id, include_unlisted=True)
         # 样例缺少可信组织编号时仅系统管理员可改，不能用 owner 显示名称推断授权。
         if not can_manage(actor, resource):
             raise HTTPException(403, "只能配置有管理权限的数据集开放范围")
@@ -159,20 +196,40 @@ class DatasetAdminService:
         return self.workspace.repository.save("publication:" + publication_id, record, revision)
 
     def audit(self, query: DatasetAuditQuery, actor: Actor) -> dict:
-        """从可管理申请投影审核历史，历史资料和审核人由服务端保存且不能改写。"""
+        """返回授权范围内的审核快照及审核人选项，支持资料和审核意见检索。"""
+        records = self.publications(actor)
+        # 选项来自完整的可管理历史，不随分页或筛选消失，也不暴露其他组织的审核人。
+        reviewers = {
+            review["reviewerId"]: {
+                "id": review["reviewerId"],
+                "name": review.get("reviewerName") or review["reviewerId"],
+            }
+            for record in records
+            for review in record.get("reviews", [])
+            if review.get("reviewerId")
+        }
+        reviewer = query.reviewer.strip()
+        keyword = query.q.strip().casefold()
         entries = []
-        for record in self.publications(actor):
+        for record in records:
             for review in record.get("reviews", []):
                 entry = {**review, "publicationId": record["id"], "datasetId": record["datasetId"]}
                 if query.decision and entry["decision"] != query.decision:
                     continue
-                if not matches_keyword({**entry, "id": record["id"]}, query.q):
+                if not matches_keyword({**entry, "id": record["id"]}, query.q) and (
+                    keyword not in entry.get("reason", "").casefold()
+                ):
                     continue
-                # 查询历史审核人的编号或姓名，不使用当前身份目录覆盖历史记录。
-                reviewer = query.reviewer.strip().casefold()
-                if reviewer and not any(
-                    reviewer in str(entry.get(key, "")).casefold()
-                    for key in ("reviewerId", "reviewerName")
+                # 下拉选中的可信编号精确匹配；旧链接中的姓名或编号片段仍支持模糊查询。
+                if reviewer in reviewers and entry.get("reviewerId") != reviewer:
+                    continue
+                if (
+                    reviewer
+                    and reviewer not in reviewers
+                    and not any(
+                        reviewer.casefold() in str(entry.get(key, "")).casefold()
+                        for key in ("reviewerId", "reviewerName")
+                    )
                 ):
                     continue
                 reviewed = entry["reviewedAt"][:10]
@@ -182,4 +239,4 @@ class DatasetAdminService:
                     continue
                 entries.append(entry)
         entries.sort(key=lambda item: (item["reviewedAt"], item["id"]), reverse=True)
-        return paginate(entries, query)
+        return {**paginate(entries, query), "reviewers": list(reviewers.values())}

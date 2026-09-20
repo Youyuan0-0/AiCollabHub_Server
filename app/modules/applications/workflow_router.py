@@ -232,5 +232,8 @@ def develop(payload: SaveApplicationPublication, request: Request) -> dict:
     with service.repository.transaction() as session:
         validate_submission(data, session.get_configuration())
         service.workflows.validate_security(session, data, payload.security_level)
+        from app.modules.applications.tutorial_files import validate_files
+
+        validate_files(session, data, actor, payload.security_level)
     service.provider.validate_dependencies(data["dependencies"])
     return service.provider.develop(data, actor.id)

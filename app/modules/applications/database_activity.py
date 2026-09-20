@@ -50,6 +50,14 @@ class DatabaseActivityMixin:
     def entry(self, kind: str, key: str) -> dict | None:
         """按种类和业务键读取活动记录，缺失时返回空值。"""
         self.lock(f"{kind}:{key}")
+        if kind == "review_files":
+            from app.modules.applications.database_review_files import read_file
+
+            return read_file(self, key)
+        if kind == "tutorial_files":
+            from app.modules.applications.database_tutorial_files import read_file
+
+            return read_file(self, key)
         if kind == "market_lock":
             return None
         if kind == "market_operations":
@@ -100,6 +108,14 @@ class DatabaseActivityMixin:
     def put_entry(self, kind: str, key: str, value: dict) -> None:
         """按活动种类分派保存逻辑，复用当前数据库事务。"""
         self.lock(f"{kind}:{key}")
+        if kind == "review_files":
+            from app.modules.applications.database_review_files import save_file
+
+            return save_file(self, value)
+        if kind == "tutorial_files":
+            from app.modules.applications.database_tutorial_files import insert_file
+
+            return insert_file(self, value)
         if kind == "market_operations":
             from app.modules.applications.database_market_activity import DatabaseMarketActivity
 
@@ -118,6 +134,22 @@ class DatabaseActivityMixin:
         if kind in OPERATIONS:
             return self.save_activity(kind, key, value)
         raise ValueError("Unsupported application entry kind")
+
+    def review_files(self, publication_id: str) -> list[dict]:
+        """按申请索引读取报告，不扫描其他应用的文件。"""
+        from app.modules.applications.database_review_files import file_view
+
+        table = self.table("review_report_file")
+        return [
+            file_view(row)
+            for row in self.rows("review_report_file", table.c.publication_id == publication_id)
+        ]
+
+    def remove_review_file(self, key: str) -> None:
+        """移除未提交的报告索引，调用方已持有申请锁。"""
+        from app.modules.applications.database_review_files import remove_file
+
+        remove_file(self, key)
 
     @staticmethod
     def interaction_view(row: Mapping) -> dict:

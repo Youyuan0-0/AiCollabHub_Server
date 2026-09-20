@@ -68,6 +68,7 @@ def create_app(
                 cleanup.enter_context(capture_system_logs(writer))
                 application.state.system_log_writer = writer
                 application.state.resources = resources
+                application.state.tutorial_upload_limiter = asyncio.Semaphore(2)
                 application.state.feedback_upload_limiter = asyncio.Semaphore(
                     settings.feedback_upload_concurrency
                 )

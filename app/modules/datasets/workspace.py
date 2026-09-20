@@ -56,8 +56,28 @@ class DatasetWorkspace:
         }
         return {key: value[key] for key in ("scope", "targets", "revision")}
 
-    def resources(self, actor: Actor | None = None) -> list[dict]:
-        """生成目录并按可信身份过滤；actor=None 仅供内部管理读取完整目录。"""
+    def listing(self, dataset_id: str) -> dict:
+        """读取上下架状态；历史资源默认已上架，状态与审核、范围及统计分别保存。"""
+        value = self.repository.get("listing:" + dataset_id) or {"status": "listed", "revision": 0}
+        return {key: value[key] for key in ("status", "revision")}
+
+    def publication_listings(self, records: list[dict]) -> list[dict]:
+        """为申请响应附加实时上下架状态；批量查询，不改写审核记录或暴露管理修订。"""
+        listings = {item["datasetId"]: item["status"] for item in self.repository.list("listing:")}
+        return [
+            {
+                **record,
+                "listingStatus": listings.get(record["datasetId"], "listed"),
+            }
+            if record.get("publishedResource")
+            else record
+            for record in records
+        ]
+
+    def resources(
+        self, actor: Actor | None = None, *, include_unlisted: bool = False
+    ) -> list[dict]:
+        """按身份生成目录；include_unlisted 仅供已鉴权的管理入口读取下架资料。"""
         resources = fixture("datasets", "resources")
         # 审核与上架快照在同一记录事务提交；只读取已发布快照，不把草稿或待同步申请加入目录。
         resources.extend(
@@ -67,15 +87,23 @@ class DatasetWorkspace:
         )
         # 批量读取配置，数据库模式不为每张卡片单独查询；目标标识不返回给普通用户。
         scopes = {item["datasetId"]: item for item in self.repository.list("visibility:")}
+        listings = {item["datasetId"]: item for item in self.repository.list("listing:")}
         # 在统计、筛选选项和分页之前过滤，避免通过总数、排行或分类泄露不可见资源。
         resources = [
             item
             for item in resources
-            if actor is None
-            or visible(actor, item, scopes.get(item["id"], {"scope": "all", "targets": []}))
+            if (include_unlisted or listings.get(item["id"], {}).get("status") != "unlisted")
+            and (
+                actor is None
+                or visible(actor, item, scopes.get(item["id"], {"scope": "all", "targets": []}))
+            )
         ]
         activities = self.repository.list("activity:")
         for item in resources:
+            # 用户端即使使用管理员身份也不能绕过下架；管理字段只在后台读取时附加。
+            if include_unlisted:
+                listing = listings.get(item["id"], {"status": "listed", "revision": 0})
+                item["listing"] = {key: listing[key] for key in ("status", "revision")}
             scope = scopes.get(item["id"], {"scope": "all"})["scope"]
             # 未配置也明确显示默认规则，与过滤行为保持一致且不公开具体目标编号。
             item["metadata"] = [
@@ -140,9 +168,18 @@ class DatasetWorkspace:
             ],
         }
 
-    def resource(self, dataset_id: str, actor: Actor | None = None) -> dict:
-        """按编号和可信身份读取详情；不存在、未上架或无权访问均返回 404。"""
-        item = next((item for item in self.resources(actor) if item["id"] == dataset_id), None)
+    def resource(
+        self, dataset_id: str, actor: Actor | None = None, *, include_unlisted: bool = False
+    ) -> dict:
+        """按编号读取详情；仅后台显式传入 include_unlisted 时允许查看下架资源。"""
+        item = next(
+            (
+                item
+                for item in self.resources(actor, include_unlisted=include_unlisted)
+                if item["id"] == dataset_id
+            ),
+            None,
+        )
         if item is None:
             raise HTTPException(404, "数据集不存在或尚未上架")
         return item

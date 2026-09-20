@@ -140,7 +140,13 @@ class ApplicationService:
                 "runtimeConnection": connection,
             }
 
-    def publications(self, actor: Actor = DEFAULT_USER, *, is_admin: bool = False) -> list[dict]:
+    def publications(
+        self,
+        actor: Actor = DEFAULT_USER,
+        *,
+        is_admin: bool = False,
+        warnings: list[str] | None = None,
+    ) -> list[dict]:
         """按更新时间倒序返回可编辑或可管理的发布申请。"""
         if is_admin:
             require_admin(actor)
@@ -148,7 +154,7 @@ class ApplicationService:
             return sorted(
                 [
                     item
-                    for item in session.list_publications()
+                    for item in session.list_publications(warnings=warnings)
                     if (can_manage(actor, item) if is_admin else can_edit(actor, item))
                 ],
                 key=lambda item: item["updatedAt"],
@@ -242,6 +248,9 @@ class ApplicationService:
             raise HTTPException(403, "当前账号没有发布应用的权限")
         # 参数对象转成字典；by_alias=True 保持前端使用的 camelCase 字段名。
         data = payload.data.model_dump(by_alias=True)
+        from app.modules.applications.tutorial_files import validate_files
+
+        validate_files(session, data, actor, payload.security_level)
         if payload.auto_classify:
             suggestion = analyze(data)["suggestedCategory"]
             if suggestion:
@@ -319,12 +328,10 @@ class ApplicationService:
                 raise HTTPException(409, "申请状态已变化，请刷新后审核")
             if payload.decision in ("rejected", "needs_changes") and not payload.reason:
                 raise HTTPException(422, "驳回或要求补充材料时请填写原因")
+            from app.modules.applications.review_files import public_report, validate_reports
+
+            reports = validate_reports(session, record, payload.report_file_ids, actor)
             if payload.decision == "approved":
-                if payload.scores is None:
-                    raise HTTPException(422, "通过前请完成完整性、可用性和安全性评分")
-                threshold = self.workflows.policy_in(session)["minimumQualityScore"]
-                if min(payload.scores.model_dump().values()) < threshold:
-                    raise HTTPException(422, "质量评分未达到通过阈值，请要求补充材料或驳回")
                 self.workflows.validate_security(
                     session, record["data"], record.get("securityLevel", "internal")
                 )
@@ -338,7 +345,8 @@ class ApplicationService:
                     "reason": payload.reason,
                     "reviewerId": actor.id,
                     "reviewerName": actor.name,
-                    "scores": payload.scores.model_dump() if payload.scores else None,
+                    "scores": payload.scores.model_dump(by_alias=True),
+                    "reportFiles": [public_report(file) for file in reports],
                     "reviewedAt": now,
                     "submittedAt": record["submittedAt"],
                     "data": deepcopy(record["data"]),
@@ -386,6 +394,10 @@ class ApplicationService:
                 # 审核通过：把资料加入应用目录，与申请状态一起提交；用户端重新查询后显示。
                 session.put_resource(resource)
             session.put_publication(record)
+            for file in reports:
+                session.put_entry(
+                    "review_files", file["id"], {**file, "reviewId": record["reviews"][-1]["id"]}
+                )
             application = {"id": record["applicationId"], "name": record["data"]["name"]}
             labels = {"approved": "已通过", "rejected": "已驳回", "needs_changes": "需补充材料"}
             self.workflows.notify(

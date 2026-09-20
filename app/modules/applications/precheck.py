@@ -59,6 +59,8 @@ def precheck(payload: ApplicationPrecheck, configuration: dict, policy: dict) ->
                 else f"{FIELD_LABELS.get(key, key)}格式不正确，请检查内容和长度"
             )
             errors.setdefault(key, message)
+        if "tutorials" in errors:
+            errors["tutorials"] = "请补全教程标题，并填写有效链接或上传文件；不需要的空白教程可移除"
     for key in configuration["requiredFields"]:
         value = data.get(key)
         if not value or (isinstance(value, str) and not value.strip()):

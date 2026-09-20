@@ -148,14 +148,18 @@ def defaults(request: Request) -> dict:
 
 @router.get("/dataset-publications", response_model=None)
 def publications(request: Request) -> list[dict]:
-    """列出本人数据集发布记录供搜索、分页和继续编辑。"""
-    return dataset_workspace(request).publications(current_actor(request))
+    """列出本人发布记录及实时上下架状态，不把历史发布成功误报为当前可访问。"""
+    workspace = dataset_workspace(request)
+    return workspace.publication_listings(workspace.publications(current_actor(request)))
 
 
 @router.get("/dataset-publications/{publication_id}", response_model=None)
 def publication(publication_id: str, request: Request) -> dict:
-    """返回本人发布申请的完整表单与审核状态。"""
-    return dataset_workspace(request).publication(publication_id, current_actor(request))
+    """返回本人发布资料、审核结论和当前上下架状态。"""
+    workspace = dataset_workspace(request)
+    return workspace.publication_listings(
+        [workspace.publication(publication_id, current_actor(request))]
+    )[0]
 
 
 @router.post("/dataset-publications", status_code=201, response_model=None)

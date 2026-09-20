@@ -6,7 +6,9 @@ from app.api.overview import router as overview_router
 from app.modules.admin.logs.router import router as logs_router
 from app.modules.admin.router import router as admin_router
 from app.modules.applications.market_router import router as application_market_router
+from app.modules.applications.review_file_router import router as application_review_file_router
 from app.modules.applications.router import router as applications_router
+from app.modules.applications.tutorial_router import router as application_tutorial_router
 from app.modules.applications.workflow_router import router as application_workflow_router
 from app.modules.common.router import router as common_router
 from app.modules.datasets.admin_router import router as dataset_admin_router
@@ -36,6 +38,8 @@ for router in (
     dataset_admin_router,
     models_router,
     applications_router,
+    application_tutorial_router,
+    application_review_file_router,
     application_workflow_router,
     application_market_router,
     knowledge_router,
