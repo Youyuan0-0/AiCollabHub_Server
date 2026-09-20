@@ -63,6 +63,7 @@ Desktop.ini
 !/docs/
 /docs/*
 !/docs/AiCollabHub-代码规范.md
+!/docs/AiCollabHub-资源主表设计.md
 !/deploy/README.md
 !/deploy/authentication.md
 !/app/modules/applications/README.md
