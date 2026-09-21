@@ -163,7 +163,6 @@ def test_submission_retries_and_changed_content(feedback):
     "change",
     [
         {"contact": "  "},
-        {"title": " "},
         {"description": " "},
         {"type": "other"},
         {"module": "other"},

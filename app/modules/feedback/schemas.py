@@ -43,7 +43,7 @@ class FeedbackInput(Payload):
     module: Literal["home", "datasets", "models", "applications", "knowledge", "tools", "other"]
     type_other: str | None = Field(default=None, max_length=200)
     module_other: str | None = Field(default=None, max_length=200)
-    title: str = Field(min_length=1, max_length=60)
+    title: str = Field(default="", max_length=60)
     description: str = Field(min_length=1, max_length=5000)
     contact: str = Field(min_length=1, max_length=200)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
@@ -52,6 +52,9 @@ class FeedbackInput(Payload):
     @model_validator(mode="after")
     def validate_other(self) -> Self:
         """选择其他时说明必填，并拒绝重复的附件编号。"""
+        # 任务表只要求问题描述；旧列表需要的标题自动取描述摘要，兼容已有调用方。
+        if not self.title:
+            self.title = self.description[:60]
         for value, explanation in ((self.type, self.type_other), (self.module, self.module_other)):
             if value == "other" and not explanation:
                 raise ValueError("选择其他时请补充说明")
