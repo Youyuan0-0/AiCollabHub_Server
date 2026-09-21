@@ -1,0 +1,203 @@
+/* 用户端和管理端共同引用的平台基础主题，仅在此维护。 */
+:root {
+  --font-ui: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --accent: #2563eb;
+  --primary: var(--accent);
+  --primary-strong: #1d4ed8;
+  --primary-soft: #eff6ff;
+  --bg: #f5f7fb;
+  --bg-app: var(--bg);
+  --bg-subtle: #f8fafc;
+  --panel: #fff;
+  --surface: #fff;
+  --panel-2: #f8fafc;
+  --text: #1e293b;
+  --text-primary: var(--text);
+  --muted: #64748b;
+  --text-secondary: #64748b;
+  --text-tertiary: #748398;
+  --line: #e2e8f0;
+  --border: var(--line);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --el-font-family: var(--font-ui);
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #6792f1;
+  --el-color-primary-light-5: #92b1f5;
+  --el-color-primary-light-7: #bed0f9;
+  --el-color-primary-light-8: #d3e0fb;
+  --el-color-primary-light-9: #e9effd;
+  --el-color-primary-dark-2: #1e4fbc;
+  --el-color-success: #16856b;
+  --el-text-color-primary: #1e293b;
+  --el-text-color-regular: #475569;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #8996a8;
+  --el-border-color: #dce3ed;
+  --el-border-color-light: #e2e8f0;
+  --el-border-color-lighter: #eef2f6;
+  --el-fill-color-light: #f8fafc;
+  --el-bg-color-page: #f5f7fb;
+  --el-border-radius-base: 8px;
+  --el-component-size: 36px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+body {
+  font-family: var(--font-ui);
+  background: var(--bg);
+}
+.el-button {
+  height: 36px;
+  font-weight: 500;
+}
+.el-button.is-link {
+  height: auto;
+}
+.el-select__wrapper {
+  min-height: 36px;
+}
+.el-button > span {
+  gap: 6px;
+}
+.el-button + .el-button {
+  margin-left: 0;
+}
+.el-card {
+  --el-card-border-radius: 12px;
+}
+.el-table {
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-text-color: #64748b;
+  --el-table-row-hover-bg-color: #f5f8ff;
+}
+.el-table th.el-table__cell {
+  font-weight: 500;
+}
+.el-table .el-table__cell {
+  padding: 14px 0;
+}
+.el-table .cell {
+  line-height: 1.6;
+}
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.el-drawer__body {
+  padding: 24px;
+}
+.el-drawer__footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+.el-empty {
+  padding: 44px 16px;
+}
+.el-empty__description p {
+  color: var(--muted);
+}
+.platform-brand-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font:
+    700 14px/1 'Segoe UI',
+    sans-serif;
+}
+/* 登录入口共享布局，登录跳转和权限检查继续由各端认证模块处理。 */
+.login-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: 0;
+  background: var(--bg);
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 16px 32px;
+  margin: 0;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 17px;
+}
+.login-stage {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 48px 20px 96px;
+}
+.login-content {
+  width: min(100%, 420px);
+  margin: 0;
+  padding: 36px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 36px #1e293b06;
+}
+.login-content h1 {
+  margin: 0 0 10px;
+  font-size: 26px;
+  line-height: 1.4;
+}
+.login-subtitle {
+  margin: 0 0 28px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.login-message {
+  color: #b42318;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.login-notice {
+  color: var(--muted);
+  font-size: 14px;
+}
+.login-content .login-submit {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 22px;
+}
+.login-content .login-switch {
+  display: flex;
+  margin: 16px auto 0;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .login-brand {
+    min-height: 64px;
+    padding: 14px 20px;
+    font-size: 16px;
+  }
+  .login-stage {
+    padding: 32px 20px 64px;
+  }
+  .login-content {
+    padding: 28px 24px;
+  }
+  .el-drawer__header,
+  .el-drawer__body {
+    padding: 18px 16px;
+  }
+  .el-drawer__footer {
+    padding: 14px 16px;
+  }
+}
