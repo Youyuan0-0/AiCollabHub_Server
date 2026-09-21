@@ -107,75 +107,45 @@ def test_model_contract_review_report_version_and_permissions(client):
 
 
 def test_knowledge_requirements_permissions_and_persistent_state(client):
-    assert client.post("/api/v1/knowledge-bases", json={"name": "缺简介"}).status_code == 422
+    """聚合入口与本地审批共用仓储，待审知识库不能出现在应用依赖或其他账号目录。"""
+    root = "/api/v1/knowledge-bases"
+    assert client.post(root, json={"name": "缺简介"}).status_code == 422
     assert (
         client.post(
-            "/api/v1/knowledge-bases",
-            json={"name": "越权", "summary": "简介", "visibility": "集团公开"},
+            root, json={"name": "越权", "description": "简介", "visibility": "集团公开"}
         ).status_code
         == 422
     )
-    base = client.post(
-        "/api/v1/knowledge-bases", json={"name": "测试知识库", "summary": "必须简介"}
-    ).json()
-    path = f"/api/v1/knowledge-bases/{base['id']}"
+    base = client.post(root, json={"name": "测试知识库", "description": "必须简介"}).json()
+    path = root + "/" + base["id"]
+    admin = "/api/v1/admin/knowledge-bases/" + base["id"]
     assert "visibility" not in base and "dataLevel" not in base
+    assert base["review"]["status"] == "pending"
+    dependencies = client.get("/api/v1/application-dependencies").json()
+    assert base["id"] not in {item["resourceId"] for item in dependencies}
     select_user(client, "demo-outsider")
-    assert base["id"] not in [item["id"] for item in client.get("/api/v1/knowledge-bases").json()]
+    assert client.get(path).status_code == 404
+    assert client.get("/api/v1/profile/publications?kind=knowledge").json()["items"] == []
     select_user(client, "demo-publisher")
-    assert (
-        client.post(
-            path + "/documents", json={"files": [{"name": "test.ppt", "size": 10}]}
-        ).status_code
-        == 422
+    approved = client.post(
+        admin + "/review", json={"revision": base["revision"], "decision": "approved"}
     )
-    assert (
-        client.post(
-            path + "/documents", json={"files": [{"name": "test.txt", "size": 100 * 1024**2 + 1}]}
-        ).status_code
-        == 422
-    )
-    uploaded = client.post(
-        path + "/documents",
-        json={"files": [{"name": "test.txt", "size": 1024}], "config": {"chunkSize": 123}},
+    assert approved.status_code == 200, approved.text
+    base = client.put(
+        admin + "/visibility",
+        json={"scope": "all", "targets": [], "revision": approved.json()["revision"]},
     ).json()
-    assert uploaded["totalSize"] == 1024 and uploaded["documentCount"] == 1
-    assert uploaded["indexConfig"]["chunkSize"] == 123
-    config = {
-        **uploaded["indexConfig"],
-        "chunkSize": 100,
-        "chunkOverlap": 0,
-        "semanticSearch": False,
-    }
-    assert client.put(path + "/settings", json=config).status_code == 200
-    assert client.put(path + "/settings", json={**config, "chunkSize": 2001}).status_code == 422
-    assert client.put(path + "/settings", json={**config, "chunkOverlap": 501}).status_code == 422
-    result = client.post(path + "/retrieval", json={"query": "测试", "config": config})
-    assert result.status_code == 200 and len(result.json()) == 1
-    record = client.post(path + "/submit").json()
-    assert client.post(path + "/submit").status_code == 409
-    assert client.put(path + "/settings", json=config).status_code == 409
-    missing_level = client.post(
-        f"/api/v1/admin/knowledge-publications/{record['id']}/review",
-        json={"revision": record["revision"], "decision": "approved", "scores": scores()},
-    )
-    assert missing_level.status_code == 422
-    record = client.put(
-        f"/api/v1/admin/knowledge-publications/{record['id']}/metadata",
-        json={
-            "revision": record["revision"],
-            "dataLevel": "核心数据",
-            "owner": "研发单位",
-            "contact": "维护人员",
-        },
-    ).json()
-    approve(client, "knowledge", record)
     select_user(client, "demo-outsider")
-    public = next(
-        item for item in client.get("/api/v1/knowledge-bases").json() if item["id"] == base["id"]
+    public = client.get(path).json()
+    assert public["canEdit"] is False and "dataLevel" not in public
+    assert (
+        client.delete(
+            path + "/documents", params={"name": "test.txt", "revision": base["revision"]}
+        ).status_code
+        == 403
     )
-    assert public["canManage"] is False and "dataLevel" not in public
-    assert client.delete(path + "/documents?name=test.txt").status_code == 403
+    dependencies = client.get("/api/v1/application-dependencies").json()
+    assert base["id"] in {item["resourceId"] for item in dependencies}
 
 
 def test_profile_aggregation_and_contact_without_business_writes(client):
@@ -193,7 +163,7 @@ def test_profile_aggregation_and_contact_without_business_writes(client):
         == 422
     )
     client.post("/api/v1/model-publications", json={"data": model_data()})
-    client.post("/api/v1/knowledge-bases", json={"name": "聚合知识库", "summary": "简介"})
+    client.post("/api/v1/knowledge-bases", json={"name": "聚合知识库", "description": "简介"})
     result = client.get("/api/v1/profile/publications")
     assert result.status_code == 200, result.text
     assert {"model", "knowledge"}.issubset({item["kind"] for item in result.json()["items"]})

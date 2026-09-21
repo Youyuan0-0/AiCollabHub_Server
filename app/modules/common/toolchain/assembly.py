@@ -27,11 +27,11 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
         and service
         and type(service.provider) is DemoApplicationProvider
     ):
-        # 由同一服务实例取得目录，知识库装配替换后也不会继续读取旧样例。
+        # 应用依赖读取本地知识库审批仓储，外部引擎适配器不得替换平台知识库目录。
         service.dependency_resolver = lambda actor: platform_dependencies(
             actor,
             application.state.dataset_workspace,
-            application.state.knowledge_workspace,
+            application.state.knowledge_service,
             application.state.model_workspace,
             application.state.tool_workspace,
         )

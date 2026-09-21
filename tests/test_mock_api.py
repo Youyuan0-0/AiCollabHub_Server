@@ -40,7 +40,6 @@ def test_all_pages_have_http_samples_without_authentication(clients):
         "/models",
         "/applications",
         "/tools",
-        "/knowledge-bases",
     ):
         response = a.get("/api/v1" + path)
         assert response.status_code == 200, (path, response.text)
@@ -67,20 +66,22 @@ def test_catalog_combines_filters_and_paginates(clients):
     assert a.get("/api/v1/datasets?page=0").status_code == 422
 
 
-def test_knowledge_and_tools_return_mock_contracts(clients):
+def test_knowledge_is_stateful_and_tools_keep_mock_contracts(clients):
     a, b = clients
-    # 多轮会话不再属于无状态 Mock，其历史与持久化由专用用例覆盖。
-    base = a.get("/api/v1/knowledge-bases").json()[0]
-    assert b.get(f"/api/v1/knowledge-bases/{base['id']}/chunks").status_code == 200
+    # 知识库不再从 fixture 返回固定文档；内存实例仅保存自身实际上传的文件。
     base = a.post(
-        "/api/v1/knowledge-bases", json={"name": "本人知识库", "summary": "模拟简介"}
+        "/api/v1/knowledge-bases", json={"name": "测试库", "description": "真实原文"}
     ).json()
+    assert b.get(f"/api/v1/knowledge-bases/{base['id']}/chunks").status_code == 404
     uploaded = a.post(
         f"/api/v1/knowledge-bases/{base['id']}/documents",
-        json={"files": [{"name": "example.pdf", "size": 128}]},
+        data={"revision": base["revision"]},
+        files={"files": ("example.txt", b"actual text")},
     )
-    assert uploaded.json()["documents"][0]["name"] == "example.pdf"
-    assert base["id"] not in {item["id"] for item in b.get("/api/v1/knowledge-bases").json()}
+    assert uploaded.status_code == 202
+    assert uploaded.json()["documents"][0]["name"] == "example.txt"
+    assert b.get("/api/v1/knowledge-bases").json() == []
+    assert uploaded.headers["x-data-mode"] == "development"
     resource = a.get("/api/v1/tools").json()["items"][0]
     invocation = a.post(f"/api/v1/resources/{resource['id']}/invoke", json={"prompt": "测试"})
     assert invocation.status_code == 200 and "模拟响应" in invocation.json()["text"]

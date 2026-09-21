@@ -39,6 +39,10 @@ from app.modules.datasets.publishing import create_dataset_publisher
 from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 from app.modules.feedback.maintenance import maintain_feedback
+from app.modules.knowledge.repository import KnowledgeRepository
+from app.modules.knowledge.retrieval import RetrievalProvider
+from app.modules.knowledge.service import KnowledgeService
+from app.modules.knowledge.storage import KnowledgeFiles
 from app.modules.knowledge.workspace import KnowledgeWorkspace, create_knowledge_provider
 from app.modules.models.workspace import create_model_provider
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
@@ -81,6 +85,13 @@ def create_app(
                     settings.feedback_upload_concurrency
                 )
                 application.state.database_engine = resources.database
+                # 本地知识库复用连接池和持久文件目录，启动不自动创建业务表。
+                if settings.app_env != "production" and settings.knowledge_storage == "database":
+                    application.state.knowledge_service = KnowledgeService(
+                        KnowledgeRepository(resources.database),
+                        KnowledgeFiles(settings.knowledge_document_dir),
+                        RetrievalProvider(settings),
+                    )
                 # 数据集与应用复用单库连接池，但申请及活动记录独立存储；启动时不自动建表。
                 if settings.app_env != "production" and settings.datasets_storage == "database":
                     application.state.dataset_workspace = DatasetWorkspace(
@@ -201,6 +212,9 @@ def create_app(
                     )
                     if settings.datasets_storage == "database":
                         response.headers["X-Data-Mode"] = "development"
+                if scenario_path.startswith("knowledge-bases"):
+                    response.headers["X-Data-Mode"] = "development"
+                    response.headers["X-Knowledge-Storage"] = settings.knowledge_storage
         if request.url.path.startswith("/api/v1/auth/"):
             response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -293,6 +307,12 @@ def create_app(
         from app.modules.tools.workspace import ToolWorkspace
 
         application.state.tool_workspace = ToolWorkspace()
+        # 与其他资源模块保持相同环境边界；内存模式只供开发，重启后资料不保留。
+        application.state.knowledge_service = KnowledgeService(
+            KnowledgeRepository(),
+            KnowledgeFiles(settings.knowledge_document_dir),
+            RetrievalProvider(settings),
+        )
         # 每个实例独立的演示状态；数据库模式在 lifespan 中替换为共享仓储。
         application.state.dataset_workspace = DatasetWorkspace(
             DatasetRepository(), create_dataset_publisher(settings.datasets_publication_mode)

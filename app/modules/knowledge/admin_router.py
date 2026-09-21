@@ -8,7 +8,7 @@ from pydantic import Field
 from app.modules.common.access_schemas import StrictPayload
 from app.modules.common.identity import current_actor
 from app.modules.common.resource_admin import resource_admin_router
-from app.modules.knowledge.schemas import IndexInput
+from app.modules.knowledge.engine_schemas import IndexInput
 from app.modules.knowledge.workspace import knowledge_workspace
 
 KNOWLEDGE_FIELDS = {

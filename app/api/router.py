@@ -18,7 +18,9 @@ from app.modules.datasets.report_router import router as dataset_report_router
 from app.modules.datasets.router import router as datasets_router
 from app.modules.datasets.toolchain_router import router as dataset_toolchain_router
 from app.modules.feedback.router import router as feedback_router
-from app.modules.knowledge.admin_router import router as knowledge_admin_router
+
+# 知识库保留创建与文档逐项审批，不挂载工具链整库发布的同类管理接口。
+from app.modules.knowledge.router import admin_router as knowledge_admin_router
 from app.modules.knowledge.router import router as knowledge_router
 from app.modules.models.admin_router import router as models_admin_router
 from app.modules.models.router import router as models_router

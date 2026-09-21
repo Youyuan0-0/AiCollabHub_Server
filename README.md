@@ -38,7 +38,7 @@ app/
     datasets/            数据集目录样例
     models/              模型库目录样例
     applications/        场景应用目录、发布及工作流演示
-    knowledge/           知识库、文档与检索样例
+    knowledge/           知识库、原文解析、索引与检索
     tools/               AI 工具目录与调用样例
     common/              公共 DTO、样例加载、概览、反馈、申请和发布
       auth/              CAS 适配、共享会话、认证日志及独立模拟 IAM
@@ -124,7 +124,7 @@ Mock 接口只注册在 development/test 环境；数据库看板和会话在 pr
 | `GET /admin/applications` 及详情、`PUT .../{id}/visibility` | 应用管理与有效的范围限制；关闭登录时用预置身份，启用后复用公共会话 |
 | `GET /admin/application-review-queue` | 管理端审核查询、状态筛选、分页及数量 |
 | `GET /application-form-configuration`、`GET/PUT /admin/application-configuration` | 表单必填和提示配置、管理列配置；提交校验与页面生效 |
-| `/knowledge-bases` 及其子路径 | 知识库、分段、文件元信息、配置与检索样例 |
+| `/knowledge-bases` 及其子路径 | 知识库、真实文档上传、分段、索引配置与检索 |
 | `GET/POST /feedback` | 固定反馈列表、模拟提交回执 |
 | `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
 | `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
@@ -294,6 +294,80 @@ FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据�
 会话与消息已适配 PostgreSQL 分表存储；附件原文件仍默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
 附件契约与保留规则见 `app/api/conversations.py` 和 `app/services/attachment_store.py`；数据库迁移不搬迁附件原文件。
 数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。
+
+## 知识库模块
+
+管理端目录展示开放范围并提供直接管理入口；详情支持全集团、指定单位、指定成员、项目组内，
+选择对象沿用数据集和场景应用的可信目录。保存携带当前修订，冲突保留草稿；放弃范围修改不影响资料草稿。
+管理员创建和更新时，所属单位与联系人为必填；这些展示信息不会改变系统记录的组织归属。
+开放范围、联系人、数据分级和范围管理能力仅返回管理端，用户端列表、详情、分段和召回均校验访问权限。
+
+知识库已从固定样例接口切换为独立业务存储，用户端 `/knowledge` 与管理端
+`/admin/knowledge` 共用后端 `/api/v1/knowledge-bases` 及
+`/api/v1/admin/knowledge-bases`，沿用登录、CSRF、可信组织归属与修订冲突处理。
+本轮对应任务表中的知识库检索、创建、卡片、分页、文档、分段、召回及后台维护项，
+并按一期任务 2.2.6、元数据对照表第四节隔离字段。版本历史记录维护操作；
+新增创建审批和文档审批，使用 `pending / approved / rejected / needs_changes`，与索引状态独立。
+创建后自动送审，待审或退回知识库仅创建者和有权管理员可见；即使开放范围为全集团也不提前公开。
+文档上传后保存原文并送审，不解析索引；管理员可读取纯文本预览或下载原文检查，批准后才增量索引。
+待审、驳回及补充材料的文档不进入普通读者的文档列表、数量、容量、分段或召回。
+创建申请退回后可修改再提交；文档退回后按意见修订原文、删除旧件再上传送审，审核记录仍保留旧件名称和意见。
+管理员创建、上传也进入同一审批流程；没有审批字段的历史记录保持原有访问并标注历史来源，不伪造审核记录。
+后台提供创建审核、文档审核、审核记录页签，沿用场景应用页头、状态徽章、筛选、分页和审核表单。
+审批及历史与知识库快照原子持久化，复用当前修订和管理端 CSRF；过期或重复审批返回 409。
+
+- 用户端支持名称/简介检索、卡片分页、创建、真实上传、文档删除、分段预览、配置和重建、召回测试。
+  新建默认仅创建者及有权管理员可见。数据分级、联系人、开放范围、版本和运营统计仅在后台返回。
+- 文档审批通过后采用增量构建，保留当前配置下已就绪的分段和向量；两端均支持按文档名与状态筛选、
+  文档分页、处理进度，以及只重试未完成文档。`POST .../rebuild` 可提交 `failedOnly: true`；
+  未指定时仍执行完整重建。修改索引配置会使相关文档全部待重建，部分重试不会复用失效索引。
+  进度按文档计数，已处理包含成功与失败，不代表模型内部计算百分比。召回期间仍要求整库索引就绪。
+  用户端召回测试使用已保存索引配置，临时检索方式不会修改配置草稿。
+- 管理端支持新建、完整资料修改、文档管理、范围选择、分段和召回测试、版本记录及自动采集的
+  文档数、原文件容量、索引构建耗时、平均召回耗时和请求成功率。显示单位不作为授权依据。
+- 支持 PDF、DOCX、XLSX、XLS、TXT、Markdown。旧版 DOC 须先转为 DOCX；扫描 PDF 需先完成 OCR。
+  单个及单批原文不超过 100MB，每批最多 20 个，每库最多 500 个文档、20000 个分段，
+  单文档提取文字不超过 200 万字符。空文件、同名文件、损坏或加密资料明确报错。
+- 自动分段优先段落和标点边界，另有按段落及固定长度模式。大小 100–2000 字符，
+  重叠 0–500 且小于大小，Top-K 1–20，阈值 0–1。修改索引方式、模型或分段配置会清空旧索引，
+  必须重建后才能召回。旧中文分段枚举兼容读取，不表示实现了模型驱动的语义切分。
+- 经济模式采用本地 BM25 全文检索。高质量模式调用 OpenAI 兼容 Embedding 端点，
+  保存真实向量并执行余弦检索；混合检索结合关键词和向量分数，重排序调用独立 rerank 端点。
+  模型服务未配置或失败时明确报错，不回退演示片段。当前向量检索为有上限的线性计算，
+  尚未接入 Milvus/Faiss，也未将本模块接入智能问答 RAG 流程。
+
+安装依赖并在开发/联调环境启用持久化：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
+# 设置 KNOWLEDGE_STORAGE=database，配置平台已有 DATABASE_URL / POSTGRES_*。
+# 由部署者明确执行迁移，应用启动不会自动建表。
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+新增迁移 `20260920_01_knowledge` 只创建 `knowledge_records`。默认
+`KNOWLEDGE_STORAGE=memory` 仅供开发，重启后不保留元数据。数据库模式使用已有连接池，
+原文件须持久化 `KNOWLEDGE_DOCUMENT_DIR`（默认 `.runtime/knowledge-documents`），
+多进程必须共用同一目录，备份时同时备份数据库与原文件。索引任务在应用进程后台执行，
+当前不是外部持久队列；中断任务 15 分钟未更新后显示失败，可手动重建。
+容量统计为原文件总字节数，不包含 JSON 快照和向量的数据库占用。
+本模块沿用数据集和场景应用的现有环境边界，`APP_ENV=production` 不挂载开发业务路由。
+
+更新模块后须重启未开启热重载的后端进程，仅刷新前端不会加载新接口。
+若创建显示成功但目录没有记录、后台目录返回 404，请检查实际代理目标的 OpenAPI 是否包含
+`/api/v1/admin/knowledge-bases`；旧版本用户接口只返回模拟创建回执，不保存记录。
+内存模式的知识库数据仅在当前单个后端进程内保留，不能用于多 worker 共享；
+启用登录时，认证仍依赖平台数据库，知识库内存模式不会绕过数据库维护期间的认证故障。
+
+向量服务配置完整 `KNOWLEDGE_EMBEDDING_URL`（例如内部服务 `/v1/embeddings`）；
+重排序配置完整 `KNOWLEDGE_RERANK_URL` 和 `KNOWLEDGE_RERANK_MODEL`。
+可选 `KNOWLEDGE_MODEL_KEY` 只由后端持有。返回协议分别为 OpenAI 的
+`data[{index,embedding}]` 和兼容重排序的 `results[{index,relevance_score}]`，
+后者要求每个候选项返回 0–1 分数。召回只累计耗时、请求数和成功数，不永久保存问题和结果。
+成功率表示请求正常执行的比例，空结果也算正常执行，不代表答案准确率。
+
+回归测试：`python -m pytest tests/test_knowledge.py tests/test_mock_api.py`，覆盖真实文本、
+Office 解析、权限、CSRF、持久化、迁移、并发修订、索引失效、模型错误和恢复。
 
 ## 维护说明
 

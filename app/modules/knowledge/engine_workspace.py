@@ -12,7 +12,7 @@ from app.modules.common.service import timestamp
 from app.modules.common.toolchain.contracts import authorize, source_reference
 from app.modules.common.toolchain.mock import DocumentedToolchainMock
 from app.modules.knowledge.engine import KnowledgeEngineProvider
-from app.modules.knowledge.schemas import (
+from app.modules.knowledge.engine_schemas import (
     ChunkQuery,
     CreateInput,
     DocumentInput,

@@ -4,13 +4,14 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from itertools import product
 from threading import Barrier
 from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_toolchain_configuration import PATH, application, payload
@@ -29,7 +30,7 @@ from app.modules.common.toolchain.configuration_schemas import (
 )
 from app.modules.common.toolchain.mock import DocumentedToolchainMock
 from app.modules.knowledge.engine import KnowledgeEngineProvider
-from app.modules.knowledge.schemas import IndexInput
+from app.modules.knowledge.engine_schemas import ChunkQuery, CreateInput, IndexInput, RetrievalInput
 from app.storage.client import MinioStorage
 
 API = "/api/v1"
@@ -274,7 +275,9 @@ def test_checks_distinguish_complete_configuration_from_missing_supplier_contrac
         assert statuses["knowledge-storage"] == "missing"
         assert statuses["knowledge-retrieval-contract"] == "supplier"
         assert result.json()["activeModes"]["knowledge"] == "disabled"
-        assert client.get(API + "/knowledge-bases/options").json()["mode"] == "disabled"
+        # 配置状态描述外部连接；本地知识库不暴露工具链的创建选项接口。
+        assert client.app.state.toolchain_clients["knowledge"].mode == "disabled"
+        assert client.get(API + "/knowledge-bases/options").status_code == 404
 
 
 def test_saved_live_connections_drive_three_module_workflows_after_restart(monkeypatch):
@@ -448,42 +451,44 @@ def test_saved_live_connections_drive_three_module_workflows_after_restart(monke
             ).status_code
             == 200
         )
-        options = client.get(API + "/knowledge-bases/options").json()
+        # 单独验证保留的知识引擎适配器，本地知识库 HTTP 路由继续执行独立审批。
+        workspace = client.app.state.knowledge_workspace
+        options = workspace.engine.options()
         assert options["indexProfiles"][0]["match"]["embeddingModel"] == "supplier-embedding"
         assert "pipelineOptions" not in str(options)
-        index = IndexInput(
-            embedding_model="supplier-embedding", chunk_size=1300, chunk_overlap=300
-        ).model_dump(by_alias=True)
-        created = client.post(
-            API + "/knowledge-bases",
-            json={"name": "真实协议测试", "summary": "本地传输", "indexConfig": index},
+        index = IndexInput(embedding_model="supplier-embedding", chunk_size=1300, chunk_overlap=300)
+        created = workspace.create(
+            CreateInput(name="真实协议测试", summary="本地传输", index_config=index),
+            DEFAULT_USER,
+            {},
         )
-        assert created.status_code == 201, created.text
-        path = API + "/knowledge-bases/" + created.json()["id"]
-        result = client.post(
-            path + "/files",
-            files={"files": ("说明.txt", "测试正文".encode())},
-            data={"config": json.dumps(index)},
-        )
-        assert result.status_code == 200, result.text
-        status = client.get(path + "/status").json()
+        identifier = created["id"]
+        document = UploadFile(filename="说明.txt", file=BytesIO("测试正文".encode()))
+        try:
+            result = workspace.upload_files(
+                identifier, DEFAULT_USER, [document], index, client.app.state.knowledge_storage
+            )
+        finally:
+            document.file.close()
+        assert result["documentCount"] == 1
+        status = workspace.refresh(identifier, DEFAULT_USER)
         assert status["status"] == "ready" and status["indexBuiltAt"]
-        assert client.get(path + "/status").json()["indexBuiltAt"] == status["indexBuiltAt"]
-        assert client.get(path + "/chunks").json()["items"][0]["text"] == "测试正文"
-        retrieval = {"query": "测试", "config": index}
-        assert client.post(path + "/retrieval", json=retrieval).json()[0]["score"] == 0.9
+        assert workspace.refresh(identifier, DEFAULT_USER)["indexBuiltAt"] == status["indexBuiltAt"]
+        assert (
+            workspace.read_chunks(identifier, DEFAULT_USER, ChunkQuery())["items"][0]["text"]
+            == "测试正文"
+        )
+        retrieval = RetrievalInput(query="测试", config=index)
+        assert workspace.search(identifier, DEFAULT_USER, retrieval)[0]["score"] == 0.9
         has_score = False
-        assert client.post(path + "/retrieval", json=retrieval).status_code == 502
-        current = client.app.state.knowledge_workspace.resources[created.json()["id"]]
+        with pytest.raises(HTTPException) as failed:
+            workspace.search(identifier, DEFAULT_USER, retrieval)
+        assert failed.value.status_code == 502
+        current = workspace.resources[identifier]
         assert current["retrievalCount"] == 2 and current["retrievalSuccessRate"] == 50
         assert current["averageRetrievalMs"] > 0
-        assert (
-            client.delete(
-                path + "/documents", params={"name": status["documents"][0]["id"]}
-            ).status_code
-            == 200
-        )
-        assert client.get(path + "/status").json()["documentCount"] == 0
+        workspace.delete_file(identifier, DEFAULT_USER, status["documents"][0]["id"])
+        assert workspace.refresh(identifier, DEFAULT_USER)["documentCount"] == 0
 
     for request in calls:
         module = request.url.host.split(".")[0]

@@ -12,7 +12,7 @@ from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import configured_directory, publication_defaults
 from app.modules.common.schemas import CatalogQuery, PageQuery
 from app.modules.datasets.workspace import dataset_workspace
-from app.modules.knowledge.workspace import knowledge_workspace
+from app.modules.knowledge.service import knowledge_service
 from app.modules.models.workspace import model_workspace
 from app.modules.tools.workspace import tool_workspace
 
@@ -76,7 +76,8 @@ def publications(request: Request, query: Annotated[ProfileQuery, Query()]) -> d
             for item in application_service(request).publications(actor)
             if item["createdBy"] == actor.id
         ],
-        "knowledge": lambda: knowledge_workspace(request).publications(actor),
+        # 个人中心与知识库页面共用本地审批记录，避免显示另一套工具链工作区的数据。
+        "knowledge": lambda: knowledge_service(request).publications(actor),
         "tool": lambda: tool_workspace(request).publications(actor),
     }
     items = []
