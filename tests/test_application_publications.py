@@ -21,12 +21,28 @@ def client(monkeypatch):
     monkeypatch.setattr(Redis, "execute_command", connect)
     monkeypatch.setattr(Minio, "_execute", connect)
     with TestClient(create_app(Settings())) as client:
+        # 应用依赖读取本地知识库仓储，测试先完成真实创建审批，不再引用不存在的固定样例。
+        base = client.post(
+            "/api/v1/knowledge-bases",
+            json={"name": "应用测试知识库", "description": "应用依赖回归资料"},
+        ).json()
+        path = f"/api/v1/admin/knowledge-bases/{base['id']}"
+        approved = client.post(
+            path + "/review", json={"revision": base["revision"], "decision": "approved"}
+        )
+        assert approved.status_code == 200, approved.text
+        shared = client.put(
+            path + "/visibility",
+            json={"scope": "all", "targets": [], "revision": approved.json()["revision"]},
+        )
+        assert shared.status_code == 200, shared.text
+        client.app.state.test_knowledge_id = base["id"]
         yield client
     connect.assert_not_called()
 
 
 @pytest.fixture
-def details():
+def details(client):
     return {
         "name": "试验报告助手",
         "englishName": "Test Report Assistant",
@@ -54,7 +70,7 @@ def details():
         "dependencies": [
             {"kind": "model", "resourceId": "model-longcat"},
             {"kind": "dataset", "resourceId": "ds-testbench"},
-            {"kind": "knowledge", "resourceId": "kb-tech-docs"},
+            {"kind": "knowledge", "resourceId": client.app.state.test_knowledge_id},
             {"kind": "tool", "resourceId": "tool-ocr"},
         ],
         "versionNotes": "首版报告整理",

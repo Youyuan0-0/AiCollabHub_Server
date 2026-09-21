@@ -10,7 +10,12 @@ from app.modules.common.fixtures import fixture
 from app.modules.common.identity import Actor, can_manage
 from app.modules.common.resource_workspace import ResourceWorkspace
 from app.modules.common.service import timestamp
-from app.modules.knowledge.schemas import CreateInput, IndexInput, RetrievalInput, UploadInput
+from app.modules.knowledge.engine_schemas import (
+    CreateInput,
+    IndexInput,
+    RetrievalInput,
+    UploadInput,
+)
 
 
 class KnowledgeProvider(Protocol):

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.modules.common.toolchain.client import PopClient
 from app.modules.common.toolchain.contracts import list_result, object_result, segment
 from app.modules.common.toolchain.parameters import resolve_parameters
-from app.modules.knowledge.schemas import CreateInput, IndexInput, RetrievalInput
+from app.modules.knowledge.engine_schemas import CreateInput, IndexInput, RetrievalInput
 
 BASE = "/knowledge-engine/api/v1"
 

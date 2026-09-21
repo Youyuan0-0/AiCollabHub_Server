@@ -21,7 +21,7 @@ from app.modules.common.review_schemas import ReviewQualityScores
 from app.modules.common.toolchain.client import PopClient
 from app.modules.common.toolchain.contracts import authorize
 from app.modules.knowledge.engine import KnowledgeEngineProvider
-from app.modules.knowledge.schemas import IndexInput, RetrievalInput
+from app.modules.knowledge.engine_schemas import IndexInput, RetrievalInput
 
 API = "/api/v1"
 
@@ -231,7 +231,9 @@ def test_reader_cannot_read_or_import_service_account_workspace(client):
     assert client.get(API + "/dataset-toolchain/resources").status_code == 403
     assert client.get(API + "/application-toolchain/resources").status_code == 403
     assert (
-        client.post(API + "/knowledge-bases", json={"name": "库", "summary": "简介"}).status_code
+        client.post(
+            API + "/knowledge-bases", json={"name": "库", "description": "简介"}
+        ).status_code
         == 403
     )
     assert len(client.app.state.toolchain_mock.calls) == before
@@ -292,54 +294,64 @@ def test_runtime_can_bind_approved_import_without_manual_binding_file():
 
 def create_base(client):
     response = client.post(
-        API + "/knowledge-bases", json={"name": "测试知识库", "summary": "接口测试"}
+        API + "/knowledge-bases", json={"name": "测试知识库", "description": "接口测试"}
     )
     assert response.status_code == 201, response.text
     return response.json()
 
 
-def test_knowledge_real_file_bytes_processing_chunks_retrieval_and_delete(client):
+def test_knowledge_local_review_does_not_call_external_engine(client):
+    """工具链启用后，本地知识库仍须逐层审批，原文和召回不转交另一套知识引擎。"""
+    before = len(client.app.state.toolchain_mock.calls)
     base = create_base(client)
     path = API + "/knowledge-bases/" + base["id"]
+    admin = API + "/admin/knowledge-bases/" + base["id"]
     body = "试验说明：压力阈值为 100。".encode()
     response = client.post(
-        path + "/files",
+        path + "/documents",
         files={"files": ("说明.txt", body, "text/plain")},
-        data={"config": json.dumps(base["indexConfig"])},
+        data={"revision": base["revision"]},
+    )
+    assert response.status_code == 202, response.text
+    base = response.json()
+    document = base["documents"][0]
+    assert document["status"] == "awaiting_review" and base["chunkCount"] == 0
+    base = client.post(
+        admin + "/review", json={"revision": base["revision"], "decision": "approved"}
+    ).json()
+    response = client.post(
+        admin + "/documents/" + document["id"] + "/review",
+        json={"revision": base["revision"], "decision": "approved"},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "syncing"
-    assert response.json()["totalSize"] == len(body)
-    assert client.post(path + "/submit").status_code == 409
-    payload = {"query": "压力阈值", "config": base["indexConfig"]}
-    assert client.post(path + "/retrieval", json=payload).status_code == 409
-    refreshed = client.get(path + "/status").json()
-    assert refreshed["status"] == "ready" and refreshed["documents"][0]["id"]
-    assert refreshed["chunkCount"] is None
-    chunks = client.get(path + "/chunks").json()
-    assert chunks["items"][0]["text"] == body.decode()
-    results = client.post(path + "/retrieval", json=payload).json()
-    assert results[0]["excerpt"] == body.decode() and results[0]["score"] is None
-    assert (
-        client.delete(
-            path + "/documents", params={"name": refreshed["documents"][0]["id"]}
-        ).status_code
-        == 200
+    base = client.get(path).json()
+    assert base["status"] == "ready" and base["storageBytes"] == len(body)
+    assert client.get(path + "/chunks").json()["items"][0]["text"] == body.decode()
+    result = client.post(
+        path + "/retrieval", json={"query": "压力阈值", "config": base["indexConfig"]}
     )
-    assert client.get(path + "/status").json()["documentCount"] == 0
+    assert result.status_code == 200 and result.json()[0]["excerpt"] == body.decode()
+    base = client.get(path).json()
+    deleted = client.delete(
+        path + "/documents", params={"name": document["name"], "revision": base["revision"]}
+    )
+    assert deleted.status_code == 200 and deleted.json()["documentCount"] == 0
+    assert len(client.app.state.toolchain_mock.calls) == before
 
 
-def test_legacy_multipart_upload_returns_validation_error_for_unsupported_file():
+def test_local_multipart_upload_rejects_unsupported_file():
+    """本地文件解析使用 415 拒绝不支持的类型，不登记待审文档。"""
     app = create_app(
         Settings(toolchain_mode="disabled"), resources_factory=lambda _: ApplicationResources()
     )
     with TestClient(app) as client:
         base = create_base(client)
         response = client.post(
-            API + f"/knowledge-bases/{base['id']}/files",
+            API + f"/knowledge-bases/{base['id']}/documents",
+            data={"revision": base["revision"]},
             files={"files": ("invalid.exe", b"invalid", "application/octet-stream")},
         )
-        assert response.status_code == 422
+        assert response.status_code == 415
 
 
 def test_knowledge_unauthorized_write_has_no_upstream_side_effect(client):
@@ -347,7 +359,8 @@ def test_knowledge_unauthorized_write_has_no_upstream_side_effect(client):
     select(client, "demo-outsider")
     before = len(client.app.state.toolchain_mock.calls)
     response = client.post(
-        API + f"/knowledge-bases/{base['id']}/files",
+        API + f"/knowledge-bases/{base['id']}/documents",
+        data={"revision": base["revision"]},
         files={"files": ("secret.txt", b"x", "text/plain")},
     )
     assert response.status_code == 404

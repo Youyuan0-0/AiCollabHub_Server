@@ -18,13 +18,13 @@ from app.core.config import Settings
 from app.modules.applications.market_contract import HiMarketClient
 from app.modules.applications.providers import DemoApplicationProvider
 from app.modules.applications.runtime import AgentDevProvider
-from app.modules.common.identity import DEFAULT_USER
+from app.modules.common.identity import DEFAULT_ADMIN, DEFAULT_USER
 from app.modules.common.toolchain.client import PopClient
 from app.modules.common.toolchain.configuration import ToolchainConfigurationStore, module_settings
 from app.modules.common.toolchain.mock import DocumentedToolchainMock
 from app.modules.datasets.toolchain import DatasetToolchain
 from app.modules.knowledge.engine import KnowledgeEngineProvider
-from app.modules.knowledge.schemas import IndexInput, RetrievalInput
+from app.modules.knowledge.engine_schemas import CreateInput, IndexInput, RetrievalInput
 
 
 def test_module_connections_never_cross_credentials_or_authorization():
@@ -192,25 +192,18 @@ def test_knowledge_storage_and_tenant_mapping_are_independent(monkeypatch):
         assert client.app.state.resources.storage is None
         assert client.app.state.knowledge_storage is stores[0][2]
         assert stores[0][0].minio_bucket == "kb-documents"
-        created = client.post(
-            "/api/v1/knowledge-bases", json={"name": "组织资料", "summary": "组织文件"}
+        # 外部适配器单独验证租户映射，不再借用本地知识库的创建审批接口。
+        workspace = client.app.state.knowledge_workspace
+        created = workspace.create(
+            CreateInput(name="组织资料", summary="组织文件"), DEFAULT_USER, {}
         )
-        assert created.status_code == 201, created.text
         assert bodies[-1]["tenantId"] == "vendor-tenant"
         calls = client.app.state.toolchain_mocks["knowledge"].calls
-        assert (
-            client.app.state.knowledge_workspace.resources[created.json()["id"]]["externalTenantId"]
-            == "vendor-tenant"
-        )
-        client.post(
-            "/api/v1/application-demo-session",
-            json={"actorId": "demo-admin", "audience": "user"},
-        )
+        assert workspace.resources[created["id"]]["externalTenantId"] == "vendor-tenant"
         before = len(calls)
-        denied = client.post(
-            "/api/v1/knowledge-bases", json={"name": "无对应组织", "summary": "组织文件"}
-        )
-        assert denied.status_code == 422 and len(calls) == before
+        with pytest.raises(HTTPException) as denied:
+            workspace.create(CreateInput(name="无对应组织", summary="组织文件"), DEFAULT_ADMIN, {})
+        assert denied.value.status_code == 422 and len(calls) == before
     assert stores[0][2].closed
 
 

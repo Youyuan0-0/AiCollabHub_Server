@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     applications_storage: Literal["memory", "database"] = "memory"
     # 数据集用户端申请和活动独立选用存储，数据库模式需先执行 Alembic 迁移。
     datasets_storage: Literal["memory", "database"] = "memory"
+    # 知识库独立持久化；向量及重排序使用完整服务端地址，密钥仅在后端保存。
+    knowledge_storage: Literal["memory", "database"] = "memory"
+    knowledge_document_dir: Path = Path(".runtime/knowledge-documents")
+    knowledge_embedding_url: AnyHttpUrl | None = None
+    knowledge_rerank_url: AnyHttpUrl | None = None
+    knowledge_rerank_model: str = "bge-reranker-v2-m3"
+    knowledge_model_key: SecretStr | None = None
     # 本地发布先完成平台上架；external 保留待同步，接入真实通道后替换适配器。
     datasets_publication_mode: Literal["local", "external"] = "local"
     applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
@@ -274,6 +281,8 @@ class Settings(BaseSettings):
             raise ValueError("APPLICATIONS_STORAGE=database requires a PostgreSQL connection")
         if self.datasets_storage == "database" and self.database_url is None:
             raise ValueError("DATASETS_STORAGE=database requires a database connection")
+        if self.knowledge_storage == "database" and self.database_url is None:
+            raise ValueError("KNOWLEDGE_STORAGE=database requires a database connection")
         # 开发阶段可暂不接数据库，生产环境缺少连接串则在启动前报错。
         if self.app_env == "production" and self.database_url is None:
             raise ValueError("POSTGRES_* or DATABASE_URL is required in production")

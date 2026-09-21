@@ -1,261 +1,236 @@
-"""知识库模拟目录与维护接口，权限和业务状态保存在同一服务实例。"""
+"""知识库用户与管理路由；复用平台身份、CSRF、目录目标及分页协议。"""
 
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from pydantic import ValidationError
+from fastapi import APIRouter, BackgroundTasks, File, Form, Query, Request, UploadFile
+from fastapi.responses import Response
 
-from app.modules.common.fixtures import paginate
-from app.modules.common.identity import current_actor
+from app.modules.common.identity import current_actor, require_admin
 from app.modules.common.identity_directory import publication_defaults
-from app.modules.common.service import timestamp
-from app.modules.knowledge.engine_workspace import EngineKnowledgeWorkspace
+from app.modules.common.schemas import PageQuery
+from app.modules.common.visibility import validate_visibility_targets, visibility_directory
+from app.modules.knowledge.reviews import KnowledgeReviews
 from app.modules.knowledge.schemas import (
+    AdminInput,
+    AdminUpdate,
     ChunkQuery,
     CreateInput,
     IndexInput,
+    RebuildInput,
+    ResubmitInput,
     RetrievalInput,
-    UploadInput,
+    ReviewInput,
+    ReviewQuery,
+    SettingsInput,
+    VisibilityInput,
 )
-from app.modules.knowledge.workspace import knowledge_workspace, public_knowledge
-
-router = APIRouter(prefix="/knowledge-bases", tags=["knowledge (simulation)"])
+from app.modules.knowledge.service import knowledge_service
 
 
-@router.get("/options")
-def options(request: Request) -> dict:
-    """返回创建知识库可选的真实模型与分段配置，避免前端固定演示模型。"""
-    current_actor(request)
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        return workspace.engine.options()
-    return {"mode": "disabled", "indexProfiles": []}
-
-
-@router.get("")
-def bases(request: Request) -> list[dict]:
-    """查询可见知识库与本人草稿，公开卡片不含后台分级和范围。"""
-    actor = current_actor(request)
-    return [public_knowledge(item, actor) for item in knowledge_workspace(request).catalog(actor)]
-
-
-@router.post("", status_code=201)
-def create(payload: CreateInput, request: Request) -> dict:
-    """创建保存在模拟仓储中的本人知识库。"""
-    actor = current_actor(request)
-    return public_knowledge(
-        knowledge_workspace(request).create(payload, actor, publication_defaults(request, actor)),
-        actor,
+def build_router(admin: bool) -> APIRouter:
+    """两端共用文档与检索流程，但身份入口、字段投影及管理权限始终由服务端固定。"""
+    result = APIRouter(
+        prefix=("/admin" if admin else "") + "/knowledge-bases",
+        tags=["knowledge"],
     )
 
-
-@router.get("/{base_id}/chunks")
-def chunks(base_id: str, request: Request, query: Annotated[ChunkQuery, Query()]) -> dict:
-    """分页展示供应方模拟片段，不在平台实现文本切分。"""
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        return workspace.read_chunks(base_id, current_actor(request), query)
-    item = workspace.resource(base_id, current_actor(request))
-    values = [
-        {
-            "id": doc["name"],
-            "documentName": doc["name"],
-            "index": index + 1,
-            "text": "模拟片段：" + doc["name"],
-            "characterCount": len(doc["name"]),
-        }
-        for index, doc in enumerate(item["documents"])
-        if (not query.document_name or query.document_name == doc["name"])
-        and query.q.casefold() in doc["name"].casefold()
-    ]
-    return paginate(values, query.page, query.page_size)
-
-
-@router.post("/{base_id}/documents")
-def upload(base_id: str, payload: UploadInput, request: Request) -> dict:
-    """模拟登记文档并更新真实元信息汇总，限制在契约层独立校验。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        raise HTTPException(422, "知识引擎需要文件正文，请使用文件上传接口")
-    with workspace.lock:
-        item = workspace.resource(base_id, actor)
-        added = workspace.provider.documents(payload)
-        names = {doc["name"] for doc in added}
-        documents = added + [doc for doc in item["documents"] if doc["name"] not in names]
-        item = workspace.edit(
-            base_id,
-            actor,
-            {
-                "indexConfig": payload.config.model_dump(by_alias=True)
-                if payload.config
-                else item["indexConfig"],
-                "documents": documents,
-                "documentCount": len(documents),
-                "chunkCount": sum(doc.get("chunkCount", 0) for doc in documents),
-                "totalSize": sum(doc.get("sizeBytes", 0) for doc in documents),
-                "uploadedAt": timestamp(),
-                "status": "ready",
-                "indexBuiltAt": timestamp(),
-            },
+    @result.get("", response_model=None)
+    def bases(request: Request, query: Annotated[PageQuery, Query()]) -> list[dict] | dict:
+        """用户端保留列表协议；管理端按权限过滤后返回分页目录。"""
+        return knowledge_service(request).catalog(
+            current_actor(request, admin), query if admin else None, admin=admin
         )
-        return public_knowledge(item, actor)
 
+    if admin:
 
-@router.delete("/{base_id}/documents")
-def delete_document(base_id: str, name: str, request: Request) -> dict:
-    """移除文档并同步数量、容量和分段统计。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        return public_knowledge(workspace.delete_file(base_id, actor, name), actor)
-    with workspace.lock:
-        item = workspace.resource(base_id, actor)
-        docs = [doc for doc in item["documents"] if doc["name"] != name]
-        item = workspace.edit(
-            base_id,
-            actor,
-            {
-                "documents": docs,
-                "documentCount": len(docs),
-                "totalSize": sum(doc.get("sizeBytes", 0) for doc in docs),
-                "chunkCount": sum(doc.get("chunkCount", 0) for doc in docs),
-            },
-        )
-        return public_knowledge(item, actor)
-
-
-@router.put("/{base_id}/settings")
-def settings(base_id: str, payload: IndexInput, request: Request) -> dict:
-    """保存按字符校验的索引参数并记录版本。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        with workspace.operation(base_id, actor):
-            raise HTTPException(422, "当前指南未提供现有知识库索引参数的修改契约，请联系供应方确认")
-    return public_knowledge(
-        knowledge_workspace(request).edit(
-            base_id, actor, {"indexConfig": payload.model_dump(by_alias=True)}
-        ),
-        actor,
-    )
-
-
-@router.post("/{base_id}/rebuild")
-def rebuild(base_id: str, request: Request) -> dict:
-    """演练重建完成状态，真实索引构建由供应方适配器负责。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    if isinstance(workspace, EngineKnowledgeWorkspace):
-        with workspace.operation(base_id, actor):
-            raise HTTPException(422, "当前指南未提供独立重建接口，请联系供应方确认")
-    return public_knowledge(
-        knowledge_workspace(request).edit(
-            base_id, actor, {"status": "ready", "indexBuiltAt": timestamp()}
-        ),
-        actor,
-    )
-
-
-@router.post("/{base_id}/retrieval")
-def retrieve(base_id: str, payload: RetrievalInput, request: Request) -> list[dict]:
-    """传递检索开关，真实和模拟调用复用权限、耗时及成功率统计。"""
-    return knowledge_workspace(request).search(base_id, current_actor(request), payload)
-
-
-@router.post("/{base_id}/files")
-def upload_files(
-    base_id: str,
-    request: Request,
-    files: Annotated[list[UploadFile], File()],
-    config: Annotated[str, Form()] = "{}",
-) -> dict:
-    """接收实际文件字节；开发兼容模式仍保留原元信息模拟契约。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    try:
-        index = IndexInput.model_validate_json(config)
-    except ValueError:
-        raise HTTPException(422, "知识库索引配置格式不正确") from None
-    try:
-        if isinstance(workspace, EngineKnowledgeWorkspace):
-            return public_knowledge(
-                workspace.upload_files(
-                    base_id,
-                    actor,
-                    files,
-                    index,
-                    request.app.state.knowledge_storage,
-                ),
+        @result.post("/{base_id}/resubmit", response_model=None)
+        def resubmit_admin(base_id: str, payload: ResubmitInput, request: Request) -> dict:
+            """管理员也必须重新送审被退回的创建申请，不能通过保存资料绕过结论。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            return service.present(
+                KnowledgeReviews(service).resubmit(base_id, payload, actor, admin=True),
                 actor,
+                admin=True,
             )
-        from app.modules.knowledge.schemas import DocumentInput
 
-        metadata = []
-        for file in files:
-            file.file.seek(0, 2)
-            metadata.append(DocumentInput(name=file.filename or "", size=file.file.tell()))
-        return upload(base_id, UploadInput(files=metadata, config=index), request)
-    except ValidationError:
-        raise HTTPException(422, "文件格式、大小或数量不符合上传要求") from None
-    finally:
-        for file in files:
-            file.file.close()
-
-
-@router.get("/{base_id}/status")
-def processing_status(base_id: str, request: Request) -> dict:
-    """刷新处理状态并返回完整可见快照，供前端按需轮询。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    item = (
-        workspace.refresh(base_id, actor)
-        if isinstance(workspace, EngineKnowledgeWorkspace)
-        else workspace.resource(base_id, actor)
-    )
-    return public_knowledge(item, actor)
-
-
-@router.post("/{base_id}/submit")
-def submit(base_id: str, request: Request) -> dict:
-    """提交知识库资料审核；数据分级由管理员补充，用户无权填入。"""
-    actor = current_actor(request)
-    workspace = knowledge_workspace(request)
-    with workspace.lock:
-        item = workspace.resource(base_id, actor)
-        if item.get("createdBy") != actor.id:
-            raise HTTPException(403, "只有发布者可以提交知识库审核")
-        if isinstance(workspace, EngineKnowledgeWorkspace):
-            workspace.ensure_ready_for_submission(base_id, actor)
-        identifier = item.get("publicationId")
-        old = workspace.records.get(identifier) if identifier else None
-        if old and old["status"] == "pending":
-            raise HTTPException(409, "已提交审核")
-        data = {
-            key: value
-            for key, value in item.items()
-            if key
-            not in (
-                "visibility",
-                "createdBy",
-                "organizationId",
-                "versions",
-                "listingStatus",
-                "publicationId",
-                "revision",
-                "publicationStatus",
+        @result.get("/reviews", response_model=None)
+        def reviews(request: Request, query: Annotated[ReviewQuery, Query()]) -> dict:
+            """创建与文档审核队列，共用场景应用的分页和状态约定。"""
+            return KnowledgeReviews(knowledge_service(request)).queue(
+                current_actor(request, True), query
             )
-        }
-        if old and old["status"] == "approved":
-            old = None
-        record = workspace.save(
-            data,
-            actor,
-            submit=True,
-            identifier=old["id"] if old else None,
-            revision=old["revision"] if old else None,
-            resource_id=base_id,
+
+        @result.get("/audit", response_model=None)
+        def audit(request: Request, query: Annotated[ReviewQuery, Query()]) -> dict:
+            """查询已发生的审批结论，文档删除或重新提交不会抹除记录。"""
+            return KnowledgeReviews(knowledge_service(request)).queue(
+                current_actor(request, True), query, audit=True
+            )
+
+        @result.post("/{base_id}/review", response_model=None)
+        def review_base(base_id: str, payload: ReviewInput, request: Request) -> dict:
+            """审核创建申请，审批通过不自动扩大开放范围。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            return service.present(
+                KnowledgeReviews(service).decide(base_id, None, payload, actor), actor, admin=True
+            )
+
+        @result.post("/{base_id}/documents/{document_id}/review", response_model=None)
+        def review_document(
+            base_id: str,
+            document_id: str,
+            payload: ReviewInput,
+            request: Request,
+            background: BackgroundTasks,
+        ) -> dict:
+            """文档批准后才启动索引，返回待处理状态供两端轮询。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            record = KnowledgeReviews(service).decide(base_id, document_id, payload, actor)
+            if record.get("jobId"):
+                background.add_task(service.process, base_id, record["jobId"])
+            return service.present(record, actor, admin=True)
+
+        @result.get("/{base_id}/documents/{document_id}/preview", response_model=None)
+        def preview(base_id: str, document_id: str, request: Request) -> dict:
+            """待审正文只向有权管理所属知识库的管理员提供。"""
+            return KnowledgeReviews(knowledge_service(request)).preview(
+                base_id, document_id, current_actor(request, True)
+            )
+
+        @result.get("/{base_id}/documents/{document_id}/original")
+        def original(base_id: str, document_id: str, request: Request) -> Response:
+            """原文作为附件下载，禁止浏览器以内联 HTML 执行上传内容。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            base = service.record(base_id, actor, admin=True)
+            doc = KnowledgeReviews(service).document(base, document_id)
+            return Response(
+                service.files.read(doc["id"]),
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Disposition": "attachment; filename*=UTF-8''"
+                    + quote(doc["name"], safe=""),
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store",
+                },
+            )
+
+        @result.post("", status_code=201, response_model=None)
+        def create_admin(payload: AdminInput, request: Request) -> dict:
+            """后台新建含数据分级的完整资料，系统归属仍取管理员身份。"""
+            actor = current_actor(request, True)
+            require_admin(actor)
+            service = knowledge_service(request)
+            return service.present(
+                service.create(payload, actor, publication_defaults(request, actor)),
+                actor,
+                admin=True,
+            )
+
+        @result.put("/{base_id}", response_model=None)
+        def update(base_id: str, payload: AdminUpdate, request: Request) -> dict:
+            """按修订保存管理字段，更新失败时不会覆盖已有记录。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            return service.present(service.update(base_id, payload, actor), actor, admin=True)
+
+        @result.put("/{base_id}/visibility", response_model=None)
+        def visibility(base_id: str, payload: VisibilityInput, request: Request) -> dict:
+            """只有管理端能保存开放范围，沿用已有目录的目标存在性校验。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            service.record(base_id, actor, admin=True, edit=True)
+            validate_visibility_targets(request, actor, payload)
+            return service.present(service.visibility(base_id, payload, actor), actor, admin=True)
+    else:
+
+        @result.post("/{base_id}/resubmit", response_model=None)
+        def resubmit(base_id: str, payload: ResubmitInput, request: Request) -> dict:
+            """申请人修改被退回的创建资料并重新送审。"""
+            actor, service = current_actor(request), knowledge_service(request)
+            return service.present(
+                KnowledgeReviews(service).resubmit(base_id, payload, actor), actor
+            )
+
+        @result.post("", status_code=201, response_model=None)
+        def create(payload: CreateInput, request: Request) -> dict:
+            """创建初始私有知识库，浏览器不能设置开放范围或系统统计。"""
+            actor, service = current_actor(request), knowledge_service(request)
+            return service.present(
+                service.create(payload, actor, publication_defaults(request, actor)), actor
+            )
+
+    @result.get("/{base_id}", response_model=None)
+    def detail(base_id: str, request: Request) -> dict:
+        """读取最新详情及处理状态；管理员额外获得开放目标目录。"""
+        actor, service = current_actor(request, admin), knowledge_service(request)
+        value = service.present(service.record(base_id, actor, admin=admin), actor, admin=admin)
+        if admin:
+            value["visibilityDirectory"] = visibility_directory(request, actor)
+        return value
+
+    @result.get("/{base_id}/chunks", response_model=None)
+    def chunks(base_id: str, request: Request, query: Annotated[ChunkQuery, Query()]) -> dict:
+        """按文档名和关键词查询当前库分段，先检查可见范围。"""
+        return knowledge_service(request).chunks(
+            base_id, query, current_actor(request, admin), admin=admin
         )
-        workspace.resources[base_id]["publicationId"] = record["id"]
-        workspace.resources[base_id]["publicationStatus"] = "pending"
-        return record
+
+    @result.post("/{base_id}/documents", status_code=202, response_model=None)
+    def upload(
+        base_id: str,
+        request: Request,
+        files: Annotated[list[UploadFile], File()],
+        revision: Annotated[int, Form(ge=1)],
+    ) -> dict:
+        """接收真实 multipart 文件并提交审批；审批通过后才开始索引。"""
+        actor, service = current_actor(request, admin), knowledge_service(request)
+        record = service.upload(base_id, files, revision, actor, admin=admin)
+        return service.present(record, actor, admin=admin)
+
+    @result.delete("/{base_id}/documents", response_model=None)
+    def delete_document(
+        base_id: str,
+        request: Request,
+        name: str,
+        revision: Annotated[int, Query(ge=1)],
+    ) -> dict:
+        """删除文档时同步删除可检索片段，旧修订不得覆盖新上传。"""
+        actor, service = current_actor(request, admin), knowledge_service(request)
+        return service.present(
+            service.delete_document(base_id, name, revision, actor, admin=admin), actor, admin=admin
+        )
+
+    @result.put("/{base_id}/settings", response_model=None)
+    def settings(base_id: str, payload: SettingsInput, request: Request) -> dict:
+        """保存索引配置并返回是否需要重新构建，禁止继续召回失效索引。"""
+        actor, service = current_actor(request, admin), knowledge_service(request)
+        config = IndexInput(**payload.model_dump(exclude={"revision"}))
+        return service.present(
+            service.settings(base_id, config, payload.revision, actor, admin=admin),
+            actor,
+            admin=admin,
+        )
+
+    @result.post("/{base_id}/rebuild", status_code=202, response_model=None)
+    def rebuild(
+        base_id: str, payload: RebuildInput, request: Request, background: BackgroundTasks
+    ) -> dict:
+        """登记新的重建任务；失败任务及过期任务均可重试。"""
+        actor, service = current_actor(request, admin), knowledge_service(request)
+        record = service.rebuild(
+            base_id, payload.revision, actor, admin=admin, failed_only=payload.failed_only
+        )
+        background.add_task(service.process, base_id, record["jobId"])
+        return service.present(record, actor, admin=admin)
+
+    @result.post("/{base_id}/retrieval", response_model=None)
+    def retrieve(base_id: str, payload: RetrievalInput, request: Request) -> list[dict]:
+        """执行真实召回，仅使用当前已经构建的索引。"""
+        return knowledge_service(request).retrieve(
+            base_id, payload, current_actor(request, admin), admin=admin
+        )
+
+    return result
+
+
+router = build_router(False)
+admin_router = build_router(True)

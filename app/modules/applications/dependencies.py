@@ -7,22 +7,22 @@ from app.modules.common.identity import Actor
 from app.modules.common.resource_workspace import ResourceWorkspace
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.workspace import DatasetWorkspace
+from app.modules.knowledge.service import KnowledgeService
 from app.modules.tools.workspace import ToolWorkspace
 
 
 def platform_dependencies(
     actor: Actor,
     datasets: DatasetWorkspace,
-    knowledge: ResourceWorkspace,
+    knowledge: KnowledgeService,
     models: ResourceWorkspace,
     tools: ToolWorkspace,
 ) -> list[dict]:
     """仅列出已发布且当前账号可见的资源，避免把固定样例当作真实依赖。"""
     sources = {
         "dataset": datasets.resources(actor),
-        "knowledge": [
-            item for item in knowledge.catalog(actor) if item["listingStatus"] == "listed"
-        ],
+        # 本地知识库以创建审批和开放范围控制依赖访问，不使用工具链的整库上下架状态。
+        "knowledge": knowledge.published_resources(actor),
         "model": [item for item in models.catalog(actor) if item["listingStatus"] == "listed"],
         "tool": [],
     }

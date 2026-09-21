@@ -15,7 +15,7 @@ from app.main import create_app
 from app.modules.applications.runtime import AgentDevProvider
 from app.modules.common.toolchain.configuration import ToolchainConfigurationStore, module_settings
 from app.modules.common.toolchain.configuration_schemas import SaveToolchainConfiguration
-from app.modules.knowledge.schemas import IndexInput
+from app.modules.knowledge.engine_schemas import IndexInput
 
 PATH = "/api/v1/admin/toolchain-configuration"
 
