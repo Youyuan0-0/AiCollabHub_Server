@@ -7,9 +7,9 @@ from sqlalchemy import text
 from test_application_database_storage import database_app, review, submit  # noqa: F401
 from test_application_market import Supplier, draft
 
-from app.modules.applications.identity import DEFAULT_USER
 from app.modules.applications.market_contract import MarketMutation
 from app.modules.applications.market_workflows import MarketWorkflows
+from app.modules.common.identity import DEFAULT_USER
 
 
 def test_market_journal_reuses_existing_table_and_survives_restart(database_app, tmp_path):  # noqa: F811

@@ -7,10 +7,10 @@ from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.identity import current_actor, require_admin
-from app.modules.applications.tutorial_documents import VIDEO_LIMIT
 from app.modules.applications.tutorial_files import readable_file, save_file
+from app.modules.common.document_content import VIDEO_LIMIT
 from app.modules.common.file_transfer import limited_upload_form, object_response
+from app.modules.common.identity import current_actor, require_admin
 from app.storage.client import StorageDependency
 
 router = APIRouter(tags=["application tutorials"])

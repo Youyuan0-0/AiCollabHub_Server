@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from time import monotonic
 from typing import Literal
 
 import httpx
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.core.config import Settings
 from app.modules.applications.ports import ApplicationProvider
+from app.modules.common.toolchain.network import http_options
 
 
 class AgentBinding(BaseModel):
@@ -47,22 +49,44 @@ class AgentDevProvider:
     def binding(self, resource: dict) -> AgentBinding:
         """读取可信映射并匹配当前应用版本，缺少配置时返回 503。"""
         settings = self.settings
-        if not (
-            settings.applications_agent_url
-            and settings.applications_agent_key
-            and settings.applications_agent_bindings
-        ):
+        if not (settings.applications_agent_url and settings.applications_agent_key):
             raise HTTPException(503, "实际运行服务尚未配置地址、凭证和应用对应关系")
         try:
-            bindings = TypeAdapter(dict[str, AgentBinding]).validate_json(
-                Path(settings.applications_agent_bindings).read_text(encoding="utf-8")
-            )
+            adapter = TypeAdapter(dict[str, AgentBinding])
+            if settings.applications_agent_bindings_data is not None:
+                bindings = adapter.validate_python(settings.applications_agent_bindings_data)
+            elif settings.applications_agent_bindings:
+                bindings = adapter.validate_json(
+                    Path(settings.applications_agent_bindings).read_text(encoding="utf-8")
+                )
+            else:
+                bindings = {}
         except (OSError, ValidationError):
             raise HTTPException(503, "应用运行对应关系读取失败，请联系管理员") from None
         binding = bindings.get(resource["id"])
-        if not binding or binding.version_id != resource["versionId"]:
+        if binding:
+            if binding.version_id == resource["versionId"]:
+                return binding
             raise HTTPException(503, "当前应用版本尚未配置实际智能体")
-        return binding
+        # 手工绑定只覆盖对应应用，其他通过可信工具链导入的应用仍可使用来源信息。
+        source = resource.get("source", {})
+        if (
+            source.get("provider") == "agent-dev"
+            and source.get("mode") == "live"
+            and source.get("workspace") == settings.toolchain_workspace
+            and source.get("environment") == str(settings.toolchain_pop_url)
+            and source.get("externalStatus") == "ONLINE"
+            and isinstance(source.get("externalId"), str)
+            and source.get("externalId")
+            and isinstance(source.get("externalVersion"), str)
+            and source.get("externalVersion")
+        ):
+            return AgentBinding(
+                version_id=resource["versionId"],
+                agent_code=source["externalId"],
+                agent_version=source["externalVersion"],
+            )
+        raise HTTPException(503, "当前应用版本尚未绑定可运行的智能体")
 
     def connection(self, resource: dict) -> dict:
         """将实际运行配置的可用性转换为前端连接状态。"""
@@ -72,9 +96,9 @@ class AgentDevProvider:
             return {"mode": "live", "configured": False, "message": error.detail}
         return {"mode": "live", "configured": True, "message": "已配置实际运行服务"}
 
-    def runtime_status(self, application_id: str, version_id: str) -> dict:
+    def runtime_status(self, resource: dict) -> dict:
         """返回配置接入状态，运行统计交由平台实际任务记录提供。"""
-        configured = self.connection({"id": application_id, "versionId": version_id})["configured"]
+        configured = self.connection(resource)["configured"]
         return {
             "status": "configured" if configured else "not_connected",
             "averageResponseMs": None,
@@ -84,7 +108,7 @@ class AgentDevProvider:
         }
 
     def invoke(self, resource: dict, inputs: dict, options: dict, simulate_failure: bool) -> dict:
-        """创建智能体会话并执行一次非流式请求，校验最终文本和图片结果。"""
+        """创建会话并按配置接收 JSON 或 SSE，统一返回经过校验的最终结果。"""
         if simulate_failure:
             raise HTTPException(422, "实际服务不支持模拟失败选项")
         binding = self.binding(resource)
@@ -104,6 +128,10 @@ class AgentDevProvider:
             follow_redirects=False,
             trust_env=False,
             transport=self.transport,
+            **http_options(
+                self.settings.applications_agent_proxy_url if self.transport is None else None,
+                self.settings.applications_agent_ca_certificate,
+            ),
         ) as client:
             session = self.post(
                 client,
@@ -121,7 +149,7 @@ class AgentDevProvider:
                 "/gateway/agent/api/run",
                 {
                     "sessionId": session_id,
-                    "stream": False,
+                    "stream": self.settings.applications_agent_response_mode == "sse",
                     "delta": True,
                     "trace": False,
                     "message": {
@@ -150,26 +178,69 @@ class AgentDevProvider:
             raise HTTPException(502, "智能体返回内容类型尚不支持")
         return {
             "mode": "live",
-            "text": "\n".join(texts),
+            "text": ("" if self.settings.applications_agent_response_mode == "sse" else "\n").join(
+                texts
+            ),
             "images": images,
             "sessionId": session_id,
             "requestId": data.get("requestId"),
         }
 
     @staticmethod
+    def stream_result(raw: bytes, session_id: str) -> dict:
+        """合并文档规定的增量事件；不展示思考内容，缺少结束事件不视为成功。"""
+        content, request_id, ended = [], None, False
+        for block in raw.decode("utf-8-sig").replace("\r\n", "\n").split("\n\n"):
+            data = "\n".join(
+                line[5:].lstrip(" ") for line in block.splitlines() if line.startswith("data:")
+            )
+            if not data:
+                continue
+            event = json.loads(data)
+            if not isinstance(event, dict):
+                raise ValueError("invalid event")
+            if event.get("object") == "error":
+                raise HTTPException(502, "智能体服务报告运行失败")
+            if event.get("object") != "message.delta":
+                continue
+            if (
+                ended
+                or event.get("sessionId") != session_id
+                or not isinstance(event.get("end"), bool)
+            ):
+                raise ValueError("invalid session or event order")
+            items = event.get("content")
+            if not isinstance(items, list):
+                raise ValueError("invalid content")
+            content.extend(items)
+            request_id = event.get("requestId") or request_id
+            ended = event["end"]
+        if not ended:
+            raise HTTPException(502, "智能体流式响应中断，未收到完成事件")
+        return {"message": {"content": content}, "requestId": request_id}
+
+    @staticmethod
     def post(client: httpx.Client, path: str, payload: dict) -> dict:
         """发送智能体请求并限制响应大小，不自动重试可能已执行的操作。"""
+        started = monotonic()
         try:
             with client.stream("POST", path, json=payload) as response:
                 if response.status_code != 200:
                     raise HTTPException(502, "智能体接口请求失败，请检查服务授权和运行状态")
                 chunks, size = [], 0
                 for chunk in response.iter_bytes():
+                    if monotonic() - started > (client.timeout.read or 120):
+                        raise httpx.ReadTimeout("request deadline exceeded")
                     size += len(chunk)
                     if size > 2_000_000:
                         raise HTTPException(502, "智能体返回内容过大")
                     chunks.append(chunk)
-                result = json.loads(b"".join(chunks))
+                raw = b"".join(chunks)
+                if payload.get("stream") is True:
+                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                        raise ValueError("invalid stream content type")
+                    return AgentDevProvider.stream_result(raw, payload["sessionId"])
+                result = json.loads(raw)
         except httpx.TimeoutException:
             raise HTTPException(
                 504, "等待智能体结果超时，完成状态未确认；请先核实任务状态"

@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Annotated, BinaryIO, NoReturn
 from urllib.parse import urlsplit
 
@@ -11,7 +12,7 @@ from fastapi import Depends, HTTPException, Request
 from minio import Minio
 from minio.error import MinioException, S3Error
 from minio.helpers import check_bucket_name
-from urllib3 import PoolManager, Timeout
+from urllib3 import PoolManager, ProxyManager, Timeout
 from urllib3.exceptions import HTTPError
 from urllib3.response import HTTPResponse
 from urllib3.util.retry import Retry
@@ -56,13 +57,20 @@ class MinioStorage:
         self.max_upload_bytes = max_upload_bytes
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> MinioStorage:
+    def from_settings(
+        cls, settings: Settings, *, proxy_url: str | None = None, ca_certificate: str = ""
+    ) -> MinioStorage:
         """从受控配置创建存储客户端，初始化失败时释放连接池。"""
         if settings.minio_endpoint is None:
             raise ValueError("MINIO_ENDPOINT is required")
         check_bucket_name(settings.minio_bucket, strict=True)
         endpoint = urlsplit(str(settings.minio_endpoint))
-        http = PoolManager(
+        from app.modules.common.toolchain.network import http_options
+
+        pool = ProxyManager if proxy_url else PoolManager
+        http = pool(
+            **({"proxy_url": proxy_url} if proxy_url else {}),
+            ssl_context=http_options(ca_certificate=ca_certificate)["verify"],
             timeout=Timeout(connect=settings.minio_timeout, read=settings.minio_timeout),
             retries=Retry(total=0, connect=0, read=0, redirect=0),
             maxsize=10,
@@ -120,6 +128,14 @@ class MinioStorage:
                 self.bucket, key, data, length, content_type=content_type
             )
             return ObjectInfo(key, length, result.etag, content_type, result.version_id)
+        except (MinioException, HTTPError, OSError) as error:
+            self._translate_error(error)
+
+    def presigned_read_url(self, key: str, *, expires: timedelta) -> str:
+        """为已授权外部处理生成限时读取地址，调用方不得将签名地址写入公开资料。"""
+        self._validate_key(key)
+        try:
+            return self.client.presigned_get_object(self.bucket, key, expires=expires)
         except (MinioException, HTTPError, OSError) as error:
             self._translate_error(error)
 

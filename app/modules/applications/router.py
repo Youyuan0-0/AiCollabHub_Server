@@ -6,11 +6,11 @@ from fastapi import APIRouter, Query, Request
 
 from app.modules.applications.application_service import application_service
 from app.modules.applications.discovery import analyze, related
-from app.modules.applications.identity import current_actor
-from app.modules.applications.identity_directory import publication_defaults
 from app.modules.applications.precheck import ApplicationPrecheck, precheck
 from app.modules.applications.publication_schemas import SaveApplicationPublication
 from app.modules.common.catalog import query_resources
+from app.modules.common.identity import current_actor
+from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
 
 # 按“HTTP 方法 + 路径”接收请求；/api/v1 前缀由 app/api/router.py 添加。
@@ -46,7 +46,7 @@ def application_discovery(application_id: str, request: Request) -> dict:
 @router.get("/application-dependencies", response_model=None)
 def dependencies(request: Request) -> list[dict]:
     """读取发布表单可关联的模型、数据集、知识库和工具。"""
-    return application_service(request).provider.dependencies()
+    return application_service(request).dependencies(current_actor(request))
 
 
 # 接收 getApplicationFormConfiguration() 的 GET 请求，返回公开的必填规则。

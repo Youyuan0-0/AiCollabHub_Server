@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app.modules.applications.identity import Actor
 from app.modules.applications.ports import ApplicationSession
 from app.modules.applications.workflow_schemas import (
     HistoryQuery,
@@ -12,6 +11,8 @@ from app.modules.applications.workflow_schemas import (
     RunInput,
     SyncInput,
 )
+from app.modules.common.identity import Actor
+from app.modules.common.schema_validation import validate_schema_input
 
 if TYPE_CHECKING:
     from app.modules.applications.application_service import ApplicationService
@@ -24,7 +25,6 @@ from time import perf_counter
 from fastapi import HTTPException
 
 from app.modules.applications.configuration import validate_submission
-from app.modules.applications.identity import can_manage, require_admin, visible
 from app.modules.applications.publication_schemas import (
     APPLICATION_CATEGORIES,
     ApplicationDetails,
@@ -32,6 +32,7 @@ from app.modules.applications.publication_schemas import (
 )
 from app.modules.applications.workflow_schemas import WorkflowPolicy
 from app.modules.common.fixtures import paginate
+from app.modules.common.identity import can_manage, require_admin, visible
 
 
 def now() -> str:
@@ -165,7 +166,9 @@ class ApplicationWorkflows:
                 ),
                 (
                     "关联资源有效性",
-                    lambda: self.provider.validate_dependencies(record["data"]["dependencies"]),
+                    lambda: self.service.validate_dependencies(
+                        record["data"]["dependencies"], actor
+                    ),
                 ),
                 (
                     "敏感词与密级",
@@ -377,7 +380,7 @@ class ApplicationWorkflows:
                 len(value) > 2000 for value in payload.options.values()
             ):
                 raise HTTPException(422, "包含无效应用配置项")
-            self.validate_input(resource.get("inputSchema", ""), payload.input)
+            validate_schema_input(resource.get("inputSchema", ""), payload.input)
             record = {
                 "id": key,
                 "actorId": actor.id,
@@ -438,31 +441,6 @@ class ApplicationWorkflows:
         """生成运行结果视图，移除内部请求指纹。"""
         return {key: value for key, value in record.items() if key != "fingerprint"}
 
-    @staticmethod
-    def validate_input(schema_text: str, inputs: dict) -> None:
-        """按应用声明的 Schema 校验输入，不读取远程引用，失败返回 422。"""
-        if not schema_text:
-            if not inputs:
-                raise HTTPException(422, "请填写应用输入")
-            return
-        from referencing import Registry
-
-        from app.modules.applications.schema_validation import parse_schema
-
-        try:
-            schema, validator_class = parse_schema(schema_text)
-            # 不读取任何远程引用，避免应用元数据触发任意网络访问。
-            validator = validator_class(schema, registry=Registry())
-            errors = list(validator.iter_errors(inputs))
-            if errors:
-                raise HTTPException(422, "输入不符合应用格式：" + errors[0].message[:300])
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(
-                422, "应用输入格式无法校验，请联系发布者检查 Schema 或外部引用"
-            ) from None
-
     def runtime(self, application_id: str) -> dict | None:
         """统计当前运行模式的已完成任务，无样本时返回空值。"""
         mode = getattr(self.provider, "mode", "simulation")
@@ -491,15 +469,31 @@ class ApplicationWorkflows:
         """导入指定工具链版本为发布草稿，按请求编号与内容指纹去重并记录失败。"""
         if actor.role not in ("publisher", "admin", "org_admin"):
             raise HTTPException(403, "当前账号不能导入工具链应用")
+        if hasattr(self.provider, "authorize"):
+            self.provider.authorize(actor)
+        provider_name = getattr(self.provider, "provider_name", "demo-toolchain")
+        mode = getattr(self.provider, "toolchain_mode", "simulation")
+        reference = (
+            self.provider.reference(payload.external_id)
+            if hasattr(self.provider, "reference")
+            else {}
+        )
+        if mode != "simulation" and payload.simulate_failure:
+            raise HTTPException(422, "当前工具链使用协议调用，不接受模拟失败参数")
         key = f"{actor.id}:{payload.request_id}"
-        binding_key = f"demo-toolchain:{payload.external_id}"
+        binding_key = (
+            provider_name + ":" + sha256(json.dumps(reference, sort_keys=True).encode()).hexdigest()
+            if reference
+            else f"demo-toolchain:{payload.external_id}"
+        )
         fingerprint = sha256(
             json.dumps(
                 {
                     "externalId": payload.external_id,
                     "externalVersion": payload.external_version,
                     "simulateFailure": payload.simulate_failure,
-                    "mode": "simulation",
+                    "mode": mode,
+                    "reference": reference,
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -515,8 +509,8 @@ class ApplicationWorkflows:
                 "id": key,
                 "actorId": actor.id,
                 "organizationId": actor.organization_id,
-                "source": "demo-toolchain",
-                "workspace": "demo",
+                "source": provider_name,
+                "workspace": reference.get("workspace", "demo"),
                 "externalId": payload.external_id,
                 "externalVersion": payload.external_version,
                 "createdAt": now(),
@@ -596,11 +590,13 @@ class ApplicationWorkflows:
                 if job["status"] != "unchanged":
                     record["source"] = {
                         "kind": "toolchain",
-                        "provider": "demo-toolchain",
+                        **reference,
+                        "provider": provider_name,
                         "workspace": source["workspace"],
                         "externalId": payload.external_id,
                         "externalVersion": payload.external_version,
                         "syncedAt": now(),
+                        "externalStatus": source.get("agentStatus"),
                     }
                     session.put_publication(record)
                     session.put_entry("bindings", binding_key, binding)

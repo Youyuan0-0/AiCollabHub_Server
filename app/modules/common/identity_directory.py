@@ -8,11 +8,11 @@ from typing import Literal, Self
 from fastapi import HTTPException, Request
 from pydantic import Field, ValidationError, model_validator
 
-from app.modules.applications.identity import Actor
-from app.modules.applications.publication_schemas import ApplicationPayload, ApplicationVisibility
+from app.modules.common.access_schemas import ScopeTargets, StrictPayload
+from app.modules.common.identity import Actor
 
 
-class DirectoryEntry(ApplicationPayload):
+class DirectoryEntry(StrictPayload):
     """可信身份目录中的基础编号与名称。"""
 
     id: str = Field(min_length=1, max_length=200)
@@ -32,9 +32,12 @@ class DirectoryMember(DirectoryEntry):
     organization_id: str = Field(min_length=1, max_length=200)
     project_ids: list[str] = Field(default_factory=list, max_length=100)
     active: bool = True
+    employee_number: str = ""
+    department: str = ""
+    contact: str = ""
 
 
-class IdentityDirectory(ApplicationPayload):
+class IdentityDirectory(StrictPayload):
     """由可信同步程序维护的组织、项目和成员快照。"""
 
     organizations: list[DirectoryEntry] = Field(default_factory=list, max_length=10000)
@@ -109,7 +112,7 @@ def publication_defaults(request: Request, actor: Actor) -> dict:
     if directory is not None:
         organizations = [item.model_dump() for item in directory.organizations]
     elif request.app.state.settings.auth_mode == "disabled":
-        from app.modules.applications.identity import DIRECTORY
+        from app.modules.common.identity import DIRECTORY
 
         organizations = DIRECTORY["organizations"]
     else:
@@ -125,9 +128,7 @@ def publication_defaults(request: Request, actor: Actor) -> dict:
     }
 
 
-def validate_visibility_targets(
-    request: Request, actor: Actor, payload: ApplicationVisibility
-) -> None:
+def validate_visibility_targets(request: Request, actor: Actor, payload: ScopeTargets) -> None:
     """检查开放目标是否存在且属于当前管理员可选择范围。"""
     if configured_directory(request) is None or payload.scope == "all":
         return

@@ -1,0 +1,11 @@
+{
+  "name": "@aicollabhub/ui-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./platform-theme.css": "./platform-theme.css"
+  },
+  "files": [
+    "platform-theme.css"
+  ]
+}

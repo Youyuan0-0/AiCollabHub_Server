@@ -6,8 +6,6 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import Field
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.identity import ACTORS, DIRECTORY, current_actor, require_admin
-from app.modules.applications.identity_directory import visible_directory
 from app.modules.applications.publication_schemas import (
     ApplicationPayload,
     SaveApplicationPublication,
@@ -20,6 +18,9 @@ from app.modules.applications.workflow_schemas import (
     SyncInput,
     WorkflowPolicy,
 )
+from app.modules.common.identity import ACTORS, DIRECTORY, current_actor, require_admin
+from app.modules.common.identity_directory import visible_directory
+from app.modules.common.toolchain.configuration import module_settings
 
 router = APIRouter(tags=["application workflows (development)"])
 
@@ -88,7 +89,12 @@ def select_session(payload: DemoSessionInput, request: Request, response: Respon
 @router.get("/application-presentation", response_model=None)
 def presentation(request: Request) -> dict:
     """读取应用目录公开的展示策略。"""
-    return application_service(request).workflows.policy()
+    result = application_service(request).workflows.policy()
+    settings = request.app.state.settings
+    result["toolchainMode"] = module_settings(settings, "applications").toolchain_mode
+    if settings.toolchain_application_entry_url:
+        result["toolchainUrl"] = str(settings.toolchain_application_entry_url)
+    return result
 
 
 @router.get("/applications/{application_id}/interaction", response_model=None)
@@ -152,8 +158,11 @@ def read_notification(notification_id: str, request: Request) -> dict:
 @router.get("/application-toolchain/resources", response_model=None)
 def toolchain(request: Request) -> list[dict]:
     """读取当前供应方可导入的工具链资源列表。"""
-    current_actor(request)
-    return application_service(request).provider.toolchain_resources()
+    actor = current_actor(request)
+    provider = application_service(request).provider
+    if hasattr(provider, "authorize"):
+        provider.authorize(actor)
+    return provider.toolchain_resources()
 
 
 @router.get("/application-toolchain/syncs", response_model=None)
@@ -177,8 +186,9 @@ def policy(request: Request) -> dict:
 @router.get("/admin/application-dependencies", response_model=None)
 def admin_dependencies(request: Request) -> list[dict]:
     """校验管理角色后读取关联资源目录。"""
-    require_admin(current_actor(request, True))
-    return application_service(request).provider.dependencies()
+    actor = current_actor(request, True)
+    require_admin(actor)
+    return application_service(request).dependencies(actor)
 
 
 @router.put("/admin/application-policy", response_model=None)
@@ -235,5 +245,5 @@ def develop(payload: SaveApplicationPublication, request: Request) -> dict:
         from app.modules.applications.tutorial_files import validate_files
 
         validate_files(session, data, actor, payload.security_level)
-    service.provider.validate_dependencies(data["dependencies"])
+    service.validate_dependencies(data["dependencies"], actor)
     return service.provider.develop(data, actor.id)

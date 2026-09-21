@@ -32,7 +32,7 @@ class DemoApplicationProvider:
         if any((item["kind"], item["resourceId"]) not in available for item in dependencies):
             raise HTTPException(422, "关联资源不存在，请从当前目录重新选择")
 
-    def runtime_status(self, application_id: str, version_id: str) -> dict:
+    def runtime_status(self, resource: dict) -> dict:
         """返回未接入状态和空统计，不虚构实际运行指标。"""
         return {
             "status": "not_connected",

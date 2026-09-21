@@ -1,4 +1,4 @@
-"""场景应用身份与权限判断；正式会话和开发演示分别通过身份适配器提供 Actor。"""
+"""平台资源身份与权限判断；正式会话和开发演示分别通过身份适配器提供 Actor。"""
 
 from dataclasses import asdict, dataclass
 from secrets import token_urlsafe
@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 
 @dataclass(frozen=True)
 class Actor:
-    """场景应用的可信操作身份，携带角色、组织与项目归属。"""
+    """各类资源共用的可信操作身份，携带角色、组织与项目归属。"""
 
     id: str
     name: str
@@ -68,7 +68,7 @@ class SessionIdentityProvider:
         identity = getattr(request.state, "business_identity", None)
         if not identity or identity["scope"] != audience:
             raise HTTPException(401, "authentication_required")
-        from app.modules.applications.identity_directory import configured_directory
+        from app.modules.common.identity_directory import configured_directory
 
         directory = configured_directory(request)
         if directory is not None:
@@ -76,7 +76,7 @@ class SessionIdentityProvider:
             if member is None or not member.active:
                 raise HTTPException(403, "账号未同步或已停用，请联系管理员")
             if audience == "admin" and member.role not in ("admin", "org_admin"):
-                raise HTTPException(403, "当前账号没有应用管理权限")
+                raise HTTPException(403, "当前账号没有资源管理权限")
             return Actor(
                 member.id,
                 member.name,
@@ -133,7 +133,7 @@ def current_actor(request: Request, is_admin: bool = False) -> Actor:
 def require_admin(actor: Actor) -> None:
     """要求系统或单位管理员角色，否则返回 403。"""
     if actor.role not in ("admin", "org_admin"):
-        raise HTTPException(403, "当前账号没有应用管理权限")
+        raise HTTPException(403, "当前账号没有资源管理权限")
 
 
 def can_manage(actor: Actor, record: dict) -> bool:

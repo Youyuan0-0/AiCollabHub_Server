@@ -521,7 +521,7 @@ def test_toolchain_development_enters_importable_catalog(client):
 
 
 def test_expired_demo_identity_can_be_selected_again_without_granting_access(client):
-    from app.modules.applications.identity import DemoIdentityProvider
+    from app.modules.common.identity import DemoIdentityProvider
 
     select(client, "demo-reader")
     select(client, "demo-admin", "admin")

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.core.config import Settings
-from app.modules.applications.identity import Actor
 from app.modules.applications.market_contract import (
     MarketBinding,
     MarketConfiguration,
@@ -15,6 +14,7 @@ from app.modules.applications.market_contract import (
     MarketRecovery,
 )
 from app.modules.applications.ports import ApplicationSession
+from app.modules.common.identity import Actor
 
 if TYPE_CHECKING:
     from app.modules.applications.application_service import ApplicationService
@@ -26,7 +26,6 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from app.modules.applications.identity import can_edit, can_manage, require_admin
 from app.modules.applications.market_contract import (
     LISTING_FIELDS,
     REVIEW_FIELDS,
@@ -35,6 +34,7 @@ from app.modules.applications.market_contract import (
     external_fields,
     select_fields,
 )
+from app.modules.common.identity import can_edit, can_manage, require_admin
 
 
 def digest(value: dict) -> str:

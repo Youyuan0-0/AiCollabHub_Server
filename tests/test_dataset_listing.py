@@ -11,7 +11,7 @@ from test_dataset_admin import SCORES
 from test_dataset_workspace import client as client
 from test_dataset_workspace import data as data
 
-from app.modules.applications.identity import ACTORS, Actor
+from app.modules.common.identity import ACTORS, Actor
 from app.modules.datasets.admin_schemas import DatasetListing
 from app.modules.datasets.admin_service import DatasetAdminService
 from app.modules.datasets.repository import DatasetRecord, DatasetRepository
@@ -81,8 +81,8 @@ def test_relisting_keeps_restricted_visibility(client):
         client.put(
             PATH + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code
@@ -95,7 +95,7 @@ def test_relisting_keeps_restricted_visibility(client):
         )
     assert client.get(USER_PATH).status_code == 404
     client.post(
-        "/api/v1/application-demo-session", json={"actorId": "demo-reader", "audience": "user"}
+        "/api/v1/application-demo-session", json={"actorId": "demo-outsider", "audience": "user"}
     )
     assert client.get(USER_PATH).status_code == 200
 

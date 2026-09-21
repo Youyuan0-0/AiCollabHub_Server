@@ -283,7 +283,12 @@ def test_merged_migrations_have_one_head_and_support_postgresql_offline_sql(monk
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/migration_test")
     output = StringIO()
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"), output_buffer=output)
-    assert ScriptDirectory.from_config(config).get_heads() == ["20260917_merge_ds_auth"]
+    scripts = ScriptDirectory.from_config(config)
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    # 后续日志等迁移可继续演进，但唯一终点必须包含两个已部署分支的汇合节点。
+    revisions = {revision.revision for revision in scripts.iterate_revisions(heads[0], "base")}
+    assert {"20260916_02", "20260917_auth01", "20260917_merge_ds_auth"} <= revisions
     command.upgrade(config, "20260915_02", sql=True)
     sql = output.getvalue()
     for table in ("overview_snapshots", "auth_session", "auth_login_request", "auth_event_log"):

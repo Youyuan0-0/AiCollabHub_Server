@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
 from app.core.config import Settings
@@ -85,6 +86,8 @@ def test_merge_head_preserves_both_branch_data(tmp_path, monkeypatch, starting_r
     url = f"sqlite:///{tmp_path / 'branches.db'}"
     monkeypatch.setenv("DATABASE_URL", url)
     config = Config(str(ROOT / "alembic.ini"))
+    current_head = ScriptDirectory.from_config(config).get_current_head()
+    assert current_head is not None
     engine = create_engine(url)
     try:
         command.upgrade(config, starting_revision)
@@ -101,7 +104,7 @@ def test_merge_head_preserves_both_branch_data(tmp_path, monkeypatch, starting_r
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "20260917_merge_ds_auth"
+                == current_head
             )
             assert connection.scalar(text("SELECT id FROM unrelated_probe")) == 7
     finally:

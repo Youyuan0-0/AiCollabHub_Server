@@ -378,7 +378,7 @@ def test_attachment_message_limits_and_unavailable_storage(conversation_settings
             "attachmentIds": attachments,
         }
         assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 413
-        data["attachmentIds"] = [f"attachment-{index:032x}" for index in range(11)]
+        data["attachmentIds"] = [f"attachment-{index:032x}" for index in range(21)]
         assert client.post(f"{root}/{identifier}/messages", json=data).status_code == 422
         assert client.get(f"{root}/{identifier}/messages").json()["messages"] == []
     # 用文件占据目录位置模拟存储配置不可写，错误不包含本地绝对路径。
