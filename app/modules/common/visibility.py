@@ -1,10 +1,10 @@
-"""数据集开放目标目录；演示对象和正式身份目录均由服务端决定。"""
+"""资源开放目标目录；演示对象和正式身份目录均由服务端决定。"""
 
 from fastapi import HTTPException, Request
 
-from app.modules.applications.identity import DIRECTORY, Actor
-from app.modules.applications.identity_directory import configured_directory, visible_directory
-from app.modules.datasets.admin_schemas import DatasetVisibility
+from app.modules.common.access_schemas import ScopeTargets
+from app.modules.common.identity import DIRECTORY, Actor
+from app.modules.common.identity_directory import configured_directory, visible_directory
 
 
 def visibility_directory(request: Request, actor: Actor) -> dict[str, list[dict]] | None:
@@ -33,7 +33,7 @@ def visibility_directory(request: Request, actor: Actor) -> dict[str, list[dict]
     }
 
 
-def validate_visibility_targets(request: Request, actor: Actor, payload: DatasetVisibility) -> None:
+def validate_visibility_targets(request: Request, actor: Actor, payload: ScopeTargets) -> None:
     """按详情页同一目录校验目标；已配置但为空的目录不能当作未配置而跳过校验。"""
     if payload.scope == "all":
         return

@@ -4,8 +4,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
 
-from app.modules.applications.identity import current_actor
-from app.modules.applications.identity_directory import publication_defaults
+from app.modules.common.identity import current_actor
+from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.schemas import (
     DatasetRankingMetric,

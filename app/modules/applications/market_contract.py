@@ -18,8 +18,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.core.config import Settings
-from app.modules.applications.identity import Actor
 from app.modules.applications.publication_schemas import ApplicationPayload, QualityScores
+from app.modules.common.identity import Actor
 
 
 class MarketBinding(BaseModel):

@@ -511,8 +511,8 @@ def test_interrupted_request_is_not_invoked_again(database_app, monkeypatch):
         record = review(client, submit(client))
         service = client.app.state.application_service
         application_id = record["applicationId"]
-        from app.modules.applications.identity import DEFAULT_USER
         from app.modules.applications.workflow_schemas import RunInput
+        from app.modules.common.identity import DEFAULT_USER
 
         calls = []
 

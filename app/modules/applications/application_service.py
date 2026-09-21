@@ -13,15 +13,6 @@ from app.modules.applications.configuration import (
     validate_submission,
 )
 from app.modules.applications.discovery import analyze
-from app.modules.applications.identity import (
-    DEFAULT_ADMIN,
-    DEFAULT_USER,
-    Actor,
-    can_edit,
-    can_manage,
-    require_admin,
-    visible,
-)
 from app.modules.applications.ports import (
     ApplicationProvider,
     ApplicationRepository,
@@ -34,6 +25,15 @@ from app.modules.applications.publication_schemas import (
     SaveApplicationPublication,
 )
 from app.modules.applications.workflows import ApplicationWorkflows
+from app.modules.common.identity import (
+    DEFAULT_ADMIN,
+    DEFAULT_USER,
+    Actor,
+    can_edit,
+    can_manage,
+    require_admin,
+    visible,
+)
 
 
 def timestamp() -> str:

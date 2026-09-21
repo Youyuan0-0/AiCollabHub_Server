@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import insert, update
 
 from app.modules.applications.database_values import current_time, date_value, iso, stable_id
-from app.modules.applications.identity import ACTORS
+from app.modules.common.identity import ACTORS
 
 OPERATIONS = {"runs": "run", "downloads": "download", "syncs": "sync"}
 

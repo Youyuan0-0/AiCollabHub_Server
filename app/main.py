@@ -22,11 +22,11 @@ from app.modules.applications.demo_store import (
     create_database_application_service,
     create_demo_application_service,
 )
-from app.modules.applications.identity import DemoIdentityProvider, SessionIdentityProvider
 from app.modules.common.auth.cas import MockCasClient
 from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
+from app.modules.common.identity import DemoIdentityProvider, SessionIdentityProvider
 from app.modules.common.identity_sync.router import router as identity_sync_router
 from app.modules.datasets.publishing import create_dataset_publisher
 from app.modules.datasets.repository import DatasetRepository

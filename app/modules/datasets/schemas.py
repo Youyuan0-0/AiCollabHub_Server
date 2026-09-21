@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import ConfigDict, Field, field_validator
 
-from app.modules.applications.schema_validation import parse_schema
+from app.modules.common.schema_validation import parse_schema
 from app.modules.common.schemas import Payload
 
 Label = Annotated[str, Field(min_length=1, max_length=100)]

@@ -8,8 +8,8 @@ from uuid import uuid4
 
 from fastapi import HTTPException, Request
 
-from app.modules.applications.identity import Actor, visible
 from app.modules.common.fixtures import fixture
+from app.modules.common.identity import Actor, visible
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.publishing import DatasetPublisher, LocalDatasetPublisher
 from app.modules.datasets.repository import DatasetRepository

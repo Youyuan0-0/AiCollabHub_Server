@@ -28,7 +28,7 @@ def invoke(resource_id: str, payload: InvocationInput, request: Request) -> dict
     resource = find_sample(resource_id)
     # 通用入口同样检查数据集权限，避免绕过专属详情接口读取受限资源名称。
     if resource["kind"] == "dataset":
-        from app.modules.applications.identity import current_actor
+        from app.modules.common.identity import current_actor
         from app.modules.datasets.workspace import dataset_workspace
 
         resource = dataset_workspace(request).resource(resource_id, current_actor(request))

@@ -7,12 +7,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from app.modules.applications.admin_queries import ApplicationReviewQuery, query_publications
 from app.modules.applications.application_service import application_service
 from app.modules.applications.configuration import SaveApplicationConfiguration
-from app.modules.applications.identity import current_actor, require_admin
 from app.modules.applications.publication_schemas import (
     ApplicationVisibility,
     ReviewApplicationPublication,
 )
 from app.modules.common.catalog import query_resources
+from app.modules.common.identity import current_actor, require_admin
 from app.modules.common.schemas import CatalogQuery
 
 router = APIRouter(prefix="/admin", tags=["admin (mock)"])
@@ -69,7 +69,7 @@ def application_visibility(
     request: Request,
 ) -> dict:
     """保存应用开放范围，由业务服务检查管理权限及并发冲突。"""
-    from app.modules.applications.identity_directory import validate_visibility_targets
+    from app.modules.common.identity_directory import validate_visibility_targets
 
     actor = current_actor(request, True)
     validate_visibility_targets(request, actor, payload)

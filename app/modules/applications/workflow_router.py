@@ -6,8 +6,6 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import Field
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.identity import ACTORS, DIRECTORY, current_actor, require_admin
-from app.modules.applications.identity_directory import visible_directory
 from app.modules.applications.publication_schemas import (
     ApplicationPayload,
     SaveApplicationPublication,
@@ -20,6 +18,8 @@ from app.modules.applications.workflow_schemas import (
     SyncInput,
     WorkflowPolicy,
 )
+from app.modules.common.identity import ACTORS, DIRECTORY, current_actor, require_admin
+from app.modules.common.identity_directory import visible_directory
 
 router = APIRouter(tags=["application workflows (development)"])
 

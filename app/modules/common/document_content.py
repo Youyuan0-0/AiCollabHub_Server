@@ -138,7 +138,7 @@ def word_preview(content: bytes) -> bytes:
     return document_page("".join(blocks))
 
 
-def inspect_tutorial(name: str, content: bytes) -> tuple[str, str, bytes | None]:
+def inspect_document(name: str, content: bytes) -> tuple[str, str, bytes | None]:
     """校验文件名、大小及实际内容，返回类型、媒体类型和可选阅读预览。"""
     if (
         not name.strip()

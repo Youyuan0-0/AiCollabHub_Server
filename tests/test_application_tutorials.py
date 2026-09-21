@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.core.resources import ApplicationResources
 from app.main import create_app
-from app.modules.applications.tutorial_documents import DOCUMENT_LIMIT
+from app.modules.common.document_content import DOCUMENT_LIMIT
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
 ROOT = "/api/v1"
@@ -185,7 +185,7 @@ def test_file_metadata_cannot_be_forged_and_security_is_enforced(tutorial_app):
     assert client.get(ROOT + f"/application-tutorial-files/{file['id']}/content").status_code == 404
     client.cookies.clear()
     actor = client.app.state.application_identity
-    from app.modules.applications.identity import Actor
+    from app.modules.common.identity import Actor
 
     token, _ = actor.select("demo-publisher")
     actor._sessions[token] = Actor("another-publisher", "其他发布者", "publisher", "org-production")

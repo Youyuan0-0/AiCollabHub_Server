@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app.modules.applications.identity import Actor
 from app.modules.applications.ports import ApplicationSession
 from app.modules.applications.workflow_schemas import (
     HistoryQuery,
@@ -12,6 +11,7 @@ from app.modules.applications.workflow_schemas import (
     RunInput,
     SyncInput,
 )
+from app.modules.common.identity import Actor
 
 if TYPE_CHECKING:
     from app.modules.applications.application_service import ApplicationService
@@ -24,7 +24,6 @@ from time import perf_counter
 from fastapi import HTTPException
 
 from app.modules.applications.configuration import validate_submission
-from app.modules.applications.identity import can_manage, require_admin, visible
 from app.modules.applications.publication_schemas import (
     APPLICATION_CATEGORIES,
     ApplicationDetails,
@@ -32,6 +31,7 @@ from app.modules.applications.publication_schemas import (
 )
 from app.modules.applications.workflow_schemas import WorkflowPolicy
 from app.modules.common.fixtures import paginate
+from app.modules.common.identity import can_manage, require_admin, visible
 
 
 def now() -> str:
@@ -447,7 +447,7 @@ class ApplicationWorkflows:
             return
         from referencing import Registry
 
-        from app.modules.applications.schema_validation import parse_schema
+        from app.modules.common.schema_validation import parse_schema
 
         try:
             schema, validator_class = parse_schema(schema_text)

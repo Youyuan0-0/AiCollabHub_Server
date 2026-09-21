@@ -6,11 +6,11 @@ from fastapi import APIRouter, Query, Request
 
 from app.modules.applications.application_service import application_service
 from app.modules.applications.discovery import analyze, related
-from app.modules.applications.identity import current_actor
-from app.modules.applications.identity_directory import publication_defaults
 from app.modules.applications.precheck import ApplicationPrecheck, precheck
 from app.modules.applications.publication_schemas import SaveApplicationPublication
 from app.modules.common.catalog import query_resources
+from app.modules.common.identity import current_actor
+from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
 
 # 按“HTTP 方法 + 路径”接收请求；/api/v1 前缀由 app/api/router.py 添加。

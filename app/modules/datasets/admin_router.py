@@ -4,7 +4,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 
-from app.modules.applications.identity import can_manage, current_actor
+from app.modules.common.identity import can_manage, current_actor
+from app.modules.common.visibility import validate_visibility_targets, visibility_directory
 from app.modules.datasets.admin_schemas import (
     DatasetAdminQuery,
     DatasetAuditQuery,
@@ -15,7 +16,6 @@ from app.modules.datasets.admin_schemas import (
     ReviewDataset,
 )
 from app.modules.datasets.admin_service import DatasetAdminService, require_dataset_admin
-from app.modules.datasets.visibility import validate_visibility_targets, visibility_directory
 from app.modules.datasets.workspace import dataset_workspace
 
 router = APIRouter(prefix="/admin", tags=["dataset administration (development)"])

@@ -14,8 +14,8 @@ from pydantic import (
     model_validator,
 )
 
-from app.modules.applications.schema_validation import parse_schema
 from app.modules.common.review_schemas import ReviewQualityScores
+from app.modules.common.schema_validation import parse_schema
 from app.modules.common.schemas import Payload
 
 APPLICATION_CATEGORIES = ("文档创作", "会议办公", "数据处理", "翻译沟通", "法律合规")

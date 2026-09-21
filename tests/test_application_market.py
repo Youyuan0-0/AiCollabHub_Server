@@ -14,9 +14,9 @@ from pydantic import SecretStr
 from app.core.config import Settings
 from app.main import create_app
 from app.modules.applications.demo_store import create_demo_application_service
-from app.modules.applications.identity import ACTORS, DEFAULT_ADMIN, DEFAULT_USER
 from app.modules.applications.market_contract import MarketMutation, MarketRecovery
 from app.modules.applications.market_workflows import MarketWorkflows
+from app.modules.common.identity import ACTORS, DEFAULT_ADMIN, DEFAULT_USER
 
 
 class Supplier:

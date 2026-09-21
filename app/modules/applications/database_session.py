@@ -23,9 +23,9 @@ from app.modules.applications.database_catalog import DatabaseCatalogReader
 from app.modules.applications.database_publications import DatabasePublicationMixin
 from app.modules.applications.database_values import current_time, date_value, iso
 from app.modules.applications.demo_marketplace import LOCAL_FIELDS
-from app.modules.applications.identity import ACTORS, DEFAULT_USER
 from app.modules.applications.publication_schemas import APPLICATION_CATEGORIES
 from app.modules.common.auth.models import User
+from app.modules.common.identity import ACTORS, DEFAULT_USER
 
 
 class DatabaseApplicationSession(DatabaseActivityMixin, DatabasePublicationMixin):

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.modules.applications.identity import Actor, can_manage
+from app.modules.common.identity import Actor, can_manage
 from app.modules.common.schemas import PageQuery
 from app.modules.datasets.admin_schemas import (
     DATASET_STATUSES,

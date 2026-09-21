@@ -67,7 +67,7 @@ def test_concurrent_reviews_commit_once():
 
 
 def test_repository_failure_rolls_back_approval_and_catalog(monkeypatch):
-    from app.modules.applications.memory_repository import MemorySession
+    from app.modules.common.memory_repository import MemorySession
 
     service = ApplicationService(InMemoryApplicationRepository(), DemoApplicationProvider())
     record = pending(service)

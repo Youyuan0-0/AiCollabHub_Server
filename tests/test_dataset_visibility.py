@@ -10,7 +10,7 @@ from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
 
-from app.modules.applications.identity import ACTORS, Actor
+from app.modules.common.identity import ACTORS, Actor
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.admin_schemas import DatasetVisibility
 from app.modules.datasets.admin_service import DatasetAdminService

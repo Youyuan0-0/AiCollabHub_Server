@@ -11,7 +11,7 @@ from test_auth import csrf, login
 from test_dataset_workspace import client as client
 from test_dataset_workspace import data as data
 
-from app.modules.applications.identity import ACTORS, Actor
+from app.modules.common.identity import ACTORS, Actor
 from app.modules.datasets.admin_schemas import DatasetAuditQuery, DatasetReviewQuery, ReviewDataset
 from app.modules.datasets.admin_service import DatasetAdminService
 from app.modules.datasets.publishing import ExternalDatasetPublisher
