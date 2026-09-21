@@ -1,8 +1,49 @@
-"""开发目录内的关联资源；只读取样例，不访问工具链或业务数据库。"""
+"""应用关联资源目录；已装配工作区时复用平台目录及其权限过滤。"""
 
 from __future__ import annotations
 
 from app.modules.common.fixtures import fixture
+from app.modules.common.identity import Actor
+from app.modules.common.resource_workspace import ResourceWorkspace
+from app.modules.common.schemas import CatalogQuery
+from app.modules.datasets.workspace import DatasetWorkspace
+from app.modules.tools.workspace import ToolWorkspace
+
+
+def platform_dependencies(
+    actor: Actor,
+    datasets: DatasetWorkspace,
+    knowledge: ResourceWorkspace,
+    models: ResourceWorkspace,
+    tools: ToolWorkspace,
+) -> list[dict]:
+    """仅列出已发布且当前账号可见的资源，避免把固定样例当作真实依赖。"""
+    sources = {
+        "dataset": datasets.resources(actor),
+        "knowledge": [
+            item for item in knowledge.catalog(actor) if item["listingStatus"] == "listed"
+        ],
+        "model": [item for item in models.catalog(actor) if item["listingStatus"] == "listed"],
+        "tool": [],
+    }
+    page = 1
+    while True:
+        result = tools.catalog(CatalogQuery(page=page, pageSize=100), actor)
+        sources["tool"].extend(result["items"])
+        if len(sources["tool"]) >= result["total"] or not result["items"]:
+            break
+        page += 1
+    return [
+        {
+            "kind": kind,
+            "resourceId": resource["id"],
+            "name": resource["name"],
+            "owner": resource.get("owner", ""),
+            "version": resource.get("version", ""),
+        }
+        for kind, resources in sources.items()
+        for resource in resources
+    ]
 
 
 def dependency_resources() -> list[dict]:

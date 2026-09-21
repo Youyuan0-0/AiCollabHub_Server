@@ -13,6 +13,7 @@ from app.modules.applications.publication_schemas import (
     ApplicationDetails,
     ApplicationPayload,
 )
+from app.modules.common.content_validation import sensitive_errors
 
 
 class ApplicationPrecheck(ApplicationPayload):
@@ -30,17 +31,6 @@ class ApplicationPrecheck(ApplicationPayload):
         if len(json.dumps(value, ensure_ascii=False)) > 150000:
             raise ValueError("应用资料过长")
         return value
-
-
-def sensitive_errors(data: dict, terms: list[str]) -> dict[str, str]:
-    """检查各字段是否命中拦截词，返回字段与错误说明的映射。"""
-    return {
-        key: "内容命中发布拦截词，请修改后提交"
-        for key, value in data.items()
-        if any(
-            term.casefold() in json.dumps(value, ensure_ascii=False).casefold() for term in terms
-        )
-    }
 
 
 def precheck(payload: ApplicationPrecheck, configuration: dict, policy: dict) -> dict:

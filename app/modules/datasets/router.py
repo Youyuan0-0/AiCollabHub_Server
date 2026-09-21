@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Request, Response
 from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
+from app.modules.common.toolchain.configuration import module_settings
 from app.modules.datasets.schemas import (
     DatasetRankingMetric,
     FavoriteDataset,
@@ -142,7 +143,10 @@ def defaults(request: Request) -> dict:
     return {
         **publication_defaults(request, current_actor(request)),
         "storage": request.app.state.settings.datasets_storage,
-        "toolchainAvailable": False,
+        "toolchainAvailable": module_settings(request.app.state.settings, "datasets").toolchain_mode
+        != "disabled",
+        "toolchainMode": module_settings(request.app.state.settings, "datasets").toolchain_mode,
+        "toolchainUrl": str(request.app.state.settings.toolchain_dataset_entry_url or ""),
     }
 
 

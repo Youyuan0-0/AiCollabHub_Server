@@ -19,7 +19,7 @@ class ApplicationProvider(Protocol):
         """校验关联资源的类型与编号，失败时抛出业务异常。"""
         ...
 
-    def runtime_status(self, application_id: str, version_id: str) -> dict:
+    def runtime_status(self, resource: dict) -> dict:
         """返回接入状态和可空的运行指标；无统计时返回 None，不能生成虚构值。"""
         ...
 

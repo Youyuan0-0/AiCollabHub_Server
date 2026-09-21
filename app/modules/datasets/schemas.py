@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import ConfigDict, Field, field_validator
 
+from app.modules.common.interaction_schemas import FavoriteInput as FavoriteDataset
+from app.modules.common.interaction_schemas import RatingInput as RateDataset
 from app.modules.common.schema_validation import parse_schema
 from app.modules.common.schemas import Payload
 
@@ -59,22 +61,6 @@ class SaveDataset(Payload):
     revision: int | None = Field(default=None, ge=1)
 
 
-class FavoriteDataset(Payload):
-    """幂等设置当前用户的收藏状态，不接受客户端自报统计次数。"""
-
-    model_config = ConfigDict(extra="forbid")
-    favorite: bool
-
-
-class RateDataset(Payload):
-    """保存当前登录用户的星级；禁止自报用户、平均分或评价人数。"""
-
-    model_config = ConfigDict(extra="forbid")
-    rating: int = Field(ge=1, le=5, strict=True)
-    # 与场景应用一致，文字评价可选，最多 1000 字，与星级一起保存。
-    comment: str = Field(default="", max_length=1000)
-
-
 def validate_submission(data: DatasetInput) -> None:
     """检查发布必填项和 Schema；失败返回中文 422，草稿保存不调用此检查。"""
     required = {
@@ -104,3 +90,6 @@ def validate_submission(data: DatasetInput) -> None:
             raise ValueError("字段清单需为包含 properties 字段的 object 类型 JSON Schema")
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
+
+
+__all__ = ["DatasetInput", "SaveDataset", "FavoriteDataset", "RateDataset", "validate_submission"]

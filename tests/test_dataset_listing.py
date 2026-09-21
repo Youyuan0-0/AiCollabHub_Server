@@ -81,8 +81,8 @@ def test_relisting_keeps_restricted_visibility(client):
         client.put(
             PATH + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code
@@ -95,7 +95,7 @@ def test_relisting_keeps_restricted_visibility(client):
         )
     assert client.get(USER_PATH).status_code == 404
     client.post(
-        "/api/v1/application-demo-session", json={"actorId": "demo-reader", "audience": "user"}
+        "/api/v1/application-demo-session", json={"actorId": "demo-outsider", "audience": "user"}
     )
     assert client.get(USER_PATH).status_code == 200
 

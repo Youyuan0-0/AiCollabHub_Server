@@ -1,3 +1,4 @@
+from datetime import timedelta
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -86,6 +87,13 @@ def test_sdk_errors_are_redacted_and_not_reported_as_success(storage, caplog):
     assert not storage.probe()
     assert "private-signature" not in caplog.text
     assert "internal-host" not in caplog.text
+
+
+def test_presigning_failure_uses_the_same_redacted_storage_error(storage, caplog):
+    storage.client.presigned_get_object.side_effect = MinioException("private-signature")
+    with pytest.raises(StorageUnavailable, match="object_storage_unavailable"):
+        storage.presigned_read_url("knowledge/file", expires=timedelta(hours=24))
+    assert "private-signature" not in caplog.text
 
 
 def test_missing_bucket_is_not_automatically_created(storage):

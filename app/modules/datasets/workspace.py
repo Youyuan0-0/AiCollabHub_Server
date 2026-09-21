@@ -80,11 +80,20 @@ class DatasetWorkspace:
         """按身份生成目录；include_unlisted 仅供已鉴权的管理入口读取下架资料。"""
         resources = fixture("datasets", "resources")
         # 审核与上架快照在同一记录事务提交；只读取已发布快照，不把草稿或待同步申请加入目录。
-        resources.extend(
-            deepcopy(record["publishedResource"])
-            for record in self.repository.list("publication:")
-            if record.get("status") == "approved" and record.get("publishedResource")
-        )
+        published: dict[str, dict] = {}
+        for record in sorted(
+            self.repository.list("publication:"), key=lambda item: item["updatedAt"]
+        ):
+            if record.get("status") == "approved" and record.get("publishedResource"):
+                resource = deepcopy(record["publishedResource"])
+                previous = published.get(resource["id"])
+                if previous:
+                    resource["versions"] = resource.get("versions", []) + [
+                        {**version, "status": "available"}
+                        for version in previous.get("versions", [])
+                    ]
+                published[resource["id"]] = resource
+        resources.extend(published.values())
         # 批量读取配置，数据库模式不为每张卡片单独查询；目标标识不返回给普通用户。
         scopes = {item["datasetId"]: item for item in self.repository.list("visibility:")}
         listings = {item["datasetId"]: item for item in self.repository.list("listing:")}

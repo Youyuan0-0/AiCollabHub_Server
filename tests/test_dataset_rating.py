@@ -78,8 +78,8 @@ def test_rating_checks_visibility_and_missing_resources(client):
         client.put(
             "/api/v1/admin/datasets/" + DATASET + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code
@@ -157,8 +157,8 @@ def test_rating_comments_replace_and_remain_private_after_scope_revocation(clien
         client.put(
             "/api/v1/admin/datasets/" + DATASET + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code

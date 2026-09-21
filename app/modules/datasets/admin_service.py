@@ -103,6 +103,12 @@ class DatasetAdminService:
         # 样例缺少可信组织编号时仅系统管理员可改，不能用 owner 显示名称推断授权。
         if not can_manage(actor, resource):
             raise HTTPException(403, "只能配置有管理权限的数据集开放范围")
+        if payload.scope == "members":
+            previous = self.workspace.visibility(dataset_id)
+            if previous["scope"] != "members" or set(previous["targets"]) != set(payload.targets):
+                raise HTTPException(
+                    422, "数据集仅支持全集团、指定单位或项目组；历史成员范围只能保持原值"
+                )
         value = self.workspace.repository.save(
             "visibility:" + dataset_id,
             {**payload.model_dump(), "datasetId": dataset_id},
@@ -147,7 +153,13 @@ class DatasetAdminService:
         selected.sort(key=lambda item: (item.get(key) or "", item["id"]), reverse=True)
         return {**paginate(selected, query), "counts": counts}
 
-    def review(self, publication_id: str, payload: ReviewDataset, actor: Actor) -> dict:
+    def review(
+        self,
+        publication_id: str,
+        payload: ReviewDataset,
+        actor: Actor,
+        reports: list[dict] | None = None,
+    ) -> dict:
         """仅审核当前待审修订；通过后由发布通道准备快照，与审核历史一并原子提交。"""
         record = self.publication(publication_id, actor)
         if record["revision"] != payload.revision or record["status"] != "pending":
@@ -166,6 +178,7 @@ class DatasetAdminService:
             "revision": record["revision"],
             "scores": payload.scores.model_dump(by_alias=True) if payload.scores else None,
             "data": deepcopy(record["data"]),
+            "reportFiles": reports or [],
         }
         record.update(
             status=payload.decision,

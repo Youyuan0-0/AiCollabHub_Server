@@ -28,10 +28,16 @@ from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
 from app.modules.common.identity import DemoIdentityProvider, SessionIdentityProvider
 from app.modules.common.identity_sync.router import router as identity_sync_router
+from app.modules.common.memory_reports import MemoryReports
+from app.modules.common.resource_workspace import ResourceWorkspace
+from app.modules.common.toolchain.assembly import configure_toolchains
+from app.modules.common.toolchain.configuration import ToolchainConfigurationStore, module_settings
 from app.modules.datasets.publishing import create_dataset_publisher
 from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 from app.modules.feedback.maintenance import maintain_feedback
+from app.modules.knowledge.workspace import KnowledgeWorkspace, create_knowledge_provider
+from app.modules.models.workspace import create_model_provider
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
 from app.storage.client import ObjectNotFound, StorageUnavailable
@@ -52,6 +58,8 @@ def create_app(
 ) -> FastAPI:
     """装配应用路由、认证与资源生命周期，支持开发和测试注入服务。"""
     settings = settings if settings is not None else Settings()
+    toolchain_configuration = ToolchainConfigurationStore(settings)
+    settings = toolchain_configuration.settings(settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -76,11 +84,14 @@ def create_app(
             application.state.application_service = create_database_application_service(
                 application.state.database_engine, settings
             )
+        toolchain_client = configure_toolchains(application)
         if settings.app_env != "production" and settings.applications_runtime == "agent_dev":
             from app.modules.applications.runtime import AgentDevProvider
 
             service = application.state.application_service
-            service.provider = AgentDevProvider(service.provider, settings)
+            service.provider = AgentDevProvider(
+                service.provider, module_settings(settings, "applications")
+            )
             service.workflows.provider = service.provider
         application.state.cas_client = cas_client
         if settings.auth_mode == "mock" and cas_client is None:
@@ -92,6 +103,7 @@ def create_app(
         try:
             yield
         finally:
+            toolchain_client.close()
             feedback_stopping.set()
             await feedback_maintenance
             if settings.auth_mode == "mock" and cas_client is None:
@@ -118,6 +130,7 @@ def create_app(
         chat_provider if chat_provider is not None else EchoChatProvider()
     )
     application.state.settings = settings
+    application.state.toolchain_configuration = toolchain_configuration
     # 注入点隔离开发文件仓库，测试及未来 PostgreSQL/MinIO 适配器共用此合同。
     application.state.attachment_store = (
         attachment_store
@@ -126,6 +139,13 @@ def create_app(
     )
     application.state.database_engine = None
     application.state.resources = None
+    application.state.resource_reports = MemoryReports()
+    application.state.model_provider = create_model_provider()
+    application.state.model_workspace = ResourceWorkspace(
+        "model", application.state.model_provider.list_models()
+    )
+    application.state.knowledge_workspace = KnowledgeWorkspace(create_knowledge_provider())
+    application.state.profile_contacts = {}
 
     @application.middleware("http")
     async def request_context(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -215,6 +235,9 @@ def create_app(
         application.include_router(identity_sync_router, prefix="/api/v1")
     # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
+        from app.modules.tools.workspace import ToolWorkspace
+
+        application.state.tool_workspace = ToolWorkspace()
         # 每个实例独立的演示状态；数据库模式在 lifespan 中替换为共享仓储。
         application.state.dataset_workspace = DatasetWorkspace(
             DatasetRepository(), create_dataset_publisher(settings.datasets_publication_mode)

@@ -123,7 +123,7 @@ def test_factory_injects_storage_and_provider_without_route_changes():
                 }
             ]
 
-        def runtime_status(self, application_id, version_id):
+        def runtime_status(self, resource):
             return {
                 "status": "available",
                 "averageResponseMs": 250,

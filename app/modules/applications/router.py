@@ -46,7 +46,7 @@ def application_discovery(application_id: str, request: Request) -> dict:
 @router.get("/application-dependencies", response_model=None)
 def dependencies(request: Request) -> list[dict]:
     """读取发布表单可关联的模型、数据集、知识库和工具。"""
-    return application_service(request).provider.dependencies()
+    return application_service(request).dependencies(current_actor(request))
 
 
 # 接收 getApplicationFormConfiguration() 的 GET 请求，返回公开的必填规则。

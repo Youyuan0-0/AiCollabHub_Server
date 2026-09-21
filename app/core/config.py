@@ -29,16 +29,45 @@ class Settings(BaseSettings):
     # 本地发布先完成平台上架；external 保留待同步，接入真实通道后替换适配器。
     datasets_publication_mode: Literal["local", "external"] = "local"
     applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
+    # 兼容旧环境 POP 配置；后台文件按模块分别覆盖，mock 使用文档响应且不访问网络。
+    toolchain_mode: Literal["disabled", "mock", "live"] = "disabled"
+    toolchain_pop_url: AnyHttpUrl | None = None
+    toolchain_access_key_id: SecretStr | None = None
+    toolchain_access_key_secret: SecretStr | None = None
+    toolchain_workspace: str = Field(default="", max_length=200)
+    toolchain_region: str = ""
+    toolchain_timeout: float = Field(default=30, gt=0, le=120)
+    toolchain_allowed_subjects: list[str] = Field(default_factory=list)
+    toolchain_dataset_entry_url: AnyHttpUrl | None = None
+    toolchain_application_entry_url: AnyHttpUrl | None = None
+    toolchain_knowledge_configuration: str | None = None
+    # 后台维护的本地文件仅覆盖工具链接入参数；业务存储和认证仍由环境配置管理。
+    toolchain_configuration_file: Path = Path(".runtime/toolchain-configuration.json")
+    toolchain_knowledge_data: dict | None = None
+    toolchain_module_connections: dict[str, dict] = Field(default_factory=dict)
+    toolchain_body_encoding: Literal["json", "form"] = "json"
+    toolchain_app_key: SecretStr | None = None
+    toolchain_proxy_url: AnyHttpUrl | None = None
+    toolchain_ca_certificate: str = ""
+    toolchain_knowledge_storage: dict | None = None
     applications_agent_url: AnyHttpUrl | None = None
     applications_agent_key: SecretStr | None = None
     applications_agent_bindings: str | None = None
+    applications_agent_bindings_data: dict | None = None
     applications_agent_timeout: float = Field(default=20, gt=0, le=120)
+    applications_agent_response_mode: Literal["json", "sse"] = "json"
+    applications_agent_proxy_url: AnyHttpUrl | None = None
+    applications_agent_ca_certificate: str = ""
     applications_identity_directory: str | None = None
     applications_market: Literal["disabled", "himarket"] = "disabled"
     applications_market_url: AnyHttpUrl | None = None
     applications_market_admin_token: SecretStr | None = None
     applications_market_developer_tokens: dict[str, SecretStr] = Field(default_factory=dict)
     applications_market_configuration: str | None = None
+    applications_market_data: dict | None = None
+    applications_market_accounts: dict[str, dict] = Field(default_factory=dict)
+    applications_market_proxy_url: AnyHttpUrl | None = None
+    applications_market_ca_certificate: str = ""
     applications_market_timeout: float = Field(default=15, gt=0, le=120)
     applications_demo_directory: str = Field(
         default=".runtime/application-marketplace-demo", min_length=1
@@ -220,6 +249,12 @@ class Settings(BaseSettings):
         "applications_agent_key",
         "applications_agent_bindings",
         "applications_identity_directory",
+        "toolchain_pop_url",
+        "toolchain_access_key_id",
+        "toolchain_access_key_secret",
+        "toolchain_dataset_entry_url",
+        "toolchain_application_entry_url",
+        "toolchain_knowledge_configuration",
         "auth_internal_origin",
         "auth_mock_iam_internal_url",
         mode="before",
@@ -257,4 +292,13 @@ class Settings(BaseSettings):
             or endpoint.fragment is not None
         ):
             raise ValueError("MINIO_ENDPOINT must contain only scheme, host and optional port")
+        endpoint = self.toolchain_pop_url
+        if endpoint is not None and (
+            endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.path not in (None, "/")
+            or endpoint.query is not None
+            or endpoint.fragment is not None
+        ):
+            raise ValueError("TOOLCHAIN_POP_URL must contain only scheme, host and optional port")
         return self
