@@ -1,10 +1,10 @@
 # 五大资源与身份日志数据库基线
 
-本目录说明 2026-09-20 确认的资源基线，以及 2026-09-21 追加的文件、反馈、应用关联、模块配置、可见范围及资源文件关系。迁移只建表、约束、索引与中文注释，不导入 Mock 资源或旧开发库业务数据，不切换现有前后端业务实现，也不恢复此前暂存的重构。
+本目录说明 2026-09-20 确认的资源基线，以及 2026-09-21 追加的文件、反馈、应用关联、模块配置、可见范围、首页问答和知识库文档审核。迁移只调整表、约束、索引与中文注释，不导入 Mock 资源或旧开发库业务数据，不切换现有前后端业务实现，也不恢复此前暂存的重构。
 
 ## 表清单
 
-测试库当前共 35 张业务表，另有 1 张 Alembic 版本记录表。最初基线 25 张，两次追加各 5 张。站内通知和外部资源映射仍按用户要求暂缓建表。
+测试库当前共 43 张业务表，另有 1 张 Alembic 版本记录表。最初基线 25 张，前两次追加各 5 张；随后补齐首页 6 张、知识库文档及审核 2 张。本地索引配置、任务、分段三表已按职责调整撤回，相关能力交由知识库工具链接口。站内通知和外部资源映射仍按用户要求暂缓建表。
 
 | 主表 | 发布申请表 | 正式版本表 |
 | --- | --- | --- |
@@ -36,6 +36,14 @@
 | `resource_visibility_targets` | 可见规则中的指定用户清单 |
 | `resource_file_references` | 申请、审核、正式版本的说明文件和审核报告引用 |
 | `file_previews` | 原文件与生成预览文件的关联，双方元数据复用 files |
+| `conversations` | 用户会话、下一轮默认选项、历史列表和删除标记 |
+| `conversation_messages` | 每条提问和回答、发送幂等、生成状态及上下文快照 |
+| `conversation_message_attachments` | 用户提问与统一文件的稳定引用及展示位置 |
+| `home_recommendations` | 首页热门资源和典型应用场景入口配置 |
+| `home_question_suggestions` | 点击后填入输入框的推荐问题 |
+| `announcements` | 公共平台公告，与个人站内消息分开 |
+| `knowledge_documents` | 独立上传的知识文档及当前审核状态 |
+| `knowledge_document_reviews` | 每篇文档每轮审核的不可变结论和原始文件快照 |
 
 此前讨论的资源使用行为继续由操作日志承接，下载另有 `resource_downloads`，本轮不新增未经设计的通用使用日志表。
 
@@ -81,7 +89,7 @@
 - 反馈首次创建必须同时写入提交事件；附件在提交事件之前关联，每条反馈最多三个。主表原始内容、处理事件和原始附件关联不可覆盖。处理必须把修订号加一并在同一事务记录匹配的事件；主表和事件状态不一致会拒绝提交。业务接口仍须校验管理员权限、预期修订号和相同幂等键的请求内容。
 - 文件引用要求已就绪、未到期，建立引用时在同一事务清除临时期限。已就绪文件内容和对象定位不可覆盖；存在反馈或下载引用时不能清理或重新设置到期时间。数据库不执行 MinIO 操作，也不代替服务端文件权限、类型、大小和上传结果校验。
 - 应用关联检查目标类型、资源及版本归属，禁止修改正式关联。应用版本快照、获批申请与结构化关联的顺序和编号在事务结束时核对；快照中的 `dependencies` 使用 `kind`、`resourceId`、`resourceVersionId`，省略依赖数组表示无关联。实际外部运行版本不由本表确定。
-- 首页问答、其他六张首页表及文件清理任务尚未接入。资源文件与预览引用已由下一次迁移扩展保护；以后新增问答消息附件时仍需一起扩展，不能只检查当时已知的引用表。
+- 首页六表和问答附件引用保护已由第三次追加迁移补齐，业务仓储和文件清理任务仍需接入。以后增加引用关系时仍须同步扩展保护，不能只检查当时已知的引用表。
 
 ## 配置、可见范围与资源文件
 
@@ -104,33 +112,74 @@ python -m alembic -n resource_foundation upgrade head
 python -m alembic -n resource_foundation current
 ```
 
-最初基线版本为 `20260920_01_resource_foundation`，当前最新版本为 `20260921_02_resource_support`。每次 Python 迁移及对应 SQL 文件冻结该次表结构与约束。未来变更继续新增迁移，不修改已经执行的文件。
+最初基线版本为 `20260920_01_resource_foundation`，当前最新版本为 `20260921_04_knowledge_external`。每次 Python 迁移及对应 SQL 文件冻结该次表结构与约束。未来变更继续新增迁移，不修改已经执行的文件。03 的历史建表记录保留，通过 04 明确撤回本地索引范围；当前结构以迁移链最终结果为准。
 
 | 迁移文件 | 建设内容 | 新增业务表 |
 | --- | --- | --- |
 | [20260920_01_initial.py](../../migrations/resource_foundation/versions/20260920_01_initial.py) | 五类资源主表、发布与版本、共用互动与审核、认证和日志 | 25 |
 | [20260921_01_feedback_relations.py](../../migrations/resource_foundation/versions/20260921_01_feedback_relations.py) | 共用文件、反馈内容与历史、应用资源关联 | 5 |
 | [20260921_02_resource_support.py](../../migrations/resource_foundation/versions/20260921_02_resource_support.py) | 模块配置、可见范围、资源文件与预览关系 | 5 |
+| [20260921_03_home_knowledge.py](../../migrations/resource_foundation/versions/20260921_03_home_knowledge.py) | 首页六表与知识文档、审核及索引的历史建设记录 | 11 |
+| [20260921_04_external_knowledge.py](../../migrations/resource_foundation/versions/20260921_04_external_knowledge.py) | 撤回本地索引三表，保留文档、审核及文件保护 | -3 |
 
 首次建立基线只支持 PostgreSQL 空 schema，发现旧业务表即停止；已安装本迁移链的数据库按版本追加升级。重复升级不会重复建表。默认 `alembic upgrade head` 属于旧库迁移链，不能用于本新库；不能通过 stamp 跳过迁移或把两条链混用。降级不自动删除业务历史，回退使用操作前备份。
 
 ## 验证与业务边界
 
-`tests/test_resource_foundation.py` 和 `tests/test_resource_support.py` 通过 `RESOURCE_FOUNDATION_TEST_DATABASE_URL` 显式指定独立 PostgreSQL 测试库，未设置时跳过。测试不会读取项目 `.env`，也不固定某台服务器的地址。测试账号需具有创建 schema 的权限；可以使用空测试库或已有基线的独立测试库。
+资源基线、共用能力、首页文档和职责收缩四组测试通过 `RESOURCE_FOUNDATION_TEST_DATABASE_URL` 显式指定独立 PostgreSQL 测试库，未设置时跳过。测试不会读取项目 `.env`，也不固定某台服务器的地址。测试账号需具有创建 schema 的权限；可以使用空测试库或已有基线的独立测试库。
 
 先通过本地环境或 CI 密钥配置上述变量，再在项目根目录执行：
 
 ```powershell
-python -m pytest tests/test_resource_foundation.py tests/test_resource_support.py -q
-python -m ruff check migrations/resource_foundation tests/test_resource_foundation.py tests/test_resource_support.py
-python -m ruff format --check migrations/resource_foundation tests/test_resource_foundation.py tests/test_resource_support.py
+python -m pytest tests/test_resource_foundation.py tests/test_resource_support.py tests/test_home_knowledge_schema.py tests/test_knowledge_scope_migration.py -q
+python -m ruff check migrations/resource_foundation tests/test_resource_foundation.py tests/test_resource_support.py tests/test_home_knowledge_schema.py tests/test_knowledge_scope_migration.py
+python -m ruff format --check migrations/resource_foundation tests/test_resource_foundation.py tests/test_resource_support.py tests/test_home_knowledge_schema.py tests/test_knowledge_scope_migration.py
 ```
 
 连接串使用 `postgresql+psycopg://<用户>:<密码>@<主机>:<端口>/<独立测试库>`。测试在随机 schema 和外层事务内执行迁移，搜索路径不回落到 public，逐例使用保存点，结束后整体回滚，不遗留测试用户或业务数据；异常退出路径也释放连接池。
 
-2026-09-21 共 89 项数据库测试通过，包含原有 61 项，以及配置修订冲突、五类资源可见范围、审核和版本文件归档、报告轮次和审核员隔离、历史文件保护、预览链和文件清理限制。相关 Ruff 检查和格式检查通过。默认测试不访问远端库。
+2026-09-21 共 114 项数据库测试通过，覆盖资源发布、配置与可见范围、文件归档与清理保护、问答历史、文档审核，以及撤回迁移保留资料、遇到非空索引数据停止的场景。相关 Ruff 检查和格式检查通过。默认测试不访问远端库。
 
-测试库已实测升级至最新版本：35 张业务表的记录数均为 0，站内通知和外部资源映射表不存在。已通过独立连接确认提交成功、原表行数不变且没有遗留测试 schema。迁移前备份已验证归档目录可读取并核对 SHA-256，未执行完整恢复演练。
+测试库已实测升级至最新版本：43 张业务表的记录数均为 0，站内通知、外部资源映射及本地索引三表不存在。已通过独立连接确认提交成功、保留表行数不变且没有遗留测试 schema。迁移前备份已验证归档目录可读取并核对 SHA-256，未执行完整恢复演练。
+
+## 首页问答与展示配置
+
+追加版本 `20260921_03_home_knowledge` 的字段类型、中文说明与外键见 [迁移文件](../../migrations/resource_foundation/versions/20260921_03_home_knowledge.py)，发送与文件保护见 [首页约束](../../migrations/resource_foundation/versions/20260921_03_home_guards.sql)。
+
+| 表 | 主要字段及职责 |
+| --- | --- |
+| `conversations` | `user_id` 归属用户；`title` 标题；`model_id`、`knowledge_base_id`、`capabilities` 为下次提问默认选项；`created_at`、`updated_at`、`deleted_at` 支撑历史列表与逻辑删除。 |
+| `conversation_messages` | `conversation_id`、`sequence_no` 确定归属和顺序；`role`、`reply_to_id` 关联问答；`content`、`status` 保存正文及调用状态；`idempotency_key` 防重复发送；`context_snapshot`、`sources` 还原历史；`upstream_request_id`、`error_code`、`error_message` 供核对和用户提示；`created_at`、`updated_at` 记录时间。 |
+| `conversation_message_attachments` | `message_id`、`file_id`、`position`、`created_at`；不复制文件名、大小或存储位置。 |
+| `home_recommendations` | `placement` 热门资源或典型场景；`resource_type`、`resource_id` 定位资源或模块入口；`title`、`summary` 展示文案；`status` 启用或禁用；`creator_id`、创建和更新时间。 |
+| `home_question_suggestions` | `question` 示例问题；`status` 启用或禁用；`creator_id`、创建和更新时间。 |
+| `announcements` | `title`、`summary`、`content_markdown`；`status` 为 draft/published/withdrawn；`creator_id`、`published_at`、创建和更新时间。 |
+
+- 六表均使用 UUID `id`。会话选项不改写已经发送的消息快照；助手必须指向同会话中更早的一条用户消息，当前每个提问最多一个回答。
+- 用户消息固定为 `completed` 且有发送幂等键。助手状态为 pending/completed/failed/cancelled/unknown，其中 pending 和 unknown 每会话最多一条。unknown 不允许直接回到 pending；完成、失败和取消的结果不可覆盖。
+- 保存顺序为提问、附件、助手占位，在同一短事务内完成。纯附件问题允许正文为空；事务结束时仍没有正文或有效附件则拒绝。助手占位建立后不得补入附件。接口仍须检查相同幂等键的请求内容是否一致。
+- 上游调用在事务外执行，结果回写重新检查消息状态和会话删除标记；删除后不接收迟到结果。真正清理历史须先删除附件关系、回答和提问，再清理会话，不能直接绕过文件引用保护。
+- 上下文使用固定字段和去重能力数组；引用来源最多 20 项、64KiB，不允许保存临时链接。快照中的资源名称和实际模型由后端根据可信资料填充；数据库不替代上游协议或资源权限校验。
+- 模块入口不要求虚构资源 UUID；具体资源推荐必须存在并受删除保护。启用推荐不代表获得目标资源权限。
+- 公告发布必须有正文及发布时间；已发布公告先撤回再编辑。它是公共公告，未创建个人通知、已读或消息投递表。
+
+## 知识文档与审核
+
+知识库名称、概览和发布版本沿用原三表；另外两表保留平台的文档上传及逐篇审批。文档分段、向量、索引配置、处理任务及检索统计交由外部知识库工具链接口负责。文档当前约束见 [文档约束](../../migrations/resource_foundation/versions/20260921_04_document_guards.sql)，审核的不可变历史约束沿用 03 迁移。
+
+| 表 | 主要字段及职责 |
+| --- | --- |
+| `knowledge_documents` | `knowledge_base_id` 所属库；`file_id` 不可覆盖的原件；`name` 文档名称；`uploader_id` 上传人；`review_status`、`submission_no`、`submitted_at` 当前送审状态；`revision` 并发更新修订；`deleted_at` 逻辑删除；创建和更新时间。 |
+| `knowledge_document_reviews` | `document_id`、`submission_no` 定位审核轮次；`reviewer_id`、`decision`、`comment` 保存结论；`submission_snapshot` 固化 documentId/fileId/name；`submitted_at`、`created_at` 保存提交和审核时间。 |
+
+- 两表均使用 UUID `id`。文档通过 `files` 关联 MinIO 原件；上传人必须拥有该文件，文件必须就绪、未过期且不是预览产物。活动文档在同库内不允许名称忽略大小写后重复。
+- 文档审核为 pending/approved/rejected/needs_changes，最后一项保留现有文档补充材料流程，与资源发布的三态审核分开。批准文档之前，知识库必须已有获批正式版本。审核记录与文档状态在同一事务提交，每轮只有一个不可变结论；替换原件需新建文档，不能覆盖已审核文件。
+- 文档逻辑删除后不再接受修改；历史文件仍受引用保护。文件物理保留期和受控归档清理流程另行接入，不由界面删除立即删除原件。
+- 本地不再保存 `processing_status`、`index_job_id`、`processed_at` 和解析 `error_message`。供应方状态、配置和结果在接口接入时按明确协议获取；需要保存哪些外部关联或同步信息另行确定，不提前复制一套引擎数据。
+- 读取时仍需验证用户权限、知识库启用状态以及文档是否已审核、未删除。平台审核通过不代表外部处理完成或已经可以检索。
+- 04 迁移先锁定并确认索引三表及待删除的文档运行字段未被使用，再移除相关外键、约束、函数、列与表。已有索引数据时迁移会拒绝继续，须先明确归档或迁移方式。
+
+本次完成表结构和职责边界调整。旧首页会话仓储、`knowledge_records` 及旧知识库处理流程仍需在后续接口适配中替换，尚未接通真实知识库接口。个人中心的联系方式暂存字段不在本轮建表范围内。
 
 备份保存到执行环境指定的工程外目录；安装脚本和含环境信息的验收记录留在被忽略的 `.runtime/`，不作为其他开发人员的运行依赖。部署时重新备份并核对本环境结构，不能以本次测试库的验收结果代替目标环境检查。
 

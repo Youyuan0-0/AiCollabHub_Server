@@ -224,6 +224,14 @@ def test_exact_tables_and_chinese_comments(connection):
         "resource_visibility_targets",
         "resource_file_references",
         "file_previews",
+        "conversations",
+        "conversation_messages",
+        "conversation_message_attachments",
+        "home_recommendations",
+        "home_question_suggestions",
+        "announcements",
+        "knowledge_documents",
+        "knowledge_document_reviews",
     }
     for _, name, prefix in MODULES:
         expected.update({name, f"{prefix}_publications", f"{prefix}_versions"})
