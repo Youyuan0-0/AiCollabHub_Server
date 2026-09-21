@@ -161,6 +161,8 @@ PostgreSQL 14+ 的新应用连接设置 `DB_IDLE_SESSION_TIMEOUT=120`（秒）�
 
 ## 数据库迁移
 
+五大模块及共用能力的新表结构使用独立的 `resource_foundation` 迁移入口，当前包含 35 张业务表，详见 [资源数据库基线](database/resource-foundation/README.md)。该入口用于新结构的独立数据库；现有 ORM、接口与页面尚未全部切换，不能直接用新库替换正在运行的业务库。以下默认迁移命令仍对应现有业务结构，两条迁移链不能混用。
+
 数据库可使用 `POSTGRES_HOST/PORT/DB/USER/PASSWORD` 分项配置，兼容 `postgresql+psycopg://` 形式的 `DATABASE_URL`。可选 `POSTGRES_MIGRATION_*` 或 `DATABASE_MIGRATION_URL` 指定同一个数据库的迁移账号；每次发布单独执行一次迁移，不在各 worker 启动时运行。
 
 ```powershell
