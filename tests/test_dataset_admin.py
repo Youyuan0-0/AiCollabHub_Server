@@ -11,7 +11,7 @@ from test_auth import csrf, login
 from test_dataset_workspace import client as client
 from test_dataset_workspace import data as data
 
-from app.modules.applications.identity import ACTORS, Actor
+from app.modules.common.identity import ACTORS, Actor
 from app.modules.datasets.admin_schemas import DatasetAuditQuery, DatasetReviewQuery, ReviewDataset
 from app.modules.datasets.admin_service import DatasetAdminService
 from app.modules.datasets.publishing import ExternalDatasetPublisher
@@ -28,6 +28,50 @@ SCORES = {
     "consistency": 4,
     "cleanliness": 4,
 }
+
+
+def test_review_report_association_revision_and_history(client, data):
+    """模拟报告须绑定本申请、本修订；退回后历史原件仍可查看且不可删除。"""
+    record = client.post("/api/v1/dataset-publications", json={"data": data, "submit": True}).json()
+    other = client.post(
+        "/api/v1/dataset-publications",
+        json={"data": {**data, "name": "另一份数据集"}, "submit": True},
+    ).json()
+    path = f"/api/v1/admin/dataset-publications/{record['id']}"
+    upload = client.post(
+        path + "/report-files?revision=1",
+        files={"file": ("quality.txt", b"quality report", "text/plain")},
+    )
+    assert upload.status_code == 201, upload.text
+    file_id = upload.json()["id"]
+    payload = {
+        "decision": "needs_changes",
+        "revision": 1,
+        "reason": "补充说明",
+        "reportFileIds": [file_id],
+    }
+    wrong = client.post(f"/api/v1/admin/dataset-publications/{other['id']}/review", json=payload)
+    assert wrong.status_code == 422
+    result = client.post(path + "/review", json=payload)
+    assert result.status_code == 200, result.text
+    assert result.json()["reviews"][0]["reportFiles"][0]["id"] == file_id
+    content_path = path + f"/report-files/{file_id}/content"
+    assert client.get(content_path).content == b"quality report"
+    assert (
+        client.get(content_path + "?preview=true").headers["Content-Security-Policy"] == "sandbox"
+    )
+    assert client.delete(path + f"/report-files/{file_id}").status_code == 409
+    resubmit = client.put(
+        f"/api/v1/dataset-publications/{record['id']}",
+        json={"data": data, "submit": True, "revision": result.json()["revision"]},
+    ).json()
+    assert (
+        client.post(
+            path + "/review", json={**payload, "revision": resubmit["revision"]}
+        ).status_code
+        == 422
+    )
+    assert client.get(content_path).status_code == 200
 
 
 def test_review_resubmit_history_and_pending_sync(client, data):

@@ -19,7 +19,7 @@ class ChatInput(OverviewModel):
     tools: list[ShortText] = Field(default_factory=list, max_length=20)
     # 消息只引用已上传的附件编号；元信息由后端仓库读取，不能信任前端文件名或大小。
     attachment_ids: list[Annotated[str, Field(pattern=r"^attachment-[0-9a-f]{32}$")]] = Field(
-        default_factory=list, max_length=10
+        default_factory=list, max_length=20
     )
 
 

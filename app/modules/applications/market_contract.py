@@ -15,11 +15,12 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from app.core.config import Settings
-from app.modules.applications.identity import Actor
 from app.modules.applications.publication_schemas import ApplicationPayload, QualityScores
+from app.modules.common.identity import Actor
+from app.modules.common.toolchain.network import http_options
 
 
 class MarketBinding(BaseModel):
@@ -143,14 +144,21 @@ class HiMarketClient:
     def configuration(self) -> MarketConfiguration:
         """加载并校验绑定配置，拒绝重复资源和不安全的服务地址。"""
         settings = self.settings
-        if not (settings.applications_market_url and settings.applications_market_configuration):
+        if not settings.applications_market_url or (
+            settings.applications_market_data is None
+            and not settings.applications_market_configuration
+        ):
             raise HTTPException(503, "外部目录尚未配置服务地址和应用对应关系")
         parsed = urlsplit(str(settings.applications_market_url))
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise HTTPException(503, "外部目录地址配置不正确")
         try:
-            config = MarketConfiguration.model_validate_json(
-                Path(settings.applications_market_configuration).read_text(encoding="utf-8")
+            config = (
+                MarketConfiguration.model_validate(settings.applications_market_data)
+                if settings.applications_market_data is not None
+                else MarketConfiguration.model_validate_json(
+                    Path(settings.applications_market_configuration).read_text(encoding="utf-8")
+                )
             )
             references = [(b.resource_id, b.portal_id) for b in config.bindings.values()]
             listings = [b.listing_id for b in config.bindings.values() if b.listing_id]
@@ -163,6 +171,9 @@ class HiMarketClient:
     def headers(self, config: MarketConfiguration, *, subject: str | None = None) -> dict[str, str]:
         """按操作身份选择开发者或管理凭据，缺少凭据时拒绝请求。"""
         if subject is not None:
+            account = self.settings.applications_market_accounts.get(subject)
+            if account:
+                return {"Authorization": "Bearer " + self.login(account)}
             env_name = config.developer_token_env.get(subject)
             token = os.environ.get(env_name, "") if env_name else ""
             if not token and env_name in self.settings.applications_market_developer_tokens:
@@ -179,6 +190,66 @@ class HiMarketClient:
             "X-HIMARKET-OPENAPI": "HIMARKET_OPENAPI",
             "X-HIMARKET-TOKEN": secret.get_secret_value(),
         }
+
+    def login(self, account: dict) -> str:
+        """按指南 P926–927 获取短期令牌，只用于本次请求，不持久化或回传浏览器。"""
+        password = account.get("password")
+        password = password.get_secret_value() if isinstance(password, SecretStr) else password
+        if not isinstance(password, str) or not password:
+            raise HTTPException(503, "当前账号尚未配置市场登录密码")
+        try:
+            with httpx.Client(
+                base_url=str(self.settings.applications_market_url).rstrip("/"),
+                timeout=self.settings.applications_market_timeout,
+                follow_redirects=False,
+                trust_env=False,
+                transport=self.transport,
+                **http_options(
+                    self.settings.applications_market_proxy_url if self.transport is None else None,
+                    self.settings.applications_market_ca_certificate,
+                ),
+            ) as client:
+                with client.stream(
+                    "POST",
+                    "/himarket/v1/developers/login",
+                    json={
+                        "username": account["username"],
+                        "password": password,
+                    },
+                ) as response:
+                    if response.status_code != 200:
+                        raise HTTPException(502, "市场开发者登录失败，请检查账号和授权")
+                    chunks, size = [], 0
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > 64000:
+                            raise HTTPException(502, "市场登录响应超出大小限制")
+                        chunks.append(chunk)
+                    result = json.loads(b"".join(chunks))
+            data = result.get("data") if isinstance(result, dict) else None
+            if (
+                not isinstance(result, dict)
+                or result.get("code") != "SUCCESS"
+                or not isinstance(data, dict)
+            ):
+                raise ValueError("invalid login")
+            token, expiry = data.get("accessToken"), data.get("expiresIn")
+            if (
+                not isinstance(token, str)
+                or not token
+                or len(token) > 32000
+                or any(ord(char) < 32 for char in token)
+                or not isinstance(expiry, int)
+                or isinstance(expiry, bool)
+                or expiry <= 0
+                or str(data.get("tokenType", "Bearer")).lower() != "bearer"
+            ):
+                raise ValueError("invalid token")
+            return token
+        except httpx.TimeoutException:
+            raise HTTPException(504, "市场登录超时，请稍后重试") from None
+        except (httpx.HTTPError, ValueError, KeyError):
+            raise HTTPException(502, "市场开发者登录失败或返回格式不正确") from None
 
     def request(
         self,
@@ -201,6 +272,10 @@ class HiMarketClient:
                 follow_redirects=False,
                 trust_env=False,
                 transport=self.transport,
+                **http_options(
+                    self.settings.applications_market_proxy_url if self.transport is None else None,
+                    self.settings.applications_market_ca_certificate,
+                ),
             ) as client:
                 with client.stream(
                     method, "/himarket/v1/open-api/v1" + path, params=params, json=body

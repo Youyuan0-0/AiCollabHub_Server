@@ -13,12 +13,12 @@ from app.core.config import Settings
 from app.main import create_app
 from app.modules.applications.application_service import ApplicationService
 from app.modules.applications.discovery import analyze, related
-from app.modules.applications.identity import DEFAULT_USER, SessionIdentityProvider, can_manage
-from app.modules.applications.identity_directory import publication_defaults, visible_directory
 from app.modules.applications.memory_repository import InMemoryApplicationRepository
 from app.modules.applications.providers import DemoApplicationProvider
 from app.modules.applications.runtime import AgentDevProvider
 from app.modules.applications.workflow_schemas import RunInput
+from app.modules.common.identity import DEFAULT_USER, SessionIdentityProvider, can_manage
+from app.modules.common.identity_directory import publication_defaults, visible_directory
 
 
 def test_precheck_reports_field_errors_without_saving_and_submit_still_rejects():

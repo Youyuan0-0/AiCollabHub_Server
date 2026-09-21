@@ -11,7 +11,7 @@ from sqlalchemy import delete, select, text
 from app.core.config import Settings
 from app.db.session import create_db_engine
 from app.main import create_app
-from app.modules.applications.identity import Actor
+from app.modules.common.identity import Actor
 from app.modules.datasets.repository import DatasetRecord, DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace, activity_key
 

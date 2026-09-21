@@ -4,7 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 
-from app.modules.applications.identity import can_manage, current_actor
+from app.modules.common.identity import can_manage, current_actor
+from app.modules.common.memory_reports import reports_store
+from app.modules.common.visibility import validate_visibility_targets, visibility_directory
 from app.modules.datasets.admin_schemas import (
     DatasetAdminQuery,
     DatasetAuditQuery,
@@ -15,7 +17,6 @@ from app.modules.datasets.admin_schemas import (
     ReviewDataset,
 )
 from app.modules.datasets.admin_service import DatasetAdminService, require_dataset_admin
-from app.modules.datasets.visibility import validate_visibility_targets, visibility_directory
 from app.modules.datasets.workspace import dataset_workspace
 
 router = APIRouter(prefix="/admin", tags=["dataset administration (development)"])
@@ -90,9 +91,13 @@ def publication(publication_id: str, request: Request) -> dict:
 def review(publication_id: str, payload: ReviewDataset, request: Request) -> dict:
     """校验权限和修订后审核，响应附带发布结果的当前上下架状态。"""
     workspace = dataset_workspace(request)
-    record = DatasetAdminService(workspace).review(
-        publication_id, payload, current_actor(request, is_admin=True)
-    )
+    actor = current_actor(request, is_admin=True)
+    service = DatasetAdminService(workspace)
+    store = reports_store(request)
+    with store.lock:
+        current = service.publication(publication_id, actor)
+        reports = store.selected("dataset", current, actor, payload.report_file_ids)
+        record = service.review(publication_id, payload, actor, reports)
     return workspace.publication_listings([record])[0]
 
 

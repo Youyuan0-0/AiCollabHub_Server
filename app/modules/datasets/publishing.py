@@ -73,6 +73,7 @@ class LocalDatasetPublisher:
             "updatedAt": record["updatedAt"],
             "publishedAt": record["updatedAt"],
             "publicationSource": "local",
+            "source": record.get("source"),
             "preview": sample_preview(data.sample_data),
             "facets": {
                 "dataApplication": data.data_application,

@@ -1,5 +1,6 @@
 """场景应用业务流程：与存储实现、供应方服务分离。"""
 
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -13,15 +14,6 @@ from app.modules.applications.configuration import (
     validate_submission,
 )
 from app.modules.applications.discovery import analyze
-from app.modules.applications.identity import (
-    DEFAULT_ADMIN,
-    DEFAULT_USER,
-    Actor,
-    can_edit,
-    can_manage,
-    require_admin,
-    visible,
-)
 from app.modules.applications.ports import (
     ApplicationProvider,
     ApplicationRepository,
@@ -34,6 +26,15 @@ from app.modules.applications.publication_schemas import (
     SaveApplicationPublication,
 )
 from app.modules.applications.workflows import ApplicationWorkflows
+from app.modules.common.identity import (
+    DEFAULT_ADMIN,
+    DEFAULT_USER,
+    Actor,
+    can_edit,
+    can_manage,
+    require_admin,
+    visible,
+)
 
 
 def timestamp() -> str:
@@ -85,7 +86,25 @@ class ApplicationService:
     def __init__(self, repository: ApplicationRepository, provider: ApplicationProvider) -> None:
         self.repository = repository
         self.provider = provider
+        self.dependency_resolver: Callable[[Actor], list[dict]] | None = None
         self.workflows = ApplicationWorkflows(self)
+
+    def dependencies(self, actor: Actor = DEFAULT_USER) -> list[dict]:
+        """读取按当前身份过滤的关联目录，保留自定义供应方的注入能力。"""
+        if self.dependency_resolver is not None:
+            return self.dependency_resolver(actor)
+        return self.provider.dependencies()
+
+    def validate_dependencies(self, dependencies: list[dict], actor: Actor) -> None:
+        """保存和审核使用同一目录校验，资源撤回后不能继续作为可用依赖。"""
+        if self.dependency_resolver is None:
+            self.provider.validate_dependencies(dependencies)
+            return
+        if not dependencies:
+            return
+        available = {(item["kind"], item["resourceId"]) for item in self.dependencies(actor)}
+        if any((item["kind"], item["resourceId"]) not in available for item in dependencies):
+            raise HTTPException(422, "关联资源不存在、未发布或无权访问，请从当前目录重新选择")
 
     @staticmethod
     def _resource(session: ApplicationSession, application_id: str) -> dict:
@@ -255,7 +274,7 @@ class ApplicationService:
             suggestion = analyze(data)["suggestedCategory"]
             if suggestion:
                 data["category"] = suggestion
-        self.provider.validate_dependencies(data["dependencies"])
+        self.validate_dependencies(data["dependencies"], actor)
         configuration = effective_configuration(session.get_configuration())
         if payload.submit:
             # 后端再次检查当前必填规则，不能只依赖浏览器中的表单校验。
@@ -336,7 +355,7 @@ class ApplicationService:
                     session, record["data"], record.get("securityLevel", "internal")
                 )
                 self._validate_version(session, record["data"], record)
-                self.provider.validate_dependencies(record["data"]["dependencies"])
+                self.validate_dependencies(record["data"]["dependencies"], actor)
             now = timestamp()
             record["reviews"].append(
                 {
@@ -457,7 +476,7 @@ class ApplicationService:
             resource["visibility"] = session.get_visibility(application_id)
         resource["runtime"] = self.workflows.runtime(
             application_id
-        ) or self.provider.runtime_status(application_id, resource["versionId"])
+        ) or self.provider.runtime_status(resource)
         return resource
 
     def configuration(

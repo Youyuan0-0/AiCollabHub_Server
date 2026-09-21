@@ -9,6 +9,7 @@ description = "Platform backend for the AI collaboration portal"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
+    "aliyun-python-sdk-core>=2.16,<3",
     "alembic>=1.14,<2",
     "defusedxml>=0.7.1,<1",
     # 标准依赖包含 CLI 和 multipart 解析，支持开发启动及旧问答表单接口。

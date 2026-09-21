@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "revision": "example",
+  "updatedAt": "",
+  "updatedBy": "",
+  "configuration": {
+    "common": {
+      "mode": "disabled",
+      "url": null,
+      "workspace": "",
+      "region": "",
+      "timeout": 30,
+      "allowedSubjects": []
+    },
+    "applications": {
+      "runtime": "simulation",
+      "url": null,
+      "timeout": 20,
+      "entryUrl": null,
+      "bindings": []
+    },
+    "datasets": {
+      "entryUrl": null
+    },
+    "knowledge": {
+      "indexProfiles": [],
+      "retrievalProfiles": []
+    }
+  },
+  "credentials": {}
+}

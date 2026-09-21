@@ -10,7 +10,7 @@ from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
 
-from app.modules.applications.identity import ACTORS, Actor
+from app.modules.common.identity import ACTORS, Actor
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.admin_schemas import DatasetVisibility
 from app.modules.datasets.admin_service import DatasetAdminService
@@ -25,7 +25,6 @@ PATH = "/api/v1/admin/datasets/" + DATASET
     ("scope", "targets"),
     [
         ("organizations", ["org-production"]),
-        ("members", ["demo-outsider"]),
         ("projects", ["project-b"]),
     ],
 )
@@ -116,7 +115,7 @@ def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
     workspace = DatasetWorkspace(DatasetRepository(engine))
     admin = DatasetAdminService(workspace)
     payload = DatasetVisibility(
-        scope="members", targets=[" demo-reader ", "demo-reader"], revision=0
+        scope="organizations", targets=[" org-research ", "org-research"], revision=0
     )
     workspace.interact(DATASET, ACTORS[0], favorite=True)
 
@@ -131,8 +130,8 @@ def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
     assert results.count(409) == 1
     reopened = DatasetWorkspace(DatasetRepository(engine)) if engine else workspace
     assert reopened.visibility(DATASET) == {
-        "scope": "members",
-        "targets": ["demo-reader"],
+        "scope": "organizations",
+        "targets": ["org-research"],
         "revision": 1,
     }
     assert reopened.resource(DATASET)["favoriteCount"] == 1
@@ -149,7 +148,7 @@ def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
 def test_authenticated_scope_changes_require_csrf(auth):
     """真实认证路径要求管理员及有效 CSRF，浏览器不能借开放范围接口提升权限。"""
     client, _, iam, _ = auth
-    payload = {"scope": "members", "targets": ["mock-user"], "revision": 0}
+    payload = {"scope": "organizations", "targets": ["mock-org"], "revision": 0}
     assert client.put(PATH + "/visibility", json=payload).status_code == 401
     login(client, iam)
     assert client.put(PATH + "/visibility", json=payload, headers=csrf(client)).status_code == 403
@@ -206,7 +205,7 @@ def test_visibility_description_matches_default_and_saved_scope(client):
     assert (
         client.put(
             PATH + "/visibility",
-            json={"scope": "members", "targets": ["demo-publisher"], "revision": 0},
+            json={"scope": "organizations", "targets": ["org-research"], "revision": 0},
         ).status_code
         == 200
     )
@@ -217,7 +216,7 @@ def test_visibility_description_matches_default_and_saved_scope(client):
     assert "endpoint" not in public_resource
     assert {
         item["value"] for item in client.get(PATH).json()["metadata"] if item["label"] == "开放范围"
-    } == {"指定成员"}
+    } == {"指定组织"}
     assert "visibility" not in public_resource
 
 
@@ -238,3 +237,21 @@ def test_empty_configured_directory_does_not_fall_back_to_demo(client, tmp_path)
         ).status_code
         == 422
     )
+
+
+def test_legacy_member_scope_preserved_without_accepting_new_member_grants(client):
+    """旧成员授权原样保留，新建或扩大成员范围被拒绝，不能自动放宽为全集团。"""
+    payload = {"scope": "members", "targets": ["demo-reader"], "revision": 0}
+    assert client.put(PATH + "/visibility", json=payload).status_code == 422
+    repository = client.app.state.dataset_workspace.repository
+    repository.save("visibility:" + DATASET, {**payload, "datasetId": DATASET}, None)
+    assert client.get("/api/v1/datasets/" + DATASET).status_code == 404
+    unchanged = client.put(PATH + "/visibility", json={**payload, "revision": 1})
+    assert unchanged.status_code == 200
+    assert (
+        client.put(
+            PATH + "/visibility", json={**payload, "targets": ["demo-outsider"], "revision": 2}
+        ).status_code
+        == 422
+    )
+    assert client.get(PATH).json()["visibility"]["targets"] == ["demo-reader"]

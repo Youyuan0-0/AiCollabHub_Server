@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 
 from app.core.config import Settings
 from app.main import create_app
-from app.modules.applications.identity import ACTORS
+from app.modules.common.identity import ACTORS
 from app.modules.datasets.repository import DatasetRecord, DatasetRepository
 from app.modules.datasets.schemas import DatasetInput, SaveDataset
 from app.modules.datasets.workspace import DatasetWorkspace

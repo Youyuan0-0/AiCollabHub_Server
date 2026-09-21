@@ -5,9 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.identity import current_actor
 from app.modules.applications.market_contract import MarketMutation, MarketRecovery
 from app.modules.applications.market_workflows import MarketWorkflows
+from app.modules.common.identity import current_actor
 
 router = APIRouter(tags=["application external publishing"])
 

@@ -67,7 +67,7 @@ def test_concurrent_reviews_commit_once():
 
 
 def test_repository_failure_rolls_back_approval_and_catalog(monkeypatch):
-    from app.modules.applications.memory_repository import MemorySession
+    from app.modules.common.memory_repository import MemorySession
 
     service = ApplicationService(InMemoryApplicationRepository(), DemoApplicationProvider())
     record = pending(service)
@@ -123,7 +123,7 @@ def test_factory_injects_storage_and_provider_without_route_changes():
                 }
             ]
 
-        def runtime_status(self, application_id, version_id):
+        def runtime_status(self, resource):
             return {
                 "status": "available",
                 "averageResponseMs": 250,

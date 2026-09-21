@@ -9,10 +9,10 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.modules.applications.identity import Actor, can_edit, can_manage
 from app.modules.applications.ports import ApplicationSession
 from app.modules.applications.publication_schemas import TutorialFile
-from app.modules.applications.tutorial_documents import inspect_tutorial
+from app.modules.common.document_content import inspect_document
+from app.modules.common.identity import Actor, can_edit, can_manage
 from app.storage.client import MinioStorage
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ def save_file(
         raise HTTPException(403, "当前账号没有上传教程的权限")
     if level not in ("public", "internal"):
         raise HTTPException(422, "请选择公开或内部资料，当前通道不接收涉密文件")
-    kind, content_type, preview = inspect_tutorial(name, content)
+    kind, content_type, preview = inspect_document(name, content)
     if max(len(content), len(preview or b"")) > storage.max_upload_bytes:
         raise HTTPException(413, "文件超过当前文件服务的上传限制")
     identifier = str(uuid4())

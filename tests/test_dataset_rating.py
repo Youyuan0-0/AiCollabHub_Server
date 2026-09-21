@@ -8,7 +8,7 @@ from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
 
-from app.modules.applications.identity import ACTORS
+from app.modules.common.identity import ACTORS
 from app.modules.datasets.repository import DatasetRecord, DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 
@@ -78,8 +78,8 @@ def test_rating_checks_visibility_and_missing_resources(client):
         client.put(
             "/api/v1/admin/datasets/" + DATASET + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code
@@ -157,8 +157,8 @@ def test_rating_comments_replace_and_remain_private_after_scope_revocation(clien
         client.put(
             "/api/v1/admin/datasets/" + DATASET + "/visibility",
             json={
-                "scope": "members",
-                "targets": ["demo-reader"],
+                "scope": "organizations",
+                "targets": ["org-production"],
                 "revision": 0,
             },
         ).status_code

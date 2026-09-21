@@ -72,12 +72,15 @@ def test_knowledge_and_tools_return_mock_contracts(clients):
     # 多轮会话不再属于无状态 Mock，其历史与持久化由专用用例覆盖。
     base = a.get("/api/v1/knowledge-bases").json()[0]
     assert b.get(f"/api/v1/knowledge-bases/{base['id']}/chunks").status_code == 200
+    base = a.post(
+        "/api/v1/knowledge-bases", json={"name": "本人知识库", "summary": "模拟简介"}
+    ).json()
     uploaded = a.post(
         f"/api/v1/knowledge-bases/{base['id']}/documents",
         json={"files": [{"name": "example.pdf", "size": 128}]},
     )
     assert uploaded.json()["documents"][0]["name"] == "example.pdf"
-    assert b.get("/api/v1/knowledge-bases").json()[0] == base
+    assert base["id"] not in {item["id"] for item in b.get("/api/v1/knowledge-bases").json()}
     resource = a.get("/api/v1/tools").json()["items"][0]
     invocation = a.post(f"/api/v1/resources/{resource['id']}/invoke", json={"prompt": "测试"})
     assert invocation.status_code == 200 and "模拟响应" in invocation.json()["text"]

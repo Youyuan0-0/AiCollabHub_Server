@@ -68,6 +68,7 @@ Desktop.ini
 !/deploy/authentication.md
 !/app/modules/applications/README.md
 !/app/modules/datasets/README.md
+!/app/modules/tools/README.md
 !/database/scenario-applications/README.md
 !/database/feedback/README.md
 !/database/resource-foundation/README.md

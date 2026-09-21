@@ -7,7 +7,6 @@ from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.identity import current_actor
 from app.modules.applications.review_files import (
     check_pending,
     checked_publication,
@@ -17,8 +16,9 @@ from app.modules.applications.review_files import (
     remove_report,
     save_report,
 )
-from app.modules.applications.tutorial_documents import DOCUMENT_LIMIT
+from app.modules.common.document_content import DOCUMENT_LIMIT
 from app.modules.common.file_transfer import limited_upload_form, object_response
+from app.modules.common.identity import current_actor
 from app.storage.client import StorageDependency
 
 router = APIRouter(prefix="/admin/application-publications", tags=["application review reports"])

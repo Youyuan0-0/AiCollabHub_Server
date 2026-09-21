@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "revision": "example",
+  "updatedAt": "",
+  "updatedBy": "",
+  "configuration": {
+    "applications": {
+      "proxyUrl": null,
+      "caCertificate": "",
+      "connection": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "workspace": "",
+        "region": "",
+        "timeout": 30.0,
+        "allowedSubjects": []
+      },
+      "runtime": "simulation",
+      "responseMode": "json",
+      "url": null,
+      "timeout": 20.0,
+      "entryUrl": null,
+      "bindings": [],
+      "market": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "timeout": 15.0,
+        "profile": "himarket-direct",
+        "accounts": [],
+        "bindings": [],
+        "decisionStatus": {},
+        "developerTokenEnv": {}
+      }
+    },
+    "datasets": {
+      "connection": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "workspace": "",
+        "region": "",
+        "timeout": 30.0,
+        "allowedSubjects": []
+      },
+      "entryUrl": null
+    },
+    "knowledge": {
+      "connection": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "workspace": "",
+        "region": "",
+        "timeout": 30.0,
+        "allowedSubjects": []
+      },
+      "storage": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "platform",
+        "endpoint": null,
+        "bucket": "knowledge-files",
+        "region": "us-east-1",
+        "timeout": 10.0
+      },
+      "ownership": "personal",
+      "tenantBindings": [],
+      "bodyEncoding": "form",
+      "retrievalVerified": false,
+      "indexProfiles": [],
+      "retrievalProfiles": []
+    }
+  },
+  "credentials": {}
+}
