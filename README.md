@@ -124,6 +124,19 @@ tests/                           契约、权限、迁移和业务持久化回�
 
 [单服务器部署](deploy/README.md) 说明构建、容器环境和网关。迁移每次发布只运行一次，不随 worker 重复运行。数据库备份使用 `scripts.backup_database`，MinIO 使用 `scripts.backup_objects`，恢复验证使用独立目标。定时备份、机外副本、HTTPS 和容量测试由部署阶段落实。
 
+## 导入原型样例
+
+原先的静态目录共 54 条资源，可以显式导入新表作为开发测试资料。脚本复用发布、审核、版本及可见范围仓储，首次导入时模拟审核并启用；固定 UUID 保证重跑只跳过，不覆盖修改、下架状态或互动数据。整批写入使用一个事务，失败全部回滚。
+
+```powershell
+.venv/Scripts/python.exe -m scripts.seed_demo_resources --database aicollabhub_test
+.venv/Scripts/python.exe -m scripts.seed_demo_resources --database aicollabhub_test --apply
+```
+
+省略 `--apply` 时仅预览。目标必须与 `.env` 一致且属于 development/test 环境，执行前备份测试库；默认发布者为已登录入库的 `mock-user`，审核者为 `mock-admin`，可通过 `--publisher`、`--reviewer` 指定现有身份。脚本不创建用户、不提升权限，也不随应用启动自动执行。
+
+名称、概览、标签、字段与公开样例、应用教程及已知依赖会保存到对应表。仅生成资料完整的当前版本，Mock 来源写在申请及版本说明中。预设评分、收藏、下载和调用数不导入；知识库样例没有文件本体，因此不伪造文档、分段或文件记录。非公开知识库先设为发布者可见，可由管理员调整范围。外部 IAM、模型和工具调用仍为模拟。
+
 ## 验证
 
 ```powershell
