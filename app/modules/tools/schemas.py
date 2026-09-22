@@ -15,9 +15,7 @@ __all__ = ["ReviewTool", "ToolAuditQuery", "ToolListing", "ToolVisibility"]
 
 
 class ToolVisibility(VisibilityInput):
-    """工具按任务表第 61、15 行仅开放集团、单位或项目组范围。"""
-
-    scope: Literal["all", "organizations", "projects"] = "all"
+    """工具复用集团、指定用户、单位和项目组可见范围及目标校验。"""
 
 
 class ToolCatalogQuery(CatalogQuery):

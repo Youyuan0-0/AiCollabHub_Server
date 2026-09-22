@@ -168,9 +168,9 @@ def create_mock_iam(
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>请重新登录</title><main style="max-width:440px;margin:12vh auto;'
             'padding:28px;font:16px/1.6 system-ui,sans-serif">'
-            '<h1>登录页面已失效</h1><p>页面已过期，或浏览器中的登录信息已更新。'
-            '请重新发起登录，不要刷新或重复提交此页面。</p>'
-            '<p>如果重新登录后仍出现此提示，请允许此站点使用 Cookie。</p>'
+            "<h1>登录页面已失效</h1><p>页面已过期，或浏览器中的登录信息已更新。"
+            "请重新发起登录，不要刷新或重复提交此页面。</p>"
+            "<p>如果重新登录后仍出现此提示，请允许此站点使用 Cookie。</p>"
             f'<a href="{escape(retry, quote=True)}">重新登录</a></main></html>',
             status_code=403,
         )

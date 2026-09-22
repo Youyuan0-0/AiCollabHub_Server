@@ -101,6 +101,10 @@ class ResourceRecords:
         result.setdefault("securityLevel", "internal")
         result.setdefault("priority", "normal")
         result.setdefault("source", {"kind": "manual"})
+        # 早期申请把单位和联系人保存在资料内，新申请放在发布上下文中。
+        # 读取时兼容两种格式；未记录的信息留空，不改写已冻结的申请。
+        for field in ("owner", "contact"):
+            result.setdefault(field, data.get(field) or "")
         if self.kind == "dataset":
             published = self.get_resource(str(resource_id)) if row["published_version_id"] else None
             result.update(
@@ -155,13 +159,11 @@ class ResourceRecords:
         current = dict(row) if row else None
         if current is not None and record["revision"] != current["revision"] + 1:
             raise HTTPException(409, "申请已更新，请刷新后重试")
-        target_status = {"draft": None, "needs_changes": "rejected"}.get(
-            record["status"], record["status"]
-        )
+        target_status = None if record["status"] == "draft" else record["status"]
         if (
             current is not None
             and current["review_status"] == "pending"
-            and target_status in {"approved", "rejected"}
+            and target_status in {"approved", "rejected", "needs_changes"}
         ):
             self.conclude_publication(record, current, target_status)
             return
@@ -235,6 +237,7 @@ class ResourceRecords:
         record.update(
             revision=current["revision"],
             status=current["review_status"] or "draft",
+            submissionNo=current["submission_no"],
             submittedAt=iso(current["submitted_at"]),
             updatedAt=iso(now),
             baseVersionId=str(current["base_version_id"]) if current["base_version_id"] else None,

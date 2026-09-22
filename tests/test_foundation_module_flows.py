@@ -209,6 +209,211 @@ def test_tool_review_reopen_reads_same_author(foundation, connection):
     flush_constraints(connection)
 
 
+def test_tool_import_reopen_and_new_version(foundation, connection):
+    """数据库导入只保存一次，重建仓储后重复导入和新版本仍关联同一资源。"""
+    defaults = {"owner": "测试单位", "contact": "联系人"}
+
+    def reopen():
+        return ToolWorkspace(
+            ResourceDatabase(foundation, "tool", configuration=default_configuration())
+        )
+
+    workspace = reopen()
+    external_id = workspace.provider.list_tools()[0]["externalId"]
+    imported = workspace.import_tool(external_id, WRITER, defaults)
+    flush_constraints(connection)
+    reopened = reopen()
+    repeated = reopened.import_tool(external_id, WRITER, defaults)
+    assert (repeated["id"], repeated["revision"]) == (imported["id"], imported["revision"])
+    assert repeated["source"]["externalId"] == external_id
+    assert len(reopened.publications(WRITER)) == 1
+    pending = reopened.save(
+        SaveTool(data=repeated["data"], revision=repeated["revision"], submit=True),
+        WRITER,
+        defaults,
+        repeated["id"],
+    )
+    approved = reopened.review(
+        pending["id"],
+        ReviewTool(revision=pending["revision"], decision="approved", scores=SCORES),
+        ADMIN,
+    )
+    flush_constraints(connection)
+    next_version = reopen().new_version(approved["toolId"], WRITER)
+    flush_constraints(connection)
+    persisted = reopen().publication(next_version["id"], WRITER)
+    assert persisted["toolId"] == approved["toolId"]
+    assert persisted["data"]["version"] != approved["data"]["version"]
+    assert persisted["source"]["externalId"] == external_id
+    assert reopen().new_version(approved["toolId"], WRITER)["id"] == persisted["id"]
+    assert connection.exec_driver_sql("SELECT count(*) FROM ai_tool_versions").scalar_one() == 1
+
+
+def test_tool_publication_list_reads_legacy_and_current_owner_fields(foundation, connection):
+    """旧申请的资料字段与新申请的上下文字段均可列表、搜索和查看，读取不改历史。"""
+    import sqlalchemy as sa
+
+    from app.modules.tools.admin_router import router
+    from tests.test_foundation_resource_storage import draft
+    from tests.test_tools import tool_data
+
+    repository = ResourceDatabase(foundation, "tool", configuration=default_configuration())
+    legacy = draft("tool")
+    legacy["data"] = tool_data(name="旧格式工具", owner="历史单位", contact="历史联系人")
+    current = draft("tool")
+    current.update(owner="当前单位", contact="当前联系人")
+    current["data"] = tool_data(name="新格式工具", owner="过期资料", contact="过期联系人")
+    missing = draft("tool")
+    missing["data"] = tool_data(name="未记录单位工具")
+    with repository.transaction() as session:
+        for record in (legacy, current, missing):
+            session.put_publication(record)
+    flush_constraints(connection)
+    table = foundation.table("ai_tool_publications")
+    before = connection.execute(sa.select(table)).mappings().all()
+    app = FastAPI()
+    app.state.settings = foundation.settings
+    app.state.application_identity = SimpleNamespace(resolve=lambda request, audience: ADMIN)
+    app.state.tool_workspace = ToolWorkspace(repository)
+    app.include_router(router, prefix="/api/v1")
+    endpoint = "/api/v1/admin/tool-publications"
+    with TestClient(app) as client:
+        response = client.get(endpoint, params={"status": "", "pageSize": 1})
+        assert response.status_code == 200, response.text
+        assert response.json()["total"] == 3
+        assert len(response.json()["items"]) == 1
+        for record, owner, contact in (
+            (legacy, "历史单位", "历史联系人"),
+            (current, "当前单位", "当前联系人"),
+            (missing, "", ""),
+        ):
+            detail = client.get(f"{endpoint}/{record['id']}")
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["owner"] == owner
+            assert detail.json()["contact"] == contact
+            query = owner or record["data"]["name"]
+            filtered = client.get(endpoint, params={"q": query, "status": "pending"})
+            assert filtered.status_code == 200, filtered.text
+            assert [item["id"] for item in filtered.json()["items"]] == [record["id"]]
+        assert client.get(endpoint, params={"status": "approved"}).json()["total"] == 0
+        for sort in ("submitted", "updated", "priority"):
+            assert client.get(endpoint, params={"sort": sort}).status_code == 200
+    assert connection.execute(sa.select(table)).mappings().all() == before
+
+
+def test_tool_members_visibility_and_management_actor(foundation, connection):
+    """指定用户开放范围跨请求生效，拒绝未知目标和旧修订，管理留痕记录实际用户。"""
+    import sqlalchemy as sa
+
+    from app.modules.tools.admin_router import router as admin_router
+    from app.modules.tools.router import router
+    from app.modules.tools.schemas import ToolListing
+    from tests.test_tools import tool_data
+
+    workspace = ToolWorkspace(
+        ResourceDatabase(
+            foundation, "tool", configuration=default_configuration(), runtime=Runtime()
+        )
+    )
+    record = workspace.save(
+        SaveTool(data=tool_data(), submit=True), WRITER, {"owner": "单位", "contact": "联系人"}
+    )
+    record = workspace.review(
+        record["id"],
+        ReviewTool(revision=record["revision"], decision="approved", scores=SCORES),
+        ADMIN,
+    )
+    rid = record["toolId"]
+    resource = workspace.resource(rid, ADMIN, True)
+    listed = workspace.listing(
+        rid, ToolListing(status="listed", revision=resource["revision"]), ADMIN
+    )
+    assert listed["revision"] == workspace.resource(rid, ADMIN, True)["revision"]
+    app = FastAPI()
+    app.state.settings = foundation.settings
+    app.state.foundation = foundation
+    app.state.tool_workspace = workspace
+    current = {"actor": WRITER}
+    app.state.application_identity = SimpleNamespace(
+        resolve=lambda request, audience: ADMIN if audience == "admin" else current["actor"]
+    )
+    for routes in (router, admin_router):
+        app.include_router(routes, prefix="/api/v1")
+    with TestClient(app) as client:
+        url = f"/api/v1/admin/tools/{rid}/visibility"
+        revision = client.get(f"/api/v1/admin/tools/{rid}").json()["visibility"]["revision"]
+        payload = {"scope": "members", "targets": [WRITER.id], "revision": revision}
+        assert client.put(url, json={**payload, "targets": ["missing"]}).status_code == 422
+        saved = client.put(url, json=payload)
+        assert saved.status_code == 200, saved.text
+        assert client.put(url, json=payload).status_code == 409
+        assert client.get(f"/api/v1/admin/tools/{rid}").json()["visibility"]["targets"] == [
+            WRITER.id
+        ]
+        assert client.get("/api/v1/tools").json()["total"] == 1
+        assert client.get(f"/api/v1/tools/{rid}").status_code == 200
+        assert (
+            client.put(f"/api/v1/tools/{rid}/favorite", json={"favorite": True}).status_code == 200
+        )
+        assert (
+            client.post(
+                f"/api/v1/tools/{rid}/invoke", json={"inputs": {"text": "测试"}}
+            ).status_code
+            == 200
+        )
+        current["actor"] = Actor(ADMIN.id, ADMIN.name, "publisher", "")
+        assert client.get("/api/v1/tools").json()["total"] == 0
+        assert client.get(f"/api/v1/tools/{rid}").status_code == 404
+        assert (
+            client.put(f"/api/v1/tools/{rid}/favorite", json={"favorite": True}).status_code == 404
+        )
+        assert (
+            client.post(
+                f"/api/v1/tools/{rid}/invoke", json={"inputs": {"text": "测试"}}
+            ).status_code
+            == 404
+        )
+        audit = client.get("/api/v1/admin/tool-audit")
+        assert audit.status_code == 200, audit.text
+        events = audit.json()["items"]
+        listing_event = next(item for item in events if item["decision"] == "上架")
+        assert listing_event["reviewer"] == ADMIN.name
+        assert listing_event["name"] == "测试工具"
+        assert any(item["decision"] == "approved" for item in events)
+    workspace.listing(rid, ToolListing(status="unlisted", revision=listed["revision"]), ADMIN)
+    flush_constraints(connection)
+    logs = foundation.table("operation_logs")
+    rows = connection.execute(sa.select(logs).where(logs.c.target_id == rid)).mappings().all()
+    management = [row for row in rows if row["data"].get("actorName") == ADMIN.name]
+    assert len(management) == 3
+    assert all(row["actor_type"] == "user" for row in management)
+    assert all(row["user_id"] == foundation.user_id(connection, ADMIN.id) for row in management)
+    # 旧日志的摘要没有工具名称和操作者，读取时不能报错或伪造其历史身份。
+    from uuid import uuid4
+
+    from app.modules.tools.schemas import ToolAuditQuery
+
+    connection.execute(
+        sa.insert(logs).values(
+            id=uuid4(),
+            actor_type="system",
+            action="update",
+            target_type="tool",
+            target_id=rid,
+            data={"reason": "旧日志缺失展示字段"},
+        )
+    )
+    legacy = next(
+        item
+        for item in workspace.audit(ToolAuditQuery(), ADMIN)["items"]
+        if item["reason"] == "旧日志缺失展示字段"
+    )
+    assert legacy["name"] == "测试工具"
+    assert legacy["reviewer"] == "系统／历史未记录"
+    assert legacy["decision"] == "历史操作（具体结论未记录）"
+    assert legacy["createdAt"].endswith("+00:00")
+
+
 def test_dataset_publish_enable_rating_download_and_reopen(foundation, connection):
     """正式数据集跨仓储读取保留统计；发送成功的下载才计数。"""
     from app.modules.common.downloads import complete_download

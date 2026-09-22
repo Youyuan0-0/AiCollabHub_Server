@@ -1,11 +1,12 @@
 """收藏、评分、关注、下载与管理配置在共用业务表中的读写。"""
 
 from copy import deepcopy
+from datetime import UTC
 from hashlib import sha256
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import String, cast, delete, insert, select, update
 
 from app.db.foundation import identifier, iso, utc_now
 from app.modules.common.resource_files import ResourceFiles
@@ -257,6 +258,8 @@ class ResourceActivity(ResourceFiles):
             value = self.configuration_record("workflow")
             return [value] if value else []
         if kind == "audit":
+            if self.kind == "tool":
+                return self.tool_audit_entries()
             logs = self.table("operation_logs")
             return [
                 deepcopy(row["data"])
@@ -270,6 +273,35 @@ class ResourceActivity(ResourceFiles):
                 ).mappings()
             ]
         return self.repository.runtime.list(kind) if self.repository.runtime else []
+
+    def tool_audit_entries(self) -> list[dict]:
+        """补齐工具日志展示字段；旧摘要缺失的操作和身份明确标为未记录。"""
+        logs, resources, users = (
+            self.table("operation_logs"),
+            self.table("ai_tools"),
+            self.table("users"),
+        )
+        rows = self.db.execute(
+            select(logs, resources.c.name.label("resource_name"), users.c.display_name)
+            .outerjoin(resources, logs.c.target_id == cast(resources.c.id, String))
+            .outerjoin(users, logs.c.user_id == users.c.id)
+            .where(logs.c.target_type == "tool")
+            .order_by(logs.c.created_at.desc())
+        ).mappings()
+        return [
+            {
+                "id": str(row["id"]),
+                "toolId": row["target_id"],
+                "name": row["resource_name"] or "历史工具（名称未记录）",
+                "reviewer": row["display_name"] or "系统／历史未记录",
+                "decision": "历史操作（具体结论未记录）",
+                "organizationId": "",
+                "reason": "",
+                **deepcopy(row["data"]),
+                "createdAt": iso(row["created_at"].astimezone(UTC)),
+            }
+            for row in rows
+        ]
 
     def entry(self, kind: str, key: str) -> dict | None:
         """取得幂等对象；临时调用状态读取失败时不能当作尚未执行。"""
@@ -340,6 +372,10 @@ class ResourceActivity(ResourceFiles):
                 "toolId",
                 "resourceId",
                 "applicationName",
+                "name",
+                "organizationId",
+                "reviewer",
+                "decision",
                 "version",
                 "status",
                 "mode",

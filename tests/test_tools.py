@@ -344,7 +344,7 @@ def test_version_review_preserves_live_resource_visibility_and_statistics(client
     assert (
         client.put(
             admin + "/visibility",
-            json={"scope": "members", "targets": ["demo-reader"], "revision": 2},
+            json={"scope": "members", "targets": ["missing-member"], "revision": 2},
         ).status_code
         == 422
     )

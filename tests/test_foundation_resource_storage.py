@@ -90,6 +90,8 @@ def test_publication_review_version_and_interactions(foundation, connection, kin
     with repository.transaction() as session:
         pending = session.get_publication(record["id"])
         assert pending["status"] == "pending"
+        assert pending["owner"] == "测试单位"
+        assert pending["contact"] == ""
         assert session.list_resources() == []
         pending.update(status="approved", revision=pending["revision"] + 1)
         pending["reviews"].append(
@@ -138,16 +140,18 @@ def test_publication_review_version_and_interactions(foundation, connection, kin
     assert connection.exec_driver_sql("SELECT count(*) FROM resource_reviews").scalar_one() == 1
 
 
-def test_rejected_resubmission_and_stale_revision(foundation, connection):
+@pytest.mark.parametrize("kind", RESOURCE_TABLES)
+@pytest.mark.parametrize("decision", ["rejected", "needs_changes"])
+def test_rejected_resubmission_and_stale_revision(foundation, connection, kind, decision):
     """旧页面不能覆盖已审核申请，退回重提保留上一轮审核历史。"""
-    repository = ResourceDatabase(foundation, "application")
-    record = draft("application")
+    repository = ResourceDatabase(foundation, kind)
+    record = draft(kind)
     with repository.transaction() as session:
         session.put_publication(record)
     stale = deepcopy(record)
     with repository.transaction() as session:
         pending = session.get_publication(record["id"])
-        pending.update(status="rejected", revision=pending["revision"] + 1)
+        pending.update(status=decision, revision=pending["revision"] + 1)
         pending["reviews"].append(
             {
                 "id": str(uuid4()),
@@ -164,14 +168,26 @@ def test_rejected_resubmission_and_stale_revision(foundation, connection):
     assert error.value.status_code == 409
     with repository.transaction() as session:
         latest = session.get_publication(record["id"])
+        assert latest["status"] == decision
+        assert latest["reviews"][0]["decision"] == decision
+        assert session.list_resources() == []
+        latest.update(status="draft", revision=latest["revision"] + 1)
+        latest["data"]["summary"] = "修改中的资料"
+        session.put_publication(latest)
+    flush_constraints(connection)
+    with repository.transaction() as session:
+        latest = session.get_publication(record["id"])
+        assert latest["status"] == decision
         latest.update(
             status="pending", revision=latest["revision"] + 1, submittedAt=utc_now().isoformat()
         )
         latest["data"]["summary"] = "已补充完整资料"
         session.put_publication(latest)
+        assert latest["submissionNo"] == 2
     flush_constraints(connection)
     with repository.transaction(is_readonly=True) as session:
         latest = session.get_publication(record["id"])
         assert latest["submissionNo"] == 2
         assert len(latest["reviews"]) == 1
+        assert latest["reviews"][0]["decision"] == decision
         assert latest["reviews"][0]["data"]["summary"] != latest["data"]["summary"]

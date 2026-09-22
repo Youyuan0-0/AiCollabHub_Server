@@ -248,6 +248,49 @@ def test_exact_tables_and_chinese_comments(connection):
 
 
 @pytest.mark.parametrize("module", MODULES)
+def test_needs_changes_requires_reason_and_preserves_transition_guards(connection, module):
+    """退回修改必须有意见及一致审核记录，重提必须进入下一轮待审。"""
+    owner = user(connection)
+    publication_id = pending(connection, module, owner)
+    table = module[2] + "_publications"
+    with rejected(connection):
+        review(connection, module, publication_id, owner, "needs_changes", comment=" ")
+    with rejected(connection):
+        update(connection, table, publication_id, review_status="needs_changes", revision=2)
+    review(connection, module, publication_id, owner, "needs_changes", comment="请补充说明")
+    flush_constraints(connection)
+    for status, submission_no in [(None, 1), ("approved", 1), ("rejected", 1), ("pending", 1)]:
+        with rejected(connection):
+            update(
+                connection,
+                table,
+                publication_id,
+                review_status=status,
+                submission_no=submission_no,
+                revision=3,
+            )
+    update(connection, table, publication_id, review_status="pending", submission_no=2, revision=3)
+    flush_constraints(connection)
+
+
+def test_needs_changes_migration_roundtrip_and_history_guard(connection):
+    """空状态可回退再升级；已产生退回修改历史时回退必须整体失败。"""
+    config = Config(str(ROOT / "alembic.ini"), ini_section="resource_foundation")
+    config.attributes["connection"] = connection
+    command.downgrade(config, "20260921_04_knowledge_external")
+    command.upgrade(config, "head")
+    owner = user(connection)
+    publication_id = pending(connection, MODULES[0], owner)
+    review(connection, MODULES[0], publication_id, owner, "needs_changes", comment="补充说明")
+    flush_constraints(connection)
+    with rejected(connection):
+        command.downgrade(config, "20260921_04_knowledge_external")
+    assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == (
+        "20260922_01_review_needs_changes"
+    )
+
+
+@pytest.mark.parametrize("module", MODULES)
 def test_all_modules_publish_and_interact(connection, module):
     owner = user(connection)
     resource_id, _, version_id, _ = published(connection, module, owner)

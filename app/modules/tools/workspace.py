@@ -1,4 +1,4 @@
-"""工具业务流程；复用内存事务和身份规则，不读取或修改数据库。"""
+"""工具业务流程；通过统一仓储事务保存发布、审核和管理操作。"""
 
 import json
 from copy import deepcopy
@@ -247,7 +247,7 @@ class ToolWorkspace:
             while f"v{number}.0" in used:
                 number += 1
             data.version = f"v{number}.0"
-            record = self._save(session, SaveTool(data=data), actor, resource)
+            record = self._prepare_publication(session, SaveTool(data=data), actor, resource)
             record["data"]["version"] = data.version
             record.update(
                 toolId=tool_id,
@@ -262,9 +262,11 @@ class ToolWorkspace:
     ) -> dict:
         """保存本人草稿；手工登记与导入复用同一事务内的保存规则。"""
         with self.repository.transaction() as session:
-            return self._save(session, payload, actor, defaults, record_id)
+            record = self._prepare_publication(session, payload, actor, defaults, record_id)
+            session.put_publication(record)
+            return record
 
-    def _save(
+    def _prepare_publication(
         self,
         session: ResourceSession,
         payload: SaveTool,
@@ -272,6 +274,7 @@ class ToolWorkspace:
         defaults: dict,
         record_id: str | None = None,
     ) -> dict:
+        """校验并组装申请，调用方补齐版本及来源后统一保存一次。"""
         if actor.role not in ("publisher", "admin", "org_admin"):
             raise HTTPException(403, "当前账号没有发布权限")
         previous = self._publication(session, record_id, actor, False) if record_id else None
@@ -331,7 +334,6 @@ class ToolWorkspace:
             "revision": previous["revision"] + 1 if previous else 1,
             "reviews": previous["reviews"] if previous else [],
         }
-        session.put_publication(record)
         return record
 
     def review(self, record_id: str, payload: ReviewTool, actor: Actor) -> dict:
@@ -438,7 +440,7 @@ class ToolWorkspace:
             return record
 
     def listing(self, tool_id: str, payload: ToolListing, actor: Actor) -> dict:
-        """原子更新上下架；不修改原审核结论。"""
+        """原子更新上下架并返回落库后的修订，支持页面连续管理操作。"""
         with self.repository.transaction() as session:
             resource = self._resource(session, tool_id, actor, True)
             ensure_revision(resource, payload.revision)
@@ -447,7 +449,7 @@ class ToolWorkspace:
             self._audit_action(
                 session, resource, actor, "上架" if payload.status == "listed" else "下架"
             )
-            return resource
+        return self.resource(tool_id, actor, True)
 
     def visibility(self, tool_id: str, payload: ToolVisibility, actor: Actor) -> dict:
         """按修订号保存任务约定的开放范围，权限目录校验复用公共逻辑。"""
@@ -462,12 +464,15 @@ class ToolWorkspace:
     def _audit_action(
         self, session: ResourceSession, resource: dict, actor: Actor, action: str
     ) -> None:
+        """保留操作者身份，确保持久化审计归属于实际管理用户。"""
         event = {
             "id": uuid4().hex,
             "toolId": resource["id"],
             "name": resource["name"],
             "organizationId": resource["organizationId"],
             "reviewer": actor.name,
+            "actorId": actor.id,
+            "actorName": actor.name,
             "decision": action,
             "reason": "",
             "createdAt": timestamp(),
@@ -549,7 +554,8 @@ class ToolWorkspace:
                     item
                     for item in session.list_publications()
                     if item["createdBy"] == actor.id
-                    and item.get("externalId") == external_id
+                    and item.get("source", {}).get("externalId", item.get("externalId"))
+                    == external_id
                     and item["data"]["version"] == candidate["version"]
                 ),
                 None,
@@ -578,7 +584,7 @@ class ToolWorkspace:
                 item["version"] for item in previous["versions"]
             }:
                 raise HTTPException(409, "该版本已发布，请在工具链创建新版本后再导入")
-            record = self._save(session, SaveTool(data=data), actor, defaults)
+            record = self._prepare_publication(session, SaveTool(data=data), actor, defaults)
             if previous:
                 record.update(toolId=previous["id"], baseVersion=previous["version"])
             record["externalId"] = external_id
