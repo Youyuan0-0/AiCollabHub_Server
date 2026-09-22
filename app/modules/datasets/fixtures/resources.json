@@ -186,7 +186,7 @@
     "status": "available",
     "badge": "新上线",
     "tone": "teal",
-    "version": "2026.08",
+    "version": "v2.1",
     "facets": {
       "dataApplication": [
         "智能试验"
@@ -255,7 +255,7 @@
     ],
     "versions": [
       {
-        "version": "2026.08",
+        "version": "v2.1",
         "releasedAt": "2026-08-21",
         "status": "current",
         "note": "完成稳定性验证与安全检查。"
@@ -328,7 +328,7 @@
       ]
     },
     "endpoint": "/api/v1/datasets/ds-testbench",
-    "usageExample": "GET /api/v1/datasets/ds-testbench/versions/2026.08/preview",
+    "usageExample": "GET /api/v1/datasets/ds-testbench/versions/v2.1/preview",
     "license": "集团内部数据使用许可 V1.0",
     "securityLevel": "公开",
     "relatedResources": [
