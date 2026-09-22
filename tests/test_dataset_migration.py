@@ -7,11 +7,28 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.modules.datasets.repository import DatasetRepository
+from migrations.legacy_models import DatasetRecord
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class DatasetRepository:
+    """仅用于历史迁移的哨兵记录，业务代码已经不再使用该快照表。"""
+
+    def __init__(self, engine):
+        self.engine = engine
+
+    def save(self, key, data, revision):
+        with Session(self.engine) as session, session.begin():
+            session.add(DatasetRecord(key=key, data=data, revision=1))
+        return data
+
+    def get(self, key):
+        with Session(self.engine) as session:
+            return session.get(DatasetRecord, key).data
 
 
 def migration_config(url):
@@ -103,8 +120,7 @@ def test_merge_head_preserves_both_branch_data(tmp_path, monkeypatch, starting_r
         assert DatasetRepository(engine).get("publication:existing") == saved
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == current_head
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == current_head
             )
             assert connection.scalar(text("SELECT id FROM unrelated_probe")) == 7
     finally:

@@ -137,7 +137,8 @@ class ApplicationService:
                 if (
                     can_manage(actor, item)
                     if is_admin
-                    else visible(actor, item, session.get_visibility(item["id"]))
+                    else item.get("listingStatus", "listed") == "listed"
+                    and visible(actor, item, session.get_visibility(item["id"]))
                 )
             ]
             if warnings is not None:
@@ -293,9 +294,9 @@ class ApplicationService:
             self._validate_version(session, data, record)
         else:
             record = {
-                "id": f"publication-{uuid4()}",
-                "applicationId": f"app-{uuid4()}",
-                "versionId": f"version-{uuid4()}",
+                "id": str(uuid4()),
+                "applicationId": str(uuid4()),
+                "versionId": str(uuid4()),
                 "revision": 0,
                 "createdAt": now,
                 "reviews": [],
@@ -359,7 +360,7 @@ class ApplicationService:
             now = timestamp()
             record["reviews"].append(
                 {
-                    "id": f"review-{uuid4()}",
+                    "id": str(uuid4()),
                     "decision": payload.decision,
                     "reason": payload.reason,
                     "reviewerId": actor.id,
@@ -440,6 +441,23 @@ class ApplicationService:
                         )
             return deepcopy(record)
 
+    def set_listing(self, application_id: str, status: str, revision: int, actor: Actor) -> dict:
+        """启停只影响正式资源可用性，不自动批准申请或扩大可见范围。"""
+        require_admin(actor)
+        with self.repository.transaction() as session:
+            resource = self._resource(session, application_id)
+            if not can_manage(actor, resource):
+                raise HTTPException(403, "无权管理此应用")
+            if resource["revision"] != revision:
+                raise HTTPException(409, "应用已更新，请刷新")
+            resource["listingStatus"] = status
+            if hasattr(session, "save_resource_state"):
+                session.save_resource_state(resource)
+            else:
+                resource["revision"] += 1
+                session.put_resource(resource)
+            return session.get_resource(application_id)
+
     def visibility(
         self,
         application_id: str,
@@ -507,4 +525,9 @@ class ApplicationService:
 
 def application_service(request: Request) -> ApplicationService:
     """取得启动时创建的业务实例，同一后端进程内复用实例及其仓储。"""
+    if (
+        request.app.state.settings.applications_storage == "database"
+        and getattr(request.app.state, "foundation", None) is None
+    ):
+        raise HTTPException(503, "application_storage_requires_postgresql")
     return request.app.state.application_service

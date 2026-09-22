@@ -1,376 +1,143 @@
 # AiCollabHub Server
 
-人工智能协同平台的 FastAPI + SQLAlchemy 后端，包含首页问答、运营看板、统一身份登录和场景应用发布审核。保留用户端、独立管理端、模块化后端及部署基础，其余模块通过 HTTP Mock 接口联通。
+人工智能协同平台的 FastAPI + SQLAlchemy 后端。平台业务已适配 `resource_foundation` 新表结构，开发联调使用 PostgreSQL 测试库；集团 IAM、模型调用、外部工具链及 Token/GPU 计量仍按各自配置使用模拟实现或保持关闭。
 
-部署方式统一为单服务器：一份用户端、一份独立管理端、一个 Nginx 入口、一套多 worker 的 FastAPI 服务，以及 PostgreSQL、Redis、MinIO 各一个实例。所有数据库读写访问同一实例，仓库只维护这套部署方式。
+部署统一为单服务器：用户端和独立管理端各一份构建产物，一个 Nginx 入口，一套多 worker 后端，以及 PostgreSQL、Redis、MinIO 各一个实例。数据库全部读写访问同一实例，不维护主备及读写分离方案。
 
-看板读取数据库快照，未发布板块补充固定样例；会话支持空对话、追加消息、历史及删除并持久化，默认原样回显问题。不调用真实业务系统，服务连接通过健康检查与独立脚本验证。
+## 本地启动
 
-可选的 CAS 登录联调使用模拟 IAM 提供一次性票据，平台用 PostgreSQL 保存共享会话、登录请求与认证日志。最小身份同步支持模拟用户状态和平台管理员授权变更，尚未接入集团身份推送、正式角色映射或完整用户档案，不建设个人资料页。
-
-用户端和管理端通过同一网关使用 `ach_session` HttpOnly Cookie（路径 `/api`），任一端登录后另一端直接沿用身份，管理端仍逐次校验管理员准入。任一端退出、会话过期或收到单点登出通知后，两端同时失效；切换账号同步替换两端身份。兼容旧的分端 Cookie，但不延长旧会话有效期；旧 Cookie 对应不同账号时要求重新选择账号。
-
-后端在后续请求中检查会话有效性；前端在路由切换、获得焦点和可见页面每 30 秒的检查中更新显示。账号状态的后台变化尚未通过实时推送通知浏览器。
-
-场景应用支持两种存储方式：`memory` 为单实例临时演示，`database` 将平台自己的关联、权限、互动、审核补充项、消息和操作记录写入 PostgreSQL 的 8 张场景表。供应方目录、草稿、版本、发布和调用仍为开发模拟；认证模块按独立配置启用。
-
-启用 `AUTH_MODE=mock` 时，`require_business_identity()` 校验会话及写请求的 CSRF，并把可信身份交给 `SessionIdentityProvider`。场景应用据此保存发布者和审核者标识，用户端和管理端分别读取 `/application-session` 与 `/admin/application-session`。此时关闭演示账号切换，不使用演示组织或项目替代尚未接入的 IAM 归属信息。`AUTH_MODE=disabled` 时继续使用原有演示账号。
-
-## 技术与目录
-
-- FastAPI、Pydantic：版本化 API、输入校验和 OpenAPI。
-- SQLAlchemy 2、psycopg 3、Alembic：PostgreSQL 连接池、会话、事务与迁移。
-- redis-py、MinIO SDK：缓存与对象存储适配器。
-- Nginx：两个前端的静态资源、History 路由回退和单个 API 监听端口的反向代理。
-- 达梦适配暂缓，按后续交付要求再启动。
-
-```text
-app/
-  core/                  配置及实例资源生命周期
-  db/                    连接池、会话、事务及持久化模型
-  api/                   版本化路由、健康检查、数据库看板与会话
-  schemas/               看板与会话契约
-  services/              快照聚合、会话存储与回复提供器
-  data/                  看板及历史固定样例
-  cache/                 Redis 客户端
-  storage/               MinIO 客户端
-  modules/
-    datasets/            数据集目录样例
-    models/              模型库目录样例
-    applications/        场景应用目录、发布及工作流演示
-    knowledge/           知识库、原文解析、索引与检索
-    tools/               AI 工具目录与调用样例
-    common/              公共 DTO、样例加载、概览、反馈、申请和发布
-      auth/              CAS 适配、共享会话、认证日志及独立模拟 IAM
-      identity_sync/     最小身份状态、管理员授权、版本处理和同步回执
-    admin/               独立管理端的列表与处理样例
-  main.py                应用工厂
-migrations/              Alembic 基线、看板、会话、认证及身份同步迁移
-compose.yaml             PostgreSQL、Redis、MinIO 单服务器服务模板
-deploy/                  Redis、Nginx 配置模板
-scripts/                 启停、连接验证和备份工具
-tests/                   框架、Mock 契约及基础设施适配器测试
-```
-
-模块采用 `router.py`、`service.py` 和按需拆分的 `schemas.py`；目录型 DTO 和筛选逻辑复用公共模块。场景应用由 `application_service.py` 处理业务规则，`database_repository.py` 组合平台表和开发用外部资料快照，`ports.py` 定义业务存储和供应方适配边界。`memory_repository.py` 保留独立内存演示，该模式需使用 `-Workers 1`，重启后重置。数据库模式在 worker 间共享平台业务记录；认证、身份同步、看板及对话历史也通过同一数据库共享。
-
-## 本地开发
-
-推荐 Python 3.12 或 3.13，当前使用 3.13。运行：
+推荐 Python 3.13。三端仓库按相邻目录放置，前端复用后端仓库 `shared/ui`：
 
 ```powershell
 py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
+.venv/Scripts/python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
 ```
 
-更新或切换分支后，在项目根目录重新同步依赖；Git 更新不会自动更新已有的 `.venv`：
+参考 `.env.example` 填写本地 `.env`：
+
+- `APP_ENV=test`，`AUTH_MODE=mock`。
+- `POSTGRES_HOST/PORT/DB/USER/PASSWORD` 指向已确认的新结构测试库；也支持优先级更高的 `DATABASE_URL`。
+- `REDIS_*` 用于共享登录上下文和外部模拟运行态。
+- `MINIO_*` 指向已创建的 Bucket；平台保存文件元信息，MinIO 保存原件和预览。
+- `AUTH_*` 配置模拟 IAM、浏览器公开来源和共享密钥，参见 [认证说明](deploy/authentication.md)。
+
+真实凭证只放在被忽略的 `.env` 或环境变量中。PostgreSQL 一旦配置，启动即装配新表仓储，不受旧 `APPLICATIONS_STORAGE/DATASETS_STORAGE/KNOWLEDGE_STORAGE=memory` 的影响。缺表或连接错误会明确失败，不自动建表、导入样例或降级为内存成功。无 PostgreSQL 的内存实现只供隔离契约测试，不是完整平台运行方式。
+
+首次建立新结构时，先核对连接目标，再执行：
 
 ```powershell
-# 使用项目虚拟环境和锁定版本，补齐新分支新增的依赖。
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
-.\.venv\Scripts\python.exe -m fastapi dev app/main.py
+.venv/Scripts/python.exe -m alembic -n resource_foundation current
+.venv/Scripts/python.exe -m alembic -n resource_foundation upgrade head
+.venv/Scripts/python.exe -m scripts.verify_services
 ```
 
-若启动时报 `ModuleNotFoundError: No module named 'defusedxml'`，说明当前环境缺少认证模块使用的安全 XML 解析依赖，先执行上述安装命令再启动。该依赖已在 `pyproject.toml` 和 `requirements-dev.lock` 中声明，无需修改认证代码或补建 `__init__.py`。
+这条迁移链只接管空 schema 或自身已有版本，不能直接转换旧业务库。当前共 43 张业务表，最新版本为 `20260921_04_knowledge_external`。默认 `alembic upgrade head`、旧独立会话迁移及 `database/scenario-applications` SQL 属于历史结构，不能对新库执行。切换数据库不是迁移旧记录；本次适配不复制旧库数据、不恢复暂存重构。详见 [新库基线](database/resource-foundation/README.md)。
 
-默认 `APP_ENV=development`、`AUTH_MODE=disabled`。看板和会话需要配置数据库并执行迁移；其余匿名 Mock 接口不依赖外部服务。启用 `AUTH_MODE=mock` 后，看板、会话和其他业务接口都要求有效登录会话，写请求校验 CSRF；需要执行完整迁移并单独运行模拟 IAM。
-
-所有本地配置统一放在项目根目录 `.env`，包括 `POSTGRES_*`、`REDIS_*`、`MINIO_*` 和 `AUTH_*`；数据库和 Redis 支持分项账号密码，兼容显式连接 URL，显式 URL 优先。`.env.example` 是可提交的配置模板，真实密码仅放入忽略的 `.env` 或环境变量。用户端和管理端的 Vite 默认将 `/api` 代理到端口 8000。
-
-场景应用使用已创建的表时，在 `.env` 设置：
-
-```dotenv
-APPLICATIONS_STORAGE=database
-APPLICATIONS_DEMO_DIRECTORY=D:/UGit/AiCollabHub_Server/.runtime/application-marketplace-demo
-```
-
-目录按实际机器调整；同机各 worker 须指向同一绝对路径及数据库。数据库模式复用单库连接池，读写均访问同一数据库，不自动建表，不把缺表或连接失败降级为内存成功。新环境需先执行场景建表 SQL；已建环境不可重复执行。配置在后端下次启动时读取，已有内存演示记录不会自动迁移。
-
-外部模拟资料单独保存在上述目录，数据库仅保存引用和本地业务数据。模拟快照是开发持久化的一部分，清空目录会导致已有模拟草稿/版本无法读取；SQL 回滚可能留下未被引用的快照，不会提前发布。该方式支持同机重启及多进程共享，不代表不同服务器已共享外部资料。真实接入仍需 HiMarket/Agent Dev 适配及联调，不能只换地址。
-
-集团真实 CAS 签名和接入信息尚未提供，因此没有生产认证模式，模拟 IAM 在 production 环境禁止启用。配置 PostgreSQL、执行迁移并构建两套前端后，可使用以下脚本启动认证联调；生成器统一更新根目录 `.env`，保留已有服务凭据和联调密钥。
+完成用户端 `pnpm install --frozen-lockfile`、`pnpm build`，管理端 `npm ci`、`npm run build` 后，在后端启动：
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.configure_mock_auth --gateway-port 18880 --iam-port 18002
-.\scripts\start-local.ps1 -NginxRoot <已解压的Nginx目录> -ApiPort 18000 -Workers 1 -GatewayPort 18880 -MockIamPort 18002
+.venv/Scripts/python.exe -m scripts.configure_mock_auth --gateway-port 18880 --iam-port 18002
+./scripts/start-local.ps1 -NginxRoot <已解压的Nginx目录> -ApiPort 18000 -Workers 2 -GatewayPort 18880 -MockIamPort 18002
 ```
 
-用户端入口为 `http://127.0.0.1:18880/`，管理端为 `/admin/`。API 禁用带查询串的访问日志，避免记录 CAS 票据；停止服务使用 `scripts/stop-local.ps1 -ProcessRecord <启动输出的记录路径>`。
+用户端入口 `http://127.0.0.1:18880/`，管理端 `/admin/`。停止时执行 `scripts/stop-local.ps1 -ProcessRecord <启动输出的记录路径>`。修改后端或 `.env` 后需重启；前端使用 Nginx 托管构建产物时，修改源码后需重新构建。
 
-| 地址 | 用途 |
-| --- | --- |
-| `http://127.0.0.1:8000/docs` | 开发接口文档，Swagger 资源使用上游 CDN |
-| `GET /api/v1/framework` | Mock 模式、当前实例及模块清单 |
-| `GET /api/v1/health/live` | 不依赖外部服务的存活检查 |
-| `GET /api/v1/health/ready` | 数据库连接检查；未配置时返回 503，不代表业务表已迁移 |
-| `GET /api/v1/health/dependencies` | 开发/测试环境的真实服务连接状态 |
+单独调试后端可运行：
 
-Mock 接口只注册在 development/test 环境；数据库看板和会话在 production 返回 503，样例业务路由及依赖诊断不开放。production 要求配置数据库，当前没有正式业务 API。启动不会建表、建桶或调用供应方。
+```powershell
+.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
+```
 
-## HTTP Mock 契约
+接口文档为 `/docs`。`/api/v1/health/live` 检查进程，`health/ready` 检查数据库连接，`health/dependencies` 在开发环境检查数据库、Redis 和 MinIO。生产环境禁止模拟 IAM，不开放本阶段开发业务路由；切换新表不等于正式接口或容量验收。
 
-默认前缀 `/api/v1`，JSON 字段使用 camelCase；响应带 `X-Request-ID`、`X-App-Instance`，开发/测试环境另带 `X-App-Worker` 便于验证进程间会话共享。样例业务接口带 `X-Data-Mode: mock`，数据库看板与会话使用 `X-Data-Mode: development`。场景数据库模式另标记 `X-Data-Mode: development`、`X-Application-Storage: postgresql`，`X-Application-Provider` 随配置为 `simulation` 或 `agent_dev`。认证开关控制会话及 CSRF 校验；认证接口不标记为固定样例数据。
+## 数据与业务
 
-| 路由 | 当前行为 |
-| --- | --- |
-| `GET /datasets`、`/models`、`/applications`、`/tools` | 样例目录，筛选、排序、分页 |
-| `GET /overview/home`、`/overview/operations` | 数据库快照优先，未发布板块返回固定样例 |
-| `/conversations`、`/conversations/new`、`/conversations/{id}/messages` | 用户新会话及旧共享样例，新建、续聊和删除，使用 PostgreSQL 会话表与消息表持久化 |
-| `/conversations/{id}/attachments`、`/conversations/{id}/attachments/{attachmentId}/content` | 上传原文件、按会话权限下载；独立临时文件仓库 |
-| `GET /applications/{id}` | 应用完整详情，包括 Markdown、教程、配置项和限制 |
-| `GET/POST /application-publications`、`GET/PUT /application-publications/{id}` | 查询申请、新建/修改草稿、提交模拟审核；按存储模式保存 |
-| `GET /admin/application-publications` 及详情、`POST .../{id}/review` | 模拟审核；通过后进入模拟目录；数据库模式持久化本地评分和操作 |
-| `GET /admin/applications` 及详情、`PUT .../{id}/visibility` | 应用管理与有效的范围限制；关闭登录时用预置身份，启用后复用公共会话 |
-| `GET /admin/application-review-queue` | 管理端审核查询、状态筛选、分页及数量 |
-| `GET /application-form-configuration`、`GET/PUT /admin/application-configuration` | 表单必填和提示配置、管理列配置；提交校验与页面生效 |
-| `/knowledge-bases` 及其子路径 | 知识库、真实文档上传、分段、索引配置与检索 |
-| `GET/POST /feedback` | 固定反馈列表、模拟提交回执 |
-| `/resources/{id}/invoke`、`/resources/{id}/access-requests`、`/publications` | 模拟调用、申请及发布回执 |
-| `GET /admin/overview`、`GET /admin/feedback`、`PATCH /admin/feedback/{id}` | 管理端概览、筛选分页和模拟处理回执 |
-
-看板 PUT 在完成登录及 CSRF 校验后仍返回 503 `overview_publication_not_configured`，接入可信发布方后再开放。会话数据持久化；登录开启时新会话按用户隔离，旧共享样例保留。
-
-场景应用在数据库模式下保留刷新、重启后的平台业务记录，目录 GET 不会自动把样例导入数据库；内存模式仍在重启后重置。其他模块仍为固定回执，例如用户端反馈不会新增到管理端。目录模块文件只传文件名、大小等元信息；会话附件支持原文件上传与下载，暂不解析或参与回答。场景应用按账号保存收藏、关注新版和评分；其他目录收藏仍是本机演示状态。场景表结构见 `database/scenario-applications/schema.sql`。
-
-这套接口用于验证传参、响应、错误、加载状态和组件交互。后续开发真实业务时再定义领域模型、身份权限、事务、文件状态和供应方适配，不把 Mock 回执当作实际业务验收。
-
-## 基础设施
-
-| 能力 | 项目已有内容 | 当前边界 |
+| 功能 | 新表持久化内容 | 当前外部边界 |
 | --- | --- | --- |
-| PostgreSQL | 单一连接池入口、请求级会话、显式事务、本机持久化提交 | 看板、会话、认证、身份同步及启用后的场景数据库模式持久化 |
-| Redis | 共享客户端、环境前缀、TTL、失败按未命中处理、Compose 模板 | 开发环境可配置真实服务；尚未实现完整业务缓存 |
-| MinIO | 对象上传、读取、删除、大小检查、连接回收 | 基础适配器及服务探测；没有业务文件 API |
-| Web 入口 | 各一份前端静态资源、单个 API 端口与多个 worker | worker 数量按 CPU、连接池和压测结果确定；不自动重试代理请求 |
-| 备份 | 数据库逻辑备份和隔离恢复；指定对象前缀备份及新桶恢复 | 不依赖已移除的业务表；定时独立备份尚未部署 |
+| 五类资源 | 各模块主表、发布申请、版本；共享审核、收藏、评分、关注、下载、范围和配置 | 外部目录、模型与智能体调用按供应方配置，默认模拟或关闭 |
+| 知识库 | 概览与版本、文档原件、逐篇审核及历史 | 分段、向量、索引任务和召回统计不建平台 SQL 表，开发运行态在 Redis；真实工具链未完成联调 |
+| 首页问答 | 用户会话、消息状态、发送幂等键、上下文和附件关系 | 默认回复回显问题，附件尚不参与模型回答 |
+| 首页展示 | 资源统计、互动榜单、推荐、问题建议和公告 | 未配置内容返回空；Token/GPU 运营看板仍为 Mock |
+| 问题反馈 | 反馈内容、回复和处理历史、附件关联；版本冲突和重复提交控制 | 图片及文档本体使用 MinIO |
+| 身份与日志 | 用户、共享会话、身份同步回执、操作日志、系统日志 | 集团正式 CAS 签名、状态映射和推送协议仍待确认 |
+| 个人中心 | 发布、收藏、关注和下载聚合；身份资料从用户表读取 | 联系信息不增加本地编辑存储 |
 
-路由使用 `SessionDependency`，场景仓储从同一引擎建立独立事务，业务服务显式提交。每个 worker 独立建立连接池，数据库最大应用连接数为 `workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)`，另外预留迁移、运维和备份连接。2 万在线用户不对应 2 万条数据库连接，具体容量需按请求类型、耗时与缓存命中率压测。
+主表只保存当前正式资料。待审修改冻结在发布申请中；审核通过时在同一事务固化版本、审核历史及主表概览。首次通过审核仍默认禁用，管理员显式启用后进入公开目录。API 兼容 `listed/unlisted`，数据库保存 `enabled/disabled`。
 
-开发联调默认使用 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`，本地启动脚本默认两个 worker，合计最多 14 条连接；连接占满时请求等待归还连接，超过 `DB_POOL_TIMEOUT` 返回不可用，不会临时无限扩容。共享数据库须计入全部开发实例、工具及运维连接；生产部署须显式规划连接池和 worker 数量并压测。修改 `.env` 后需要重启对应后端进程。
+开放范围为全部用户或指定成员，成员从 `users` 获取，不使用模拟单位或项目作为授权依据。API 身份 ID 仍为 IAM subject，写库时映射为 `users.id` UUID。版本、审核和历史文件引用不可原地覆盖。
 
-PostgreSQL 14+ 的新应用连接设置 `DB_IDLE_SESSION_TIMEOUT=120`（秒），连续普通空闲两分钟后由数据库断开；`0` 关闭此机制。连接池借用前自动检查并重建已失效连接，不会自动重放业务 SQL 或写事务。此设置只作用于本项目新建的连接，不修改共享账号或服务器全局设置，也不改变事务中的空闲超时。健康检查、定时任务也会使用连接，所以不能以“没人打开网页”判断是否连续空闲。`DB_POOL_RECYCLE` 仅在借用时检查连接年龄，不是自动空闲回收。
+会话绑定登录用户。发送前以短事务保存提问、附件和回答占位，事务外调用提供器，再保存结果；相同发送键复用原结果，失败状态保留。中断超过 15 分钟的占位在重新读取时标为失败；已删除会话不接收迟到回复。详见 [会话说明](deploy/conversations-postgresql.md)。
 
-应用连接的 `application_name` 自动包含环境、`INSTANCE_ID`、主机名和进程号，最长 63 字节；名称过长时截短前缀，保留主机和进程号。不同实例可设置不同 `INSTANCE_ID` 以便排查；本项目显式程序名优先于 `PGAPPNAME` 和连接 URL 内的同名参数。旧进程和其他客户端的现有连接不会因此自动清理，仍应由各自维护者关闭不用的实例。
+反馈按同一用户的 `clientRequestId` 防重复提交；管理员保存携带当前 `expectedVersion`，冲突返回 409，不覆盖他人的处理。反馈、事件及附件引用原子更新。
 
-可执行 `python -m scripts.verify_database_pool` 只读检查真实 PostgreSQL：最多占用一条连接，验证池上限、空闲释放、自动重连与复用、查询和事务不受普通空闲超时影响。测试连接临时使用 2 秒空闲超时，约十余秒完成后释放，不修改业务表、账号或数据库全局设置，也不改应用的 120 秒配置。执行时仍需有一个可用的普通连接名额。
+文件使用 `files`、`resource_file_references`、`file_previews` 和模块关联表登记。校验通过后才标为就绪，对象传输不长期占用事务；清理前检查引用并取得租约。历史版本、审核报告和文档原件受引用保护。数据库和 MinIO 须一起规划备份。
 
-应用、迁移及恢复连接使用 `synchronous_commit=local`，等待本机 WAL 落盘后确认提交。显式写事务使用 `DB_STATEMENT_TIMEOUT_MS` 限制语句耗时，锁等待上限为 3 秒；提交遇到断连仍可能返回 `commit_outcome_unknown`，不能直接认定已回滚或盲目重试。身份同步已按事件编号处理幂等，其他正式业务按领域补齐。
+站内个人通知、外部资源映射和本地知识索引三表没有创建。本阶段不为这些能力新增隐含数据表。
 
-`CacheDependency` 未配置时返回 `None`，传输失败按缓存未命中处理；`StorageDependency` 未配置返回 503。适配器均为同步实现，应使用同步路由或工作线程。健康检查会实际访问服务；数据库看板、会话、认证和场景数据库模式也访问数据库。
+## 源码组织
 
-## 数据库迁移
-
-五大模块及共用能力的新表结构使用独立的 `resource_foundation` 迁移入口，当前包含 35 张业务表，详见 [资源数据库基线](database/resource-foundation/README.md)。该入口用于新结构的独立数据库；现有 ORM、接口与页面尚未全部切换，不能直接用新库替换正在运行的业务库。以下默认迁移命令仍对应现有业务结构，两条迁移链不能混用。
-
-数据库可使用 `POSTGRES_HOST/PORT/DB/USER/PASSWORD` 分项配置，兼容 `postgresql+psycopg://` 形式的 `DATABASE_URL`。可选 `POSTGRES_MIGRATION_*` 或 `DATABASE_MIGRATION_URL` 指定同一个数据库的迁移账号；每次发布单独执行一次迁移，不在各 worker 启动时运行。
-
-```powershell
-.\.venv\Scripts\python.exe -m alembic upgrade head
-.\.venv\Scripts\python.exe -m alembic check
-.\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe schema change"
+```text
+app/
+  core/                  配置、资源生命周期及新库服务装配
+  db/                    连接池、事务、身份模型、新基线表访问
+  api/                   路由注册、健康、首页与会话
+  schemas/               首页与会话契约
+  services/              首页聚合、会话仓储、附件与回复编排
+  cache/                 Redis 适配
+  storage/               MinIO、文件登记和清理
+  modules/
+    datasets/            数据集目录、发布、审核、样例下载
+    models/              模型目录、发布、审核
+    applications/        场景应用、教程、资源依赖、发布及体验
+    knowledge/           知识库及文档管理、外部处理适配
+    tools/               AI 工具发布、审核与运行
+    feedback/            问题反馈和管理员处理
+    profile/             个人资料与资源活动聚合
+    common/              共用资源仓储、审核、权限、身份和工具链
+    admin/               管理端概览与日志查询
+migrations/resource_foundation/  当前新库迁移链
+database/resource-foundation/    表结构说明
+deploy/                          单服务器部署模板
+scripts/                         启停、服务检查和备份
+tests/                           契约、权限、迁移和业务持久化回归
 ```
 
-基础迁移链为 `20260913_01`（空基线）→ `20260914_01`（overview_snapshots）→ `20260914_02`（demo_conversations）→ `20260914_03`（认证三表及旧分支兼容）。此后认证兼容标记与会话分表在 `20260915_merge01` 汇合，身份同步及补表分支到达 `20260915_03`，由 `20260915_04` 汇合。场景分支已有的 `20260915_merge02` 汇合身份同步 `20260915_02` 和 `20260915_merge01`。`20260916_01` 将两个分支汇合，后续反馈及认证四表迁移在此基础上继续，保留已有版本号，无需手工 stamp。
+共用仓储 `modules/common/resource_database.py` 对接五个模块的独立表，DTO 转换、互动及文件按职责分文件。`db/foundation.py` 复用连接池，启动反射现有表，不执行 DDL。历史迁移保留用于旧库审计和回归，不参与新库装配。
 
-历史认证与身份同步迁移可执行 `alembic upgrade 20260915_02 --sql` 生成离线 SQL；会话数据搬迁需要读取旧记录，因此完整 `alembic upgrade head` 必须在线执行。`20260915_04` 校验会话表结构，并清理补表分支可能重新创建的空旧表；若新旧表同时存在且旧表有数据，则中止并保留记录供核对。
+## 认证与日志
 
-最早两个分支曾用同一个 `20260914_01` 分别创建看板表和认证三表，`20260914_03` 会补齐缺表并保留已有数据。之后本地与远端分别用 `20260915_01` 和 `20260914_03` 建立了相同结构，因此保留两者编号，实际建表统一由 `20260914_03` 完成，`20260915_01` 只保留版本标记。已有任一版本的数据库执行 `upgrade head` 即可，无需手工 stamp 或删表；从 `20260915_01` 回退到 `20260914_03` 不修改表，继续回退到 `20260914_02` 才删除认证三表。
+两端共用 HttpOnly `ach_session` Cookie，路径 `/api`。任一端登录后另一端沿用身份；管理接口逐次检查管理员角色，写请求验证 Origin 与 CSRF。退出、会话到期、单点登出或停用后，两端均失效。前端在路由切换、恢复焦点和定时检查时更新。
 
-`20260917_01` 在 `20260916_01` 之后创建反馈模块三表；`20260917_auth01` 接在反馈迁移之后，将旧认证/同步六表合并为 `users`、`auth_sessions`、`operation_logs`、`iam_sync_receipts`，登录临时上下文改存 Redis。非空旧库迁移必须先完整备份并指定归档目录，详见 [认证升级与恢复](deploy/authentication.md#升级与恢复)。数据库包含仓库缺失的迁移版本时先补齐来源，不允许 stamp 回退。自动生成迁移继续跳过未在当前 ORM 登记的其他业务表。
+模拟身份同步接口只接受服务端来源密钥。用户与角色分别比较来源时间，重复报文复用回执，旧数据忽略，同时间冲突返回 409；用户、会话撤销、成功日志和回执同事务提交。角色推送不能激活账号，撤权立即限制后续管理请求。正式组织、字典及集团报文适配未完成。五个模拟账号和联调命令见 [认证说明](deploy/authentication.md)。
 
-`20260915_02` 在此之后增加身份状态、角色授权和同步回执三表，并为会话的用户标识增加索引。回退该版本不删除已有登录会话或业务数据。
+操作日志记录成功业务动作；异常、权限拒绝和运行事件进入系统日志。系统日志后台批量写 `system_logs`，级别 INFO/WARNING/ERROR，入库前脱敏；队列满或写库失败时降级到控制台，不改变业务响应。内存队列不能保证进程强制终止时零丢失。
 
-`20260915_03` 补齐部分历史库遗漏的 `demo_conversations` 表，不修改已有会话、认证或身份同步数据。历史迁移编号继续保留，保证已有数据库可直接升级。
+管理端日志页面读取真实表，校验管理员身份，支持筛选、排序和分页。系统详情保留请求编号和受控上下文；页面不会为尚无埋点的业务补日志。
 
-两个分支曾各自提供 `20260915_02`；当前统一保留 `20260915_02_identity_sync.py`，三张身份表结构一致。`20260916_01` 为另一分支的旧库补齐 `ix_auth_session_subject` 索引，已有索引时跳过，不重建身份表。若较早版本的库已手工创建同名身份表，应先核对来源和结构，不能直接 stamp 跳过。该兼容迁移不表示已接入真实 IAM。
+## 连接与部署
 
-`database/migration-alignment-20260915.json` 保留旧分支的历史核对记录，其中脚本路径、摘要及主备状态均指当时版本，不代表当前部署方式或最新迁移状态。本次冲突处理不对共享业务库执行升级。
+数据库单池、每个 worker 独立，应用上限为 `workers × (DB_POOL_SIZE + DB_MAX_OVERFLOW)`。开发默认每 worker 5 条常驻、2 条溢出，两个 worker 最多 14 条，另留迁移和运维额度。池占满后按 `DB_POOL_TIMEOUT` 等待，不能把在线人数等同于连接数。
 
-场景 8 表及 2 视图由独立 `database/scenario-applications/schema.sql` 管理，既有部署记录见该目录的 `deployment-result.json`。新库的 `alembic upgrade head` 不会创建场景表；后续纳入迁移链时须兼容已建结构，不能重复 CREATE 或用 stamp 冒充执行。
+应用 PostgreSQL 连接使用 `synchronous_commit=local`，等待本机 WAL 持久化。提交断连可能返回结果不确定，不能盲目重试；业务使用幂等键核对。`DB_IDLE_SESSION_TIMEOUT=120` 只作用于本项目新连接，借用失效连接时重连，不重放业务事务。
 
-`20260915_chat01` 将旧 `demo_conversations` JSON 搬迁为 `conversations` 和
-`conversation_messages`，保留会话/消息编号、所属用户、顺序、附件元信息及删除标记。
-合并后的完整项目统一使用默认 `alembic upgrade head`。早期通过
-`alembic.conversations.ini` 独立迁移过的数据库也能直接汇入完整迁移链，
-已有会话表先校验结构再接管，保留 `alembic_version_conversations` 历史标记。
-分项 `POSTGRES_*` 配置已支持，完整 `DATABASE_URL` 优先。单库会话复验入口为
-`python -m scripts.verify_conversations_postgresql --env .env`。
-配置、表结构与迁移边界见 [首页会话 PostgreSQL 说明](deploy/conversations-postgresql.md)。
+`scripts.verify_services` 默认只读检查 43 张表、数据库、Redis 和 MinIO；`--write-probes` 创建随机探测对象并清理。`scripts.verify_database_pool` 检查池复用和空闲回收，不改服务器全局参数。
 
-## 单服务器部署
-
-根目录 `.env.example` 是唯一配置模板。复制为忽略的 `.env` 后填写服务密码；本机部署时 `POSTGRES_HOST`、`REDIS_HOST` 均使用 `127.0.0.1`，`REDIS_USER=default`，MinIO Endpoint 对应本机 API 端口。`compose.yaml` 启动 PostgreSQL 17、Redis 和 MinIO，数据使用各自的持久卷，端口默认仅监听本机：
-
-```powershell
-docker compose config --quiet
-docker compose up -d
-.\.venv\Scripts\python.exe -m alembic upgrade head
-.\.venv\Scripts\python.exe -m scripts.verify_services --write-probes
-```
-
-MinIO 的 `MINIO_ROOT_*` 是容器管理账号；在控制台创建 `MINIO_BUCKET` 指定的 Bucket，并配置对应 `MINIO_ACCESS_KEY/SECRET_KEY` 应用凭据。已配置有建桶权限的账号时，也可显式运行 `verify_services --create-bucket`。已有开发服务直接填写连接信息即可，无需再次运行 Compose。
-
-用户端在 `AiCollabHub_User` 中设置 `VITE_ADMIN_URL=/admin/`，执行 `pnpm install --frozen-lockfile`、`pnpm build`；管理端在 `AiCollabHub_Admin` 中设置 `VITE_BASE=/admin/`、`VITE_USER_URL=/`、`VITE_API_BASE_URL=/api/v1` 后执行 `npm ci`、`npm run build`。每个项目仅部署一份 `dist`。本地使用前述 `start-local.ps1`；Linux 服务器运行 `uvicorn app.main:app --host 127.0.0.1 --port 18000 --workers <进程数> --no-access-log`，由 systemd 等进程管理器托管。
-
-Nginx 配置可用 `python -m scripts.render_nginx --nginx-root <目录> --user-dist <用户端dist> --admin-dist <管理端dist> --api-port 18000 --port 18880 --listen-host 0.0.0.0` 生成，执行 `nginx -t` 后加载。生成器在 Windows 默认使用一个 Nginx 进程，Linux 默认按 CPU 自动设置进程数，也可用 `--nginx-workers` 显式指定。每个进程允许 8192 个连接；代理请求还占用上游连接，Linux 的文件描述符限制需配套调整并压测。HTTPS 域名和证书按交付环境补充，启用 HTTPS 时同步调整认证公开地址及 Cookie 配置。该模板不包含正式证书和服务器启动托管设置。
-
-数据库备份使用 `python -m scripts.backup_database --directory <备份目录> --pg-bin <PostgreSQL工具目录>`，工具版本需兼容数据库服务器；加 `--restore-check` 会创建全新的恢复验证库并核对各表行数，需要建库权限。MinIO 备份使用 `scripts/backup_objects.py`，对象恢复到新的 Bucket。备份计划、保留期限和机外副本由部署时配置，单服务器本机副本无法覆盖整机损坏。
+[单服务器部署](deploy/README.md) 说明构建、容器环境和网关。迁移每次发布只运行一次，不随 worker 重复运行。数据库备份使用 `scripts.backup_database`，MinIO 使用 `scripts.backup_objects`，恢复验证使用独立目标。定时备份、机外副本、HTTPS 和容量测试由部署阶段落实。
 
 ## 验证
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format --check .
-node scripts/verify_framework_browser.mjs
-# AUTH_MODE=mock 的网关使用以下登录验证脚本：
-node scripts/verify_auth_browser.mjs
+.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m ruff check app scripts tests migrations
+.venv/Scripts/python.exe -m ruff format --check app scripts tests migrations
 ```
 
-Python 测试覆盖单库配置、提交异常、缓存和对象客户端、各模块 Mock 契约，以及模拟 CAS、共享会话、单点登出、CSRF、迁移。匿名 Mock 契约测试禁止外部服务调用，看板、会话和认证使用独立临时库，迁移测试覆盖历史分支升级、缺表修复及数据保留。浏览器脚本依赖用户端已安装的 Playwright、Chrome 及已启动的网关；框架脚本用于认证关闭的环境，认证脚本验证桌面/手机登录、同页切换、管理端准入、Mock 写请求和同端口多 worker 的会话及登出一致性。可用 `FRAMEWORK_URL`、`API_URL`、`EXPECTED_API_WORKERS` 指定入口和预期 worker 数量。
-
-`scripts.verify_services --write-probes` 实测数据库、Redis 和 MinIO 的写入、读取及删除，并核对 ORM 所需表是否存在；探测使用随机测试数据，结束后清理。框架测试通过不代表已完成正式业务、物理服务器部署或 2 万在线/5000 并发容量验收。
-
-## 系统日志
-
-`20260918_01` 在 `20260917_merge_ds_auth` 之后新增 `system_logs`，记录面向技术运维的运行事件与异常。字段包括 UUID `id`、`level`、`source`、`event`、`message`、可空的 UUID `request_id`、JSONB `details` 和带时区的 `created_at`。`20260918_02` 将级别收敛为 `info/warning/error`，历史 `debug` 归入 `info`、`critical` 归入 `error`，保留日志原文和上下文。回退只放宽约束，不能还原归类前的级别。上下文必须为 JSON 对象，默认 `{}`；时间和非空请求编号分别建立索引，同一请求可关联多条日志。
-
-配置数据库后，FastAPI 生命周期内的 `app.*` 日志从 INFO 级别起自动写入此表，原控制台输出继续保留。CRITICAL 入库时归入 ERROR。登录失败、身份同步结果、数据库/缓存/文件服务告警、权限拒绝和未捕获异常均可记录；正常访问日志、DEBUG 日志及第三方库的日志不自动入库。请求内日志沿用 `X-Request-ID`，后台日志可不带请求编号。新增事件可通过标准 logger 的 `extra={"event": "事件编码", "details": {...}}` 提供上下文。
-
-每个 worker 使用容量 1000 的内存队列，后台最多 50 条一批，复用原连接池并用独立短事务提交，不占用额外连接池，也不随业务事务回滚。队列满或写库失败时输出已脱敏快照到 `system_log_fallback`，不改变业务响应；失败后 5 秒内仅输出日志，随后新日志恢复尝试入库。不自动重试结果不确定的批次，避免重复记录。正常停机最多等待 10 秒排空队列；内存队列不保证强制结束进程时的日志持久化，降级期间的控制台记录不会自动回补数据库。
-
-入库前隐藏凭据字段、原始请求正文、认证头及 URL，限制上下文深度和大小；异常仅记录类型与调用位置，不保存异常原文、源码行或局部变量。调用方仍须使用受控摘要，不主动输出原始请求或凭据。日志只追加；保留期限及定时清理另行实现。先执行 `alembic upgrade head` 再启动新版后端，未建表时采集会降级到控制台，不在启动时自动建表。
-
-管理端 `/admin/logs/operations`、`/admin/logs/system` 提供真实日志查询，使用 `/api/v1/admin/logs` 下的 `options`、`operations`、`system` 及 `system/{id}` 详情接口。每次请求校验有效管理员会话；关闭认证的匿名演示环境也禁止读取日志。接口只读，默认最近 24 小时，指定区间最多 90 天。操作日志为列表，动作及对象选项直接来自持久化模型枚举；`operator=admin/iam` 分别筛选当前管理员的用户操作或集团 IAM 操作，不能把所有 `actor_type=user` 的记录视为管理员。两类日志均支持 `sortOrder=asc/desc`，按发生时间、日志编号同向排序后分页，默认倒序。操作人显示当前身份资料，姓名及管理员筛选均不是历史角色快照。系统日志另支持级别、来源及 `requestId` 精确查询；精确请求查询可不传时间，详情再次脱敏。此查询页面不新增各业务模块的操作埋点。
-
-## 最小身份同步
-
-仅在 `AUTH_MODE=mock` 的开发/测试环境开放 `POST /api/v1/auth/mock/identity-sync`。使用后端的 `X-Mock-IAM-Key` 验证模拟来源，普通用户或管理员的浏览器 Cookie 都不能代替此密钥。接口采用平台内部事件格式，不能直接接收集团报文。
-
-| 表 | 保存内容 |
-| --- | --- |
-| `users` | 平台 UUID、唯一 `iam_subject`、姓名、状态、`user/admin` 角色、用户/角色同步时间及创建/更新时间 |
-| `auth_sessions` | 关联用户 UUID 的共享会话、令牌/票据摘要、期限及撤销状态；包含提前登出票据标记 |
-| `operation_logs` | 成功操作的发起方、动作、对象、请求 UUID 及受控摘要；失败进入系统日志 |
-| `iam_sync_receipts` | 回执 UUID、规范化业务摘要、资源类型、动作、IAM `syncTime` 和本地创建时间 |
-
-只保存最小用户资料，不保存完整人员档案或组织树。首次模拟登录可按配置初始化管理员；已同步的授权或撤权优先，后续权限校验读取用户表。角色先到时创建 `pending` 用户，不能单凭角色事件激活。尚无状态同步且通过模拟 IAM 验票时才允许激活，此规则不适用于尚未实现的正式认证。资料、状态和角色变化时更新 `updated_at`，重复推送或仅推进同步时间不刷新它。
-
-请求包含 `appId=platform`、`resType`、`action`、`syncTime` 和最多 100 条 `data`，报文上限 64 KiB，不再要求或接受假设的 `eventId`。用户事件使用 `resType=user`，每项为 `subject`、`status=active/disabled/deleted` 和可选 `displayName`；角色事件使用 `resType=userlinkedrole`，每项为 `subject`、内部能力码 `roleCode=platform_admin` 和 `status=authorized/unauthorized`。`action=recycle` 强制停用账号或撤销该角色，不受报文中原状态影响。`syncTime` 原样保存，模拟发送器使用毫秒时间戳；正式协议单位待确认。用户与角色分别比较来源时间，不用请求到达顺序排序。
-
-按已校验的业务字段规范化 JSON 并计算 SHA-256 去重：对象键排序、数组顺序保留，不包含密钥或 HTTP 请求编号。相同报文返回同一 `receiptId` 并标记 `duplicate=true`。旧时间戳忽略，同时间戳同内容不变，同时间戳内容冲突返回 409 `sync_version_conflict`。批次内任一冲突整体回滚，用户、会话撤销、成功日志和回执不会部分生效。未知用户的停用或撤权也保留状态及来源时间，防止迟到推送恢复权限。
-
-停用、注销或回收用户会撤销该用户全部平台会话，并阻止再次登录；之后重新启用必须重新登录，旧会话不会恢复。撤销管理员角色立即限制后续管理端请求，保留用户端会话；两端通过现有会话检查更新界面。登录回调和同步推送锁定同一身份行，避免停用之后迟到的回调重新建立会话。已在停用提交前通过权限检查的在途业务请求不在本轮强制中止范围内。
-
-成功响应在单库事务提交后返回，字段为 `receiptId/resultCode/resultMsg/resType/syncTime/duplicate`，不重复持久化处理统计。若收到 503 `commit_outcome_unknown` 或连接中断，用同一业务报文和 `syncTime` 重试。已获得编号时可通过 `GET /api/v1/auth/mock/identity-sync/{receiptId}` 查询，来源密钥要求相同。
-
-本地模拟推送命令会先将不含密钥的事件保存至忽略的 `.runtime/identity-sync/`，再使用根目录 `.env` 的配置发送：
+默认测试不连接远端。PostgreSQL 回归须显式配置 `RESOURCE_FOUNDATION_TEST_DATABASE_URL`，指向允许创建 schema 的独立测试库，然后运行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-user --status disabled
-.\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-user --status active
-.\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-admin --resource userlinkedrole --status unauthorized
-.\.venv\Scripts\python.exe -m scripts.mock_identity_sync --subject mock-admin --resource userlinkedrole --status authorized
-# 失败重试必须使用原业务报文，不重新生成 syncTime：
-.\.venv\Scripts\python.exe -m scripts.mock_identity_sync --retry <上次输出的事件文件路径>
+.venv/Scripts/python.exe -m pytest tests/test_resource_foundation.py tests/test_resource_support.py tests/test_home_knowledge_schema.py tests/test_knowledge_scope_migration.py tests/test_foundation_resource_storage.py tests/test_foundation_module_flows.py tests/test_foundation_models.py tests/test_foundation_home_feedback.py tests/test_home_database.py tests/test_feedback.py -q
 ```
 
-集团 `CAS user/id`、`workNo`、`userNo` 的对应关系、状态值含义、角色编码及组织任职范围尚待确认；特别是文档中 `3000=停用` 与 `>=2000=有效` 的冲突不在本轮猜测处理。组织/字典全量同步、集团签名、真实 IAM 接收适配和同步管理页面未实现。身份状态、撤权记录与同步回执暂不自动清理，不能随会话过期删除后回退到模拟默认权限。
+这些测试在随机 schema 和外层事务中运行，不修改 public 记录；页面联调另用明确标记的测试资料。前端分别执行构建、已有测试和改动文件格式检查。功能回归不等于 2 万在线、5000 并发容量验收。
 
-`tests/test_identity_sync.py` 覆盖模拟接口与事务；`tests/test_identity_sync_postgresql.py` 仅在显式提供 `IDENTITY_SYNC_TEST_DATABASE_URL` 时运行，使用可写 PostgreSQL，在随机独立 Schema 中验证重复推送、乱序、批次回滚，以及登录与停用的双向并发顺序，完成后清理该 Schema。
-
-本地网关的浏览器联调可设置 `VERIFY_IDENTITY_SYNC=1` 后运行 `node scripts/verify_auth_browser.mjs`，在原有登录验证上增加管理员撤权、旧推送拦截、双端停用和重新登录检查。该模式会临时变更模拟管理员的状态，验证结束后恢复可用；密钥只在验证进程使用。
-
-`test_application_database_storage.py` 另有 10 项数据库集成测试，覆盖重启、重提历史、权限/配置共享、审核回滚、通知、运行/下载/同步去重、缺表报错和中断请求。只允许显式指定的本机 `55491` 端口 PGlite 隔离实例；测试会校验引擎并重置该实例，未配置时跳过，不读取项目远端连接。2026-09-15 在隔离实例下全套 **240 项通过**；PGlite 的多连接测试不等于真实 PostgreSQL 并发容量验证。另在远端真实表验证写入与新仓储读取，使用外层事务全部回滚，未提交测试业务记录。
-
-## 数据库看板与多轮会话
-
-首次合并后安装 `python -m pip install -e ".[dev]" -c requirements-dev.lock`，以补齐
-FastAPI 标准依赖与 Redis、MinIO、PostgreSQL 驱动；然后配置数据库并执行迁移。
-也可使用 `fastapi dev`，入口由 `pyproject.toml` 声明。
-
-登录开启时新会话绑定用户，旧共享样例仍可读取；匿名开发继续共享。`create_app(chat_provider=...)` 可注入
-第三方回复实现，默认回显；完整消息通过 `/conversations/{id}/messages` 读取。
-首页附件先通过独立接口上传，发送多轮 JSON 时携带 `attachmentIds`，历史可展示和下载原文件；暂不解析或参与回答。
-会话与消息已适配 PostgreSQL 分表存储；附件原文件仍默认落盘 `.runtime/attachments`，可通过 `CONVERSATION_ATTACHMENT_DIR` 指定共享目录。
-附件契约与保留规则见 `app/api/conversations.py` 和 `app/services/attachment_store.py`；数据库迁移不搬迁附件原文件。
-数据库未配置、未迁移或不可用均返回错误，不回退成无状态 Mock。
-
-## 知识库模块
-
-管理端目录展示开放范围并提供直接管理入口；详情支持全集团、指定单位、指定成员、项目组内，
-选择对象沿用数据集和场景应用的可信目录。保存携带当前修订，冲突保留草稿；放弃范围修改不影响资料草稿。
-管理员创建和更新时，所属单位与联系人为必填；这些展示信息不会改变系统记录的组织归属。
-开放范围、联系人、数据分级和范围管理能力仅返回管理端，用户端列表、详情、分段和召回均校验访问权限。
-
-知识库已从固定样例接口切换为独立业务存储，用户端 `/knowledge` 与管理端
-`/admin/knowledge` 共用后端 `/api/v1/knowledge-bases` 及
-`/api/v1/admin/knowledge-bases`，沿用登录、CSRF、可信组织归属与修订冲突处理。
-本轮对应任务表中的知识库检索、创建、卡片、分页、文档、分段、召回及后台维护项，
-并按一期任务 2.2.6、元数据对照表第四节隔离字段。版本历史记录维护操作；
-新增创建审批和文档审批，使用 `pending / approved / rejected / needs_changes`，与索引状态独立。
-创建后自动送审，待审或退回知识库仅创建者和有权管理员可见；即使开放范围为全集团也不提前公开。
-文档上传后保存原文并送审，不解析索引；管理员可读取纯文本预览或下载原文检查，批准后才增量索引。
-待审、驳回及补充材料的文档不进入普通读者的文档列表、数量、容量、分段或召回。
-创建申请退回后可修改再提交；文档退回后按意见修订原文、删除旧件再上传送审，审核记录仍保留旧件名称和意见。
-管理员创建、上传也进入同一审批流程；没有审批字段的历史记录保持原有访问并标注历史来源，不伪造审核记录。
-后台提供创建审核、文档审核、审核记录页签，沿用场景应用页头、状态徽章、筛选、分页和审核表单。
-审批及历史与知识库快照原子持久化，复用当前修订和管理端 CSRF；过期或重复审批返回 409。
-
-- 用户端支持名称/简介检索、卡片分页、创建、真实上传、文档删除、分段预览、配置和重建、召回测试。
-  新建默认仅创建者及有权管理员可见。数据分级、联系人、开放范围、版本和运营统计仅在后台返回。
-- 文档审批通过后采用增量构建，保留当前配置下已就绪的分段和向量；两端均支持按文档名与状态筛选、
-  文档分页、处理进度，以及只重试未完成文档。`POST .../rebuild` 可提交 `failedOnly: true`；
-  未指定时仍执行完整重建。修改索引配置会使相关文档全部待重建，部分重试不会复用失效索引。
-  进度按文档计数，已处理包含成功与失败，不代表模型内部计算百分比。召回期间仍要求整库索引就绪。
-  用户端召回测试使用已保存索引配置，临时检索方式不会修改配置草稿。
-- 管理端支持新建、完整资料修改、文档管理、范围选择、分段和召回测试、版本记录及自动采集的
-  文档数、原文件容量、索引构建耗时、平均召回耗时和请求成功率。显示单位不作为授权依据。
-- 支持 PDF、DOCX、XLSX、XLS、TXT、Markdown。旧版 DOC 须先转为 DOCX；扫描 PDF 需先完成 OCR。
-  单个及单批原文不超过 100MB，每批最多 20 个，每库最多 500 个文档、20000 个分段，
-  单文档提取文字不超过 200 万字符。空文件、同名文件、损坏或加密资料明确报错。
-- 自动分段优先段落和标点边界，另有按段落及固定长度模式。大小 100–2000 字符，
-  重叠 0–500 且小于大小，Top-K 1–20，阈值 0–1。修改索引方式、模型或分段配置会清空旧索引，
-  必须重建后才能召回。旧中文分段枚举兼容读取，不表示实现了模型驱动的语义切分。
-- 经济模式采用本地 BM25 全文检索。高质量模式调用 OpenAI 兼容 Embedding 端点，
-  保存真实向量并执行余弦检索；混合检索结合关键词和向量分数，重排序调用独立 rerank 端点。
-  模型服务未配置或失败时明确报错，不回退演示片段。当前向量检索为有上限的线性计算，
-  尚未接入 Milvus/Faiss，也未将本模块接入智能问答 RAG 流程。
-
-安装依赖并在开发/联调环境启用持久化：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c requirements-dev.lock
-# 设置 KNOWLEDGE_STORAGE=database，配置平台已有 DATABASE_URL / POSTGRES_*。
-# 由部署者明确执行迁移，应用启动不会自动建表。
-.\.venv\Scripts\python.exe -m alembic upgrade head
-```
-
-新增迁移 `20260920_01_knowledge` 只创建 `knowledge_records`。默认
-`KNOWLEDGE_STORAGE=memory` 仅供开发，重启后不保留元数据。数据库模式使用已有连接池，
-原文件须持久化 `KNOWLEDGE_DOCUMENT_DIR`（默认 `.runtime/knowledge-documents`），
-多进程必须共用同一目录，备份时同时备份数据库与原文件。索引任务在应用进程后台执行，
-当前不是外部持久队列；中断任务 15 分钟未更新后显示失败，可手动重建。
-容量统计为原文件总字节数，不包含 JSON 快照和向量的数据库占用。
-本模块沿用数据集和场景应用的现有环境边界，`APP_ENV=production` 不挂载开发业务路由。
-
-更新模块后须重启未开启热重载的后端进程，仅刷新前端不会加载新接口。
-若创建显示成功但目录没有记录、后台目录返回 404，请检查实际代理目标的 OpenAPI 是否包含
-`/api/v1/admin/knowledge-bases`；旧版本用户接口只返回模拟创建回执，不保存记录。
-内存模式的知识库数据仅在当前单个后端进程内保留，不能用于多 worker 共享；
-启用登录时，认证仍依赖平台数据库，知识库内存模式不会绕过数据库维护期间的认证故障。
-
-向量服务配置完整 `KNOWLEDGE_EMBEDDING_URL`（例如内部服务 `/v1/embeddings`）；
-重排序配置完整 `KNOWLEDGE_RERANK_URL` 和 `KNOWLEDGE_RERANK_MODEL`。
-可选 `KNOWLEDGE_MODEL_KEY` 只由后端持有。返回协议分别为 OpenAI 的
-`data[{index,embedding}]` 和兼容重排序的 `results[{index,relevance_score}]`，
-后者要求每个候选项返回 0–1 分数。召回只累计耗时、请求数和成功数，不永久保存问题和结果。
-成功率表示请求正常执行的比例，空结果也算正常执行，不代表答案准确率。
-
-回归测试：`python -m pytest tests/test_knowledge.py tests/test_mock_api.py`，覆盖真实文本、
-Office 解析、权限、CSRF、持久化、迁移、并发修订、索引失效、模型错误和恢复。
-
-## 维护说明
-
-[代码规范](docs/AiCollabHub-代码规范.md)、[单服务器部署](deploy/README.md)、[场景应用源码](app/modules/applications/README.md) 随工程维护。历史联调、交付校验和阶段材料统一移至工程外 `D:/UGit/_archive/`；`.runtime` 中保留正在使用的服务与业务数据，测试及构建产物按忽略规则管理。
+代码约定见 [项目代码规范](docs/AiCollabHub-代码规范.md)、[资源主表设计](docs/AiCollabHub-资源主表设计.md) 和 [场景应用源码说明](app/modules/applications/README.md)。

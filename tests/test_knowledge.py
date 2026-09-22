@@ -727,28 +727,6 @@ def test_unexpected_worker_failure_exposes_retryable_documents(client, monkeypat
     assert client.get(path).json()["status"] == "ready"
 
 
-def test_database_service_reopens_uploaded_documents(tmp_path):
-    """两个应用生命周期共享数据库及原文目录，重启后仍能读取分段并重建。"""
-    url = f"sqlite:///{tmp_path / 'workspace.db'}"
-    engine = create_engine(url)
-    KnowledgeRecord.__table__.create(engine)
-    settings = Settings(
-        database_url=url, knowledge_storage="database", knowledge_document_dir=tmp_path / "files"
-    )
-    with TestClient(create_app(settings)) as first:
-        base = upload(first, create(first))
-    with TestClient(create_app(settings)) as second:
-        path = ROOT + "/" + base["id"]
-        restored = second.get(path).json()
-        assert restored["documentCount"] == 1 and restored["chunkCount"] == 1
-        assert (
-            second.post(path + "/rebuild", json={"revision": restored["revision"]}).status_code
-            == 202
-        )
-        assert second.get(path + "/chunks").json()["items"][0]["text"].startswith("涡轮")
-    engine.dispose()
-
-
 def test_inflight_retrieval_metrics_do_not_break_index_job(client, monkeypatch):
     """重建开始前发起的召回可在构建期间结束，其统计更新不能使索引进度覆盖或失败。"""
     service = client.app.state.knowledge_service

@@ -5,7 +5,6 @@ from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
@@ -15,7 +14,7 @@ from app.modules.common.identity import ACTORS, Actor
 from app.modules.datasets.admin_schemas import DatasetAuditQuery, DatasetReviewQuery, ReviewDataset
 from app.modules.datasets.admin_service import DatasetAdminService
 from app.modules.datasets.publishing import ExternalDatasetPublisher
-from app.modules.datasets.repository import DatasetRecord, DatasetRepository
+from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.schemas import DatasetInput, SaveDataset
 from app.modules.datasets.workspace import DatasetWorkspace
 
@@ -179,13 +178,9 @@ def test_queue_validation_and_draft_readonly(client, data):
     assert client.get(path, params={"status": "", "page": 99}).json()["items"] == []
 
 
-@pytest.mark.parametrize("database", [False, True])
-def test_organization_permissions_atomic_review_and_reopen(tmp_path, data, database):
-    """内存及数据库模式均隔离组织；并发审核仅成功一次，重启后保留审核快照。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'admin.db'}") if database else None
-    if engine is not None:
-        DatasetRecord.__table__.create(engine)
-    repository = DatasetRepository(engine)
+def test_organization_permissions_atomic_review_and_reopen(data):
+    """内存替身验证组织隔离和并发审核；持久化测试使用新 PostgreSQL 基线。"""
+    repository = DatasetRepository()
     workspace = DatasetWorkspace(repository)
     admin = DatasetAdminService(workspace)
     record = workspace.save(SaveDataset(data=DatasetInput(**data), submit=True), ACTORS[0])
@@ -226,14 +221,12 @@ def test_organization_permissions_atomic_review_and_reopen(tmp_path, data, datab
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(lambda _: review_once(), range(2))) == [200, 409]
-    reopened = DatasetAdminService(DatasetWorkspace(DatasetRepository(engine))) if engine else admin
+    reopened = admin
     result = reopened.publication(record["id"], ACTORS[4])
     assert result["revision"] == 2 and len(result["reviews"]) == 1
     assert result["syncStatus"] == "local_published"
     assert reopened.workspace.resource(record["datasetId"])["id"] == record["datasetId"]
     assert reopened.audit(DatasetAuditQuery(), ACTORS[3])["total"] == 1
-    if engine:
-        engine.dispose()
 
 
 def test_http_admin_permission_for_all_endpoints(client):

@@ -3,13 +3,12 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
 
 from app.modules.common.identity import ACTORS
-from app.modules.datasets.repository import DatasetRecord, DatasetRepository
+from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 
 DATASET = "ds-fault-v3"
@@ -101,13 +100,9 @@ def test_rating_requires_login_and_csrf(auth):
     assert client.put(PATH + "/rating", json={"rating": 4}, headers=csrf(client)).status_code == 200
 
 
-@pytest.mark.parametrize("database", [False, True])
-def test_rating_coexists_with_activity_and_survives_reopen(tmp_path, database):
-    """并发评分和收藏不覆盖各自字段，数据库重建工作区后仍返回已保存评分。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'ratings.db'}") if database else None
-    if engine:
-        DatasetRecord.__table__.create(engine)
-    workspace = DatasetWorkspace(DatasetRepository(engine))
+def test_rating_coexists_with_activity_and_survives_reopen():
+    """并发评分和收藏不覆盖各自字段，持久化由新库集成测试验证。"""
+    workspace = DatasetWorkspace(DatasetRepository())
     actor = ACTORS[0]
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [
@@ -117,8 +112,6 @@ def test_rating_coexists_with_activity_and_survives_reopen(tmp_path, database):
         for future in futures:
             future.result()
     workspace.download_sample(DATASET, actor)
-    if engine:
-        workspace = DatasetWorkspace(DatasetRepository(engine))
     assert workspace.rating(DATASET, actor) == {
         "rating": 4,
         "comment": "",
@@ -127,8 +120,6 @@ def test_rating_coexists_with_activity_and_survives_reopen(tmp_path, database):
     }
     resource = workspace.resource(DATASET, actor)
     assert resource["favoriteCount"] == 1 and resource["downloadCount"] == 1
-    if engine:
-        engine.dispose()
 
 
 def test_rating_comments_replace_and_remain_private_after_scope_revocation(client):

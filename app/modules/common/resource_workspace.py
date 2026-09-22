@@ -17,7 +17,7 @@ from app.modules.common.service import timestamp
 class ResourceVisibility(ScopeTargets):
     """新资源只配置集团、单位或项目范围，修订号防止旧页面覆盖。"""
 
-    scope: Literal["all", "organizations", "projects"] = "all"
+    scope: Literal["all", "members", "organizations", "projects"] = "all"
     revision: int = Field(ge=1)
 
     @model_validator(mode="after")
@@ -96,6 +96,11 @@ class ResourceWorkspace:
                     "favorite", False
                 )
             return result
+
+    def find_resource(self, resource_id: str) -> dict | None:
+        """向模块提供当前版本副本，避免调用方直接依赖内存字典。"""
+        with self.lock:
+            return deepcopy(self.resources.get(resource_id))
 
     def catalog(self, actor: Actor, admin: bool = False) -> list[dict]:
         """按权限过滤后返回副本，分页和统计均在过滤之后进行。"""

@@ -13,7 +13,9 @@ from app.modules.applications.publication_schemas import (
 )
 from app.modules.common.catalog import query_resources
 from app.modules.common.identity import current_actor, require_admin
+from app.modules.common.resource_admin import ListingInput
 from app.modules.common.schemas import CatalogQuery
+from app.modules.common.visibility import visibility_directory
 
 router = APIRouter(prefix="/admin", tags=["admin (mock)"])
 
@@ -31,7 +33,19 @@ def applications(request: Request, query: Annotated[CatalogQuery, Query()]) -> d
 @router.get("/applications/{application_id}", response_model=None)
 def application(application_id: str, request: Request) -> dict:
     """读取有权管理的应用详情与运行状态。"""
-    return application_service(request).admin_resource(application_id, current_actor(request, True))
+    actor = current_actor(request, True)
+    return {
+        **application_service(request).admin_resource(application_id, actor),
+        "visibilityDirectory": visibility_directory(request, actor),
+    }
+
+
+@router.put("/applications/{application_id}/listing", response_model=None)
+def application_listing(application_id: str, payload: ListingInput, request: Request) -> dict:
+    """独立启停场景应用，保留发布审核和版本记录。"""
+    return application_service(request).set_listing(
+        application_id, payload.status, payload.revision, current_actor(request, True)
+    )
 
 
 @router.get("/application-publications", response_model=None)
@@ -69,10 +83,16 @@ def application_visibility(
     request: Request,
 ) -> dict:
     """保存应用开放范围，由业务服务检查管理权限及并发冲突。"""
-    from app.modules.common.identity_directory import validate_visibility_targets
+    from app.modules.common.identity_directory import (
+        validate_visibility_targets as validate_mock_targets,
+    )
+    from app.modules.common.visibility import validate_visibility_targets
 
     actor = current_actor(request, True)
-    validate_visibility_targets(request, actor, payload)
+    if getattr(request.app.state, "foundation", None) is not None:
+        validate_visibility_targets(request, actor, payload)
+    else:
+        validate_mock_targets(request, actor, payload)
     return application_service(request).visibility(application_id, payload, actor)
 
 

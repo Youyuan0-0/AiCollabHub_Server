@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.db.session import SessionDependency
+from app.modules.common.identity import current_actor
 from app.schemas.overview import (
     BudgetInput,
     ComputeAnalysis,
@@ -19,7 +20,8 @@ from app.schemas.overview import (
     TokenDimension,
     TokenPeriod,
 )
-from app.services.overview import get_home, get_operations, save_snapshot
+from app.services.home_database import home_overview as database_home
+from app.services.home_database import mock_operations
 
 # 会话检查在路由挂载时接入；统计发布仍须等待可信发布方，普通登录不能开放写入。
 router = APIRouter(
@@ -61,10 +63,9 @@ RankingPeriodQuery = Annotated[RankingPeriod, Query(alias="rankingPeriod", descr
 def home_overview(request: Request, session: SessionDependency) -> HomeOverviewResponse:
     """返回资源数量、Token、算力、推荐、动态、场景、问题建议和七类首页榜单。"""
     # 仅服务端非生产环境可补充固定样例，生产请求不能通过查询参数启用。
-    return get_home(
-        session,
-        use_demo=getattr(request.app.state, "app_env", "production") in {"development", "test"},
-    )
+    if getattr(request.app.state, "foundation", None) is None:
+        raise HTTPException(503, "overview_storage_requires_postgresql")
+    return database_home(request.app.state.foundation, current_actor(request))
 
 
 @router.get(
@@ -82,14 +83,7 @@ def operations_overview(
     ranking_period: RankingPeriodQuery = "周榜",
 ) -> OperationsOverviewResponse:
     """筛选值与前端一致；非法值返回 422，非生产缺失板块返回原前端固定样例。"""
-    return get_operations(
-        session,
-        token_period,
-        token_dimension,
-        ranking_type,
-        ranking_period,
-        use_demo=getattr(request.app.state, "app_env", "production") in {"development", "test"},
-    )
+    return mock_operations(token_period, ranking_type)
 
 
 @router.put(
@@ -100,7 +94,7 @@ def operations_overview(
 )
 def update_home(data: HomeOverview, session: SessionDependency) -> SnapshotReceipt:
     """data 为完整首页数据，数组顺序即展示顺序；本阶段计数由可信统计方录入。"""
-    return save_snapshot(session, "home", "default", data)
+    require_overview_write()
 
 
 @router.put(
@@ -116,7 +110,7 @@ def update_token(
     token_dimension: TokenDimensionQuery = "组织",
 ) -> SnapshotReceipt:
     """只替换选中的周期与维度，其他组合保持原值；不按固定倍率伪造日周统计。"""
-    return save_snapshot(session, "token", f"{token_period}:{token_dimension}", data)
+    require_overview_write()
 
 
 @router.put(
@@ -127,7 +121,7 @@ def update_token(
 )
 def update_compute(data: ComputeAnalysis, session: SessionDependency) -> SnapshotReceipt:
     """更新节点负载、汇总及资源池；本阶段由监控适配器或运营方主动推送。"""
-    return save_snapshot(session, "compute", "default", data)
+    require_overview_write()
 
 
 @router.put(
@@ -138,7 +132,7 @@ def update_compute(data: ComputeAnalysis, session: SessionDependency) -> Snapsho
 )
 def update_budget(data: BudgetInput, session: SessionDependency) -> SnapshotReceipt:
     """只接受已用金额、限额和预警阈值，查询时统一计算预算使用率及提示。"""
-    return save_snapshot(session, "budget", "default", data)
+    require_overview_write()
 
 
 @router.put(
@@ -154,4 +148,4 @@ def update_rankings(
     ranking_period: RankingPeriodQuery = "周榜",
 ) -> SnapshotReceipt:
     """每行是名称与指标，按请求顺序发布；空数组可清空选中榜单。"""
-    return save_snapshot(session, "rankings", f"{ranking_type}:{ranking_period}", data)
+    require_overview_write()

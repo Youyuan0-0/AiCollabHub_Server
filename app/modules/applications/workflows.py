@@ -104,7 +104,9 @@ class ApplicationWorkflows:
     ) -> dict:
         """读取指定身份可见的资源，无权访问时按不存在处理。"""
         resource = self.service._resource(session, application_id)
-        if not visible(actor, resource, session.get_visibility(application_id)):
+        if resource.get("listingStatus", "listed") != "listed" or not visible(
+            actor, resource, session.get_visibility(application_id)
+        ):
             raise HTTPException(404, "应用不存在或当前账号不可见")
         return resource
 

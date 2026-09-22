@@ -2,11 +2,10 @@
 
 import json
 
-from sqlalchemy.orm import Session
-
 from app.core.config import Settings
 from app.core.resources import create_resources
-from app.modules.feedback.attachments import cleanup
+from app.db.foundation import FoundationDatabase
+from app.storage.maintenance import cleanup_files
 
 
 def main() -> None:
@@ -16,8 +15,11 @@ def main() -> None:
     try:
         if resources.database is None or resources.storage is None:
             raise SystemExit("请先配置数据库与 MinIO")
-        with Session(resources.database, expire_on_commit=False) as db:
-            print(json.dumps(cleanup(db, settings, resources.storage)))
+        print(
+            json.dumps(
+                cleanup_files(FoundationDatabase(resources.database, settings), resources.storage)
+            )
+        )
     finally:
         resources.close()
 

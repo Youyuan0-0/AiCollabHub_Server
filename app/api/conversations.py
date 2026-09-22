@@ -27,6 +27,8 @@ from app.schemas.conversations import (
 )
 from app.services import conversations
 from app.services.attachment_store import MAX_ATTACHMENT_BYTES
+from app.services.conversation_database import ConversationDatabase
+from app.services.database_chat import DatabaseChatService
 
 
 def require_demo_environment(request: Request) -> None:
@@ -42,9 +44,18 @@ router = APIRouter(
 )
 
 
-def request_service(request: Request, session: Session) -> conversations.ConversationService:
+def request_service(
+    request: Request, session: Session
+) -> conversations.ConversationService | DatabaseChatService:
     """从可信登录状态构造服务；显式匿名开发沿用共享历史，不接受客户端传入所属用户。"""
     identity = getattr(request.state, "business_identity", None)
+    foundation = getattr(request.app.state, "foundation", None)
+    if foundation is not None:
+        if not identity:
+            raise HTTPException(401, "authentication_required")
+        return DatabaseChatService(
+            ConversationDatabase(foundation, identity["id"]), request.app.state.chat_provider
+        )
     return conversations.service(
         session,
         request.app.state.chat_provider,

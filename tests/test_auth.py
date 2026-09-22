@@ -137,7 +137,9 @@ def test_mock_accounts_login_with_distinct_identities_and_correct_access(
             "displayName": display_name,
             "canAccessAdmin": is_admin,
         }
-        assert client.get("/api/v1/admin/feedback").status_code == (200 if is_admin else 403)
+        assert client.get("/api/v1/admin/model-configuration").status_code == (
+            200 if is_admin else 403
+        )
     with Session(engine) as db:
         session = service.session_by_token(db, a.cookies.get("ach_session"))
         assert session.user.iam_subject == subject
@@ -213,7 +215,8 @@ def test_cross_instance_callback_session_and_business_csrf(auth):
         "clientRequestId": "3c614bbe-466b-4fb2-8d57-d0b33b5c8cb4",
     }
     assert a.post("/api/v1/feedback", json=payload).status_code == 403
-    assert a.post("/api/v1/feedback", json=payload, headers=csrf(a)).status_code == 201
+    # 会话和 CSRF 已通过；本测试的 SQLite 身份库不提供 PostgreSQL 反馈表。
+    assert a.post("/api/v1/feedback", json=payload, headers=csrf(a)).status_code == 503
     assert b.get(callback).headers["location"].startswith("/login?error=login_request_expired")
     with Session(engine) as db:
         values = db.scalars(select(AuthSession)).all()
@@ -514,7 +517,7 @@ def test_one_login_covers_both_frontends_and_instances(auth, entry_scope):
             assert response.status_code == 303 and response.headers["location"] == target
             assert client.cookies.get("ach_session") == raw
         assert client.get("/api/v1/datasets").status_code == 200
-        assert client.get("/api/v1/admin/feedback").status_code == 200
+        assert client.get("/api/v1/admin/model-configuration").status_code == 200
     assert len(tokens) == 1
     with Session(engine) as db:
         assert len(db.scalars(select(AuthSession)).all()) == 1

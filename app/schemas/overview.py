@@ -200,7 +200,7 @@ class OperationsOverview(TokenAnalysis, ComputeAnalysis, Rankings):
 class SnapshotMetadata(OverviewModel):
     """元信息区分快照、缺失与演示板块；样例没有真实发布时间，不能视为实时统计。"""
 
-    data_source: Literal["snapshot"] = "snapshot"
+    data_source: Literal["snapshot", "database", "mock"] = "snapshot"
     updated_at: dict[str, datetime | None]
     missing_sections: list[str]
     demo_sections: list[str] = Field(default_factory=list)

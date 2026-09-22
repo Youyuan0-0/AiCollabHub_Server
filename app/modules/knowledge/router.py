@@ -8,6 +8,7 @@ from fastapi.responses import Response
 
 from app.modules.common.identity import current_actor, require_admin
 from app.modules.common.identity_directory import publication_defaults
+from app.modules.common.resource_admin import ListingInput
 from app.modules.common.schemas import PageQuery
 from app.modules.common.visibility import validate_visibility_targets, visibility_directory
 from app.modules.knowledge.reviews import KnowledgeReviews
@@ -43,6 +44,16 @@ def build_router(admin: bool) -> APIRouter:
         )
 
     if admin:
+
+        @result.put("/{base_id}/listing", response_model=None)
+        def listing(base_id: str, payload: ListingInput, request: Request) -> dict:
+            """公开前单独启用，禁用后普通读者不能继续访问。"""
+            actor, service = current_actor(request, True), knowledge_service(request)
+            return service.present(
+                service.set_listing(base_id, payload.status, payload.revision, actor),
+                actor,
+                admin=True,
+            )
 
         @result.post("/{base_id}/resubmit", response_model=None)
         def resubmit_admin(base_id: str, payload: ResubmitInput, request: Request) -> dict:

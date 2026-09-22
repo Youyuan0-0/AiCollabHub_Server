@@ -29,8 +29,7 @@ VISIBILITY_LABELS = {
 
 def activity_key(dataset_id: str, actor: Actor) -> str:
     """为可信用户与数据集生成稳定活动键，评分、收藏和下载共用同一条记录。"""
-    digest = hashlib.sha256(json.dumps([actor.id, dataset_id]).encode()).hexdigest()
-    return "activity:" + digest
+    return f"activity:{actor.id}:{dataset_id}"
 
 
 def timestamp() -> str:
@@ -78,11 +77,16 @@ class DatasetWorkspace:
         self, actor: Actor | None = None, *, include_unlisted: bool = False
     ) -> list[dict]:
         """按身份生成目录；include_unlisted 仅供已鉴权的管理入口读取下架资料。"""
-        resources = fixture("datasets", "resources")
+        resources = (
+            self.repository.resources()
+            if self.repository.database
+            else fixture("datasets", "resources")
+        )
         # 审核与上架快照在同一记录事务提交；只读取已发布快照，不把草稿或待同步申请加入目录。
         published: dict[str, dict] = {}
         for record in sorted(
-            self.repository.list("publication:"), key=lambda item: item["updatedAt"]
+            [] if self.repository.database else self.repository.list("publication:"),
+            key=lambda item: item["updatedAt"],
         ):
             if record.get("status") == "approved" and record.get("publishedResource"):
                 resource = deepcopy(record["publishedResource"])
@@ -95,8 +99,19 @@ class DatasetWorkspace:
                 published[resource["id"]] = resource
         resources.extend(published.values())
         # 批量读取配置，数据库模式不为每张卡片单独查询；目标标识不返回给普通用户。
-        scopes = {item["datasetId"]: item for item in self.repository.list("visibility:")}
-        listings = {item["datasetId"]: item for item in self.repository.list("listing:")}
+        scopes = (
+            {item["id"]: item["visibility"] for item in resources}
+            if self.repository.database
+            else {item["datasetId"]: item for item in self.repository.list("visibility:")}
+        )
+        listings = (
+            {
+                item["id"]: {"status": item["listingStatus"], "revision": item["revision"]}
+                for item in resources
+            }
+            if self.repository.database
+            else {item["datasetId"]: item for item in self.repository.list("listing:")}
+        )
         # 在统计、筛选选项和分页之前过滤，避免通过总数、排行或分类泄露不可见资源。
         resources = [
             item
@@ -107,7 +122,7 @@ class DatasetWorkspace:
                 or visible(actor, item, scopes.get(item["id"], {"scope": "all", "targets": []}))
             )
         ]
-        activities = self.repository.list("activity:")
+        activities = [] if self.repository.database else self.repository.list("activity:")
         for item in resources:
             # 用户端即使使用管理员身份也不能绕过下架；管理字段只在后台读取时附加。
             if include_unlisted:
@@ -138,11 +153,19 @@ class DatasetWorkspace:
                 descriptionMarkdown=item.get("descriptionMarkdown", item["description"]),
                 dataSize=item.get("dataSize", metadata.get("数据规模", "")),
                 updateFrequency=item.get("updateFrequency", metadata.get("更新频率", "")),
-                downloadCount=sum(entry.get("downloadCount", 0) for entry in related_activities),
-                favoriteCount=sum(bool(entry.get("favorite")) for entry in related_activities),
-                rating=round(sum(ratings) / len(ratings), 2) if ratings else None,
-                ratingCount=len(ratings),
-                lastDownloadedAt=max(
+                downloadCount=item["downloadCount"]
+                if self.repository.database
+                else sum(entry.get("downloadCount", 0) for entry in related_activities),
+                favoriteCount=item["favoriteCount"]
+                if self.repository.database
+                else sum(bool(entry.get("favorite")) for entry in related_activities),
+                rating=item["rating"]
+                if self.repository.database
+                else (round(sum(ratings) / len(ratings), 2) if ratings else None),
+                ratingCount=item["ratingCount"] if self.repository.database else len(ratings),
+                lastDownloadedAt=item["lastDownloadedAt"]
+                if self.repository.database
+                else max(
                     (entry.get("lastDownloadedAt", "") for entry in related_activities), default=""
                 )
                 or None,
@@ -286,7 +309,9 @@ class DatasetWorkspace:
             "favoriteCount": self.resource(dataset_id)["favoriteCount"],
         }
 
-    def download_sample(self, dataset_id: str, actor: Actor) -> bytes:
+    def download_sample(
+        self, dataset_id: str, actor: Actor, request_id: str | None = None
+    ) -> bytes:
         """校验公开样例、记录下载并返回 UTF-8 JSON；缺少样例时返回 404 且不累计下载量。"""
         resource = self.resource(dataset_id, actor)
         if not resource.get("preview", {}).get("rows"):
@@ -299,7 +324,18 @@ class DatasetWorkspace:
             },
             ensure_ascii=False,
         ).encode("utf-8")
-        self.interact(dataset_id, actor)
+        if self.repository.database:
+            with self.repository.database.transaction() as unit:
+                unit.save_download(
+                    f"{actor.id}:{dataset_id}:{request_id}",
+                    {
+                        "actorId": actor.id,
+                        "datasetId": dataset_id,
+                        "versionId": resource["versionId"],
+                    },
+                )
+        else:
+            self.interact(dataset_id, actor)
         return content
 
     def publications(self, actor: Actor) -> list[dict]:
@@ -337,8 +373,8 @@ class DatasetWorkspace:
         now = timestamp()
         record = {
             **(previous or {}),
-            "id": publication_id or f"dsp-{uuid4().hex}",
-            "datasetId": previous["datasetId"] if previous else f"ds-{uuid4().hex}",
+            "id": publication_id or str(uuid4()),
+            "datasetId": previous["datasetId"] if previous else str(uuid4()),
             "createdBy": actor.id,
             # 组织权限只来自可信会话，表单 owner 只是展示用归属单位名称。
             "organizationId": actor.organization_id,

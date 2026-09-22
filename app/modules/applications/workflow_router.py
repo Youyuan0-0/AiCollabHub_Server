@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import Field
+from starlette.background import BackgroundTask
 
 from app.modules.applications.application_service import application_service
 from app.modules.applications.publication_schemas import (
@@ -18,6 +20,7 @@ from app.modules.applications.workflow_schemas import (
     SyncInput,
     WorkflowPolicy,
 )
+from app.modules.common.downloads import complete_download
 from app.modules.common.identity import ACTORS, DIRECTORY, current_actor, require_admin
 from app.modules.common.identity_directory import visible_directory
 from app.modules.common.toolchain.configuration import module_settings
@@ -136,9 +139,18 @@ class DownloadInput(ApplicationPayload):
 @router.post("/applications/{application_id}/downloads", response_model=None)
 def download(application_id: str, payload: DownloadInput, request: Request) -> dict:
     """读取应用下载资料并按幂等编号记录下载行为。"""
-    return application_service(request).workflows.download(
-        application_id, current_actor(request), payload.request_id
-    )
+    service, actor = application_service(request), current_actor(request)
+    result = service.workflows.download(application_id, actor, payload.request_id)
+    if hasattr(service.repository, "foundation"):
+        return JSONResponse(
+            result,
+            background=BackgroundTask(
+                complete_download,
+                service.repository,
+                f"{actor.id}:{application_id}:{payload.request_id}",
+            ),
+        )
+    return result
 
 
 @router.get("/application-activity", response_model=None)

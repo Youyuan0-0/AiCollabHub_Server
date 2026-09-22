@@ -19,6 +19,7 @@ ROOT = "/api/v1"
 
 
 class TutorialStorage:
+    bucket = "tutorial-tests"
     """独立文件服务替身，记录实际字节和范围读取，不访问真实文件服务。"""
 
     max_upload_bytes = 100 * 1024 * 1024

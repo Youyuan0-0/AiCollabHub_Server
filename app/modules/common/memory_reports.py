@@ -8,6 +8,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from app.modules.common.document_content import DOCUMENT_LIMIT, inspect_document
@@ -64,6 +65,8 @@ def report_router(
         actor = current_actor(request, True)
         record = get_record(request, publication_id, actor)
         store = reports_store(request)
+        if hasattr(store, "foundation"):
+            return store.list(kind, publication_id, actor)
         with store.lock:
             return [
                 public_report(file)
@@ -98,6 +101,10 @@ def report_router(
                 raise HTTPException(422, "请选择非空且不超过 20 MiB 的报告")
             _, content_type, preview = inspect_document(name, content)
         store = reports_store(request)
+        if hasattr(store, "foundation"):
+            return await run_in_threadpool(
+                store.upload, kind, publication_id, revision, actor, name, content
+            )
         with store.lock:
             record = get_record(request, publication_id, actor)
             if record["status"] != "pending" or record["revision"] != revision:
@@ -129,6 +136,8 @@ def report_router(
         actor = current_actor(request, True)
         record = get_record(request, publication_id, actor)
         store = reports_store(request)
+        if hasattr(store, "foundation"):
+            return store.content(kind, publication_id, file_id, actor, preview)
         with store.lock:
             item = deepcopy(store.files.get(file_id))
         historical = any(
@@ -165,6 +174,9 @@ def report_router(
         """只能删除本人当前未提交的报告，历史报告不可移除。"""
         actor = current_actor(request, True)
         store = reports_store(request)
+        if hasattr(store, "foundation"):
+            store.remove(kind, publication_id, file_id, actor)
+            return Response(status_code=204)
         with store.lock:
             record = get_record(request, publication_id, actor)
             if record["status"] != "pending":

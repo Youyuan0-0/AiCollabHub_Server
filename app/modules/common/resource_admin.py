@@ -2,10 +2,12 @@
 
 from collections.abc import Callable
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import Field
 
+from app.modules.common.access_schemas import StrictPayload
 from app.modules.common.fixtures import paginate
 from app.modules.common.identity import Actor, current_actor, require_admin
 from app.modules.common.memory_reports import report_router, reports_store
@@ -25,6 +27,13 @@ class AdminQuery(PageQuery):
     reviewer: str = ""
     start: date | None = None
     end: date | None = None
+
+
+class ListingInput(StrictPayload):
+    """正式资源独立启停；修订号防止并发操作覆盖。"""
+
+    status: Literal["listed", "unlisted"]
+    revision: int = Field(ge=1)
 
 
 def resource_admin_router(
@@ -79,6 +88,13 @@ def resource_admin_router(
         actor = current_actor(request, True)
         validate_visibility_targets(request, actor, payload)
         return workspace(request).set_visibility(identifier, payload, actor)
+
+    @router.put(f"/{plural}/{{identifier}}/listing")
+    def listing(identifier: str, payload: ListingInput, request: Request) -> dict:
+        """审核通过后由管理员单独启用，禁用不删除资料和历史。"""
+        return workspace(request).set_listing(
+            identifier, payload.status, payload.revision, current_actor(request, True)
+        )
 
     @router.get(f"/{kind}-publications")
     def queue(request: Request, query: Annotated[AdminQuery, Query()]) -> dict:

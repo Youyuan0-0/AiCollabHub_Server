@@ -5,7 +5,7 @@ from sqlalchemy import MetaData, create_engine, pool, text
 
 from app.core.config import Settings
 from app.db.session import normalize_database_url
-from app.modules.datasets.repository import DatasetRecord
+from migrations.legacy_models import DatasetRecord
 
 # Alembic 在 Windows 按系统编码读取 INI，中文说明集中放在本文件和模块 README。
 # 命令行默认读取 .env；验证脚本可显式传入同一配置对象，避免误读运行目录的配置。

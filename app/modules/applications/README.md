@@ -7,13 +7,15 @@
 | `router.py`、`workflow_router.py`、`market_router.py` | 场景、发布审核、外部目录相关接口 |
 | `application_service.py`、`workflows.py`、`market_workflows.py` | 业务规则与流程 |
 | `ports.py`、`dependencies.py` | 仓储、身份及供应方边界与依赖组装 |
-| `database_repository.py`、`database_*.py` | PostgreSQL 业务表读写 |
+| `../common/resource_database.py` 及 `resource_*` | 新基线 PostgreSQL 资源、发布、版本、互动与文件读写 |
 | `memory_repository.py`、`demo_store.py` | 独立内存演示 |
 | `providers.py`、`market_contract.py`、`runtime.py` | 外部市场与智能体运行适配 |
 | `demo_marketplace.py`、`sample_data.py` | 当前开发模拟所需资料 |
 | `publication_schemas.py`、`workflow_schemas.py` | 发布和流程数据契约 |
 
-`APPLICATIONS_STORAGE=memory` 使用单 worker，重启后临时记录重置；`database` 模式将平台业务写入 [场景数据库](../../../database/scenario-applications/README.md)，同机 worker 共用数据库和必要的模拟快照目录。
+配置 PostgreSQL 后固定使用 [新库基线](../../../database/resource-foundation/README.md)：`applications`、`application_publications`、`application_versions`、`application_dependencies` 及共用表。旧 `APPLICATIONS_STORAGE` 不再控制实际 PostgreSQL 装配；内存实现仅供隔离测试。平台发布资料不再保存到模拟快照目录，外部调用的临时状态使用 Redis。
+
+主表只展示当前正式版本，待审修改不覆盖公开资料；审核、版本与文件归档同事务提交，通过审核不会自动解除禁用。资料下载、收藏、关注及评分使用共用明细，关联资源固化版本编号。
 
 认证启用时使用公共会话提供的可信身份；关闭认证时才允许演示身份切换。管理员准入、开放范围、修订冲突及输入校验均由后端落实。
 

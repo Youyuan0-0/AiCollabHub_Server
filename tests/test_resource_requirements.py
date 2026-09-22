@@ -153,14 +153,12 @@ def test_profile_aggregation_and_contact_without_business_writes(client):
     assert profile.status_code == 200, profile.text
     assert profile.json()["employeeNumber"].startswith("DEMO-")
     assert (
-        client.put("/api/v1/profile/contact", json={"contact": "test@example.com"}).json()[
-            "contact"
-        ]
-        == "test@example.com"
+        client.put("/api/v1/profile/contact", json={"contact": "test@example.com"}).status_code
+        == 404
     )
     assert (
         client.put("/api/v1/profile/contact", json={"contact": "x", "role": "admin"}).status_code
-        == 422
+        == 404
     )
     client.post("/api/v1/model-publications", json={"data": model_data()})
     client.post("/api/v1/knowledge-bases", json={"name": "聚合知识库", "description": "简介"})

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Query, Request, Response
+from starlette.background import BackgroundTask
 
+from app.modules.common.downloads import complete_download
 from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
@@ -127,10 +130,18 @@ def favorite(dataset_id: str, payload: FavoriteDataset, request: Request) -> dic
 def download_sample(dataset_id: str, request: Request) -> Response:
     """下载已公开的脱敏样例；不暴露存储地址、不冒充完整原始数据包。"""
     actor = current_actor(request)
-    content = dataset_workspace(request).download_sample(dataset_id, actor)
+    workspace, request_id = dataset_workspace(request), str(uuid4())
+    content = workspace.download_sample(dataset_id, actor, request_id)
     return Response(
         content,
         media_type="application/json",
+        background=BackgroundTask(
+            complete_download,
+            workspace.repository.database,
+            f"{actor.id}:{dataset_id}:{request_id}",
+        )
+        if workspace.repository.database
+        else None,
         headers={
             "Content-Disposition": 'attachment; filename="dataset-sample.json"',
         },
@@ -142,7 +153,7 @@ def defaults(request: Request) -> dict:
     """提供身份默认值与运行模式；工具链协议尚未接入，不提供虚假的导入成功。"""
     return {
         **publication_defaults(request, current_actor(request)),
-        "storage": request.app.state.settings.datasets_storage,
+        "storage": "database" if request.app.state.foundation is not None else "memory",
         "toolchainAvailable": module_settings(request.app.state.settings, "datasets").toolchain_mode
         != "disabled",
         "toolchainMode": module_settings(request.app.state.settings, "datasets").toolchain_mode,

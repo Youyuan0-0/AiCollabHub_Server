@@ -57,6 +57,11 @@ async def upload(publication_id: str, request: Request, revision: int = Query(ge
         content = await file.read(DOCUMENT_LIMIT + 1)
         if len(content) > DOCUMENT_LIMIT:
             raise HTTPException(413, "报告文档不能超过 20 MiB")
+        store = request.app.state.resource_reports
+        if hasattr(store, "foundation"):
+            return await run_in_threadpool(
+                store.upload, "tool", publication_id, revision, actor, file.filename, content
+            )
         _, content_type, preview = await run_in_threadpool(inspect_document, file.filename, content)
         if preview:
             preview = preview.replace("教程阅读".encode(), "质量评测报告".encode())
@@ -86,6 +91,10 @@ async def upload(publication_id: str, request: Request, revision: int = Query(ge
 def remove(publication_id: str, identifier: str, request: Request) -> Response:
     """只能移除本人未提交报告；历史审核报告不可删除。"""
     actor = current_actor(request, True)
+    store = request.app.state.resource_reports
+    if hasattr(store, "foundation"):
+        store.remove("tool", publication_id, identifier, actor)
+        return Response(status_code=204)
     with tool_workspace(request).repository.transaction() as session:
         checked_publication(session, publication_id, actor)
         file = session.entry("review_files", identifier)
@@ -102,6 +111,16 @@ def content(
     publication_id: str, identifier: str, request: Request, preview: bool = False
 ) -> Response:
     """受控读取内存附件；原件下载、预览均验证管理权限。"""
+    store = request.app.state.resource_reports
+    if hasattr(store, "foundation"):
+        return store.content(
+            "tool",
+            publication_id,
+            identifier,
+            current_actor(request, True),
+            preview,
+            head=request.method == "HEAD",
+        )
     file = readable_report(
         tool_workspace(request), publication_id, identifier, current_actor(request, True)
     )

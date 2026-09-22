@@ -312,8 +312,8 @@ class ToolWorkspace:
         now = timestamp()
         record = {
             **(previous or {}),
-            "id": record_id or "tool-pub-" + uuid4().hex[:12],
-            "toolId": previous["toolId"] if previous else "tool-" + uuid4().hex[:12],
+            "id": record_id or str(uuid4()),
+            "toolId": previous["toolId"] if previous else str(uuid4()),
             "createdBy": actor.id,
             "organizationId": actor.organization_id,
             "owner": defaults["owner"],
@@ -344,6 +344,8 @@ class ToolWorkspace:
             reports = validate_reports(session, record, payload.report_file_ids, actor)
             event = {
                 "id": uuid4().hex,
+                "reviewerId": actor.id,
+                "reviewerName": actor.name,
                 "publicationId": record_id,
                 "toolId": record["toolId"],
                 "name": record["data"]["name"],

@@ -2,10 +2,14 @@
 
 import json
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from starlette.background import BackgroundTask
 
 from app.modules.common.catalog import query_resources
+from app.modules.common.downloads import complete_download
 from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery, Payload
@@ -79,7 +83,17 @@ def favorite(identifier: str, payload: FavoriteInput, request: Request) -> dict:
 @router.post("/models/{identifier}/download")
 def download(identifier: str, request: Request) -> dict:
     """模拟下载已发布配置，统计对应配置资料，不伪称下载权重。"""
-    item = model_workspace(request).interact(identifier, current_actor(request), download=True)
+    workspace, actor = model_workspace(request), current_actor(request)
+    if hasattr(workspace, "repository"):
+        request_id = str(uuid4())
+        item = workspace.interact(identifier, actor, download=True, download_request_id=request_id)
+        return JSONResponse(
+            {"filename": "config.json", "content": json.loads(item.get("configJson") or "{}")},
+            background=BackgroundTask(
+                complete_download, workspace.repository, f"{actor.id}:{identifier}:{request_id}"
+            ),
+        )
+    item = workspace.interact(identifier, actor, download=True)
     return {"filename": "config.json", "content": json.loads(item.get("configJson") or "{}")}
 
 
@@ -121,7 +135,7 @@ def save_model(payload: SaveModel, request: Request, identifier: str | None = No
                 data[key] = old["data"][key]
         if old["data"].get("source"):
             data["source"] = old["data"]["source"]
-        resource = workspace.resources.get(old["resourceId"])
+        resource = workspace.find_resource(old["resourceId"])
         if payload.submit and resource and data["version"] == resource.get("version"):
             raise HTTPException(422, "新版本号不能与当前已发布版本相同")
     return workspace.save(

@@ -3,12 +3,11 @@ from copy import deepcopy
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 
 from app.core.config import Settings
 from app.main import create_app
 from app.modules.common.identity import ACTORS
-from app.modules.datasets.repository import DatasetRecord, DatasetRepository
+from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.schemas import DatasetInput, SaveDataset
 from app.modules.datasets.workspace import DatasetWorkspace
 
@@ -96,13 +95,9 @@ def test_identity_and_statistics_are_server_controlled(client, data):
     assert client.get("/api/v1/dataset-activity").json()["favoriteIds"] == []
 
 
-@pytest.mark.parametrize("database", [False, True])
-def test_repository_isolation_conflicts_and_reopen(tmp_path, data, database):
-    """同一业务在内存和数据库都隔离账号并拒绝过期更新，数据库支持跨实例回填。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'datasets.db'}") if database else None
-    if engine is not None:
-        DatasetRecord.__table__.create(engine)
-    repository = DatasetRepository(engine)
+def test_repository_isolation_conflicts_and_reopen(data):
+    """内存测试替身隔离账号并拒绝过期更新；持久化由新基线集成测试覆盖。"""
+    repository = DatasetRepository()
     workspace = DatasetWorkspace(repository)
     owner, reader = ACTORS[0], ACTORS[2]
     created = workspace.save(SaveDataset(data=DatasetInput(**data)), owner)
@@ -118,14 +113,8 @@ def test_repository_isolation_conflicts_and_reopen(tmp_path, data, database):
     snapshot = deepcopy(created)
     snapshot["data"]["name"] = "不会直接修改存储"
     assert workspace.publication(created["id"], owner)["data"]["name"] == data["name"]
-    if engine is not None:
-        reopened = DatasetWorkspace(DatasetRepository(engine))
-        assert reopened.publication(created["id"], owner) == created
-        assert reopened.activity(owner)["favoriteIds"] == ["ds-fault-v3"]
     updated = repository.save("publication:" + created["id"], created, 1)
     assert updated["revision"] == 2
     with pytest.raises(HTTPException) as error:
         repository.save("publication:" + created["id"], created, 1)
     assert error.value.status_code == 409
-    if engine is not None:
-        engine.dispose()

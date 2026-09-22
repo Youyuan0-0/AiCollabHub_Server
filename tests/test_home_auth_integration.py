@@ -28,7 +28,8 @@ def test_home_endpoints_require_session(request, method, path):
 def test_logged_in_home_conversation_and_csrf(request):
     client, _, iam, _ = request.getfixturevalue("auth")
     login(client, iam)
-    assert client.get("/api/v1/overview/home").status_code == 200
+    # SQLite 仅验证会话边界，首页新基线在 PostgreSQL 业务测试中验证。
+    assert client.get("/api/v1/overview/home").status_code == 503
     assert client.get("/api/v1/overview/operations").status_code == 200
     root = "/api/v1/conversations"
     assert client.post(root + "/new", json={}).status_code == 403

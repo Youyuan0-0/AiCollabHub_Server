@@ -32,9 +32,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 
 from app.db.conversations import Conversation, StoredConversationMessage
-from app.db.overview import OverviewSnapshot
 from app.schemas.conversations import ConversationRecord
 from app.services.conversation_store import SqlConversationStore
+from migrations.legacy_overview import OverviewSnapshot
 
 
 def test_auth_migration_preserves_existing_tables_and_roundtrips(tmp_path, monkeypatch):

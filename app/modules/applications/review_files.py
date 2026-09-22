@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from hashlib import sha256
 from io import BytesIO
 from pathlib import PurePath
 from typing import TYPE_CHECKING
@@ -79,7 +80,10 @@ def save_report(
         "contentType": content_type,
         "publicationId": publication_id,
         "publicationRevision": revision,
-        "applicationId": record["applicationId"],
+        "applicationId": record.get("applicationId")
+        or record.get("resourceId")
+        or record.get("datasetId")
+        or record.get("toolId"),
         "reviewId": None,
         "createdBy": actor.id,
         "createdAt": timestamp(),
@@ -87,6 +91,9 @@ def save_report(
         "objectKey": key,
         "previewKey": preview_key,
         "previewContentType": "text/html" if preview else content_type,
+        "previewSize": len(preview) if preview else None,
+        "previewHash": sha256(preview).hexdigest() if preview else None,
+        "contentHash": sha256(content).hexdigest(),
     }
     written = []
     is_registering = False
@@ -135,6 +142,9 @@ def remove_report(
         if file["bucket"] != storage.bucket:
             raise HTTPException(503, "报告存储配置已变化，请联系管理员")
         session.remove_review_file(identifier)
+    if hasattr(service.repository, "foundation"):
+        # 新库由共用文件清理任务核对所有引用后回收，不能在此破坏历史预览。
+        return
     # 先解除索引再回收对象，数据库回滚时不会出现索引指向已删除文件。
     for key in {file["objectKey"], file["previewKey"]}:
         try:

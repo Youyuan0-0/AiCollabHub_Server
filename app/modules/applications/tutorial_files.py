@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from hashlib import sha256
 from io import BytesIO
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -47,8 +48,8 @@ def save_file(
     if max(len(content), len(preview or b"")) > storage.max_upload_bytes:
         raise HTTPException(413, "文件超过当前文件服务的上传限制")
     identifier = str(uuid4())
-    key = f"application-tutorials/{identifier}/original"
-    preview_key = f"application-tutorials/{identifier}/preview" if preview else key
+    key = f"application-tutorials/{level}/{identifier}/original"
+    preview_key = f"application-tutorials/{level}/{identifier}/preview" if preview else key
     # 存储成功而登记失败时清理本次生成的对象，不影响已有版本引用的文件。
     written = []
     is_registering = False
@@ -73,6 +74,10 @@ def save_file(
             "objectKey": key,
             "previewKey": preview_key,
             "previewContentType": "text/html" if preview else content_type,
+            "previewSize": len(preview) if preview else None,
+            "previewHash": sha256(preview).hexdigest() if preview else None,
+            "contentHash": sha256(content).hexdigest(),
+            "bucket": storage.bucket,
         }
         is_registering = True
         with service.repository.transaction() as session:

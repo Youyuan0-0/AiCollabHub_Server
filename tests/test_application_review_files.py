@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.core.resources import ApplicationResources
 from app.main import create_app
-from tests.test_application_database_storage import SCORES
 from tests.test_application_tutorials import TutorialStorage, select_actor
+from tests.test_foundation_module_flows import SCORES
 
 API = "/api/v1/admin/application-publications"
 

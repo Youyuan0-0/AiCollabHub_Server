@@ -1,107 +1,54 @@
-# 数据集用户端
+# 数据集模块
 
-本阶段按任务表第 16–20、25、28、29 行推进列表、详情、发布及个人发布记录。沿用公共会话身份、CSRF 和请求错误处理。动态筛选从完整目录的分类、关键词及 facets 汇总；同维度多选取并集，不同维度取交集。
+提供目录、组合筛选、排序、分页、详情、字段和脱敏样例、版本历史、收藏、评分、发布及审核。身份、CSRF、失败提示沿用平台公共能力。
 
-用户端包括：名称/标签/单位搜索、组合筛选、综合/最近下载/下载量/收藏数排序、分页、专属卡片、Markdown 详情、公开脱敏样例、字段清单、版本历史、个人收藏、草稿及提交审核。未知质量评分显示“暂未评测”，不会把用户评分当作质量评分。
+## 存储
 
-| 接口 | 用途 |
+配置 PostgreSQL 后使用 `datasets`、`dataset_publications`、`dataset_versions` 及共用互动、审核、文件、范围表。`dataset_records` 不再是业务依赖，内存实现只用于隔离测试。安装新库只执行 `alembic -n resource_foundation upgrade head`，不要混用旧默认链或 `alembic.datasets.ini`。
+
+主表保存当前正式概览，字段、样例和其他专属资料随发布申请提交并冻结到正式版本。待审修改不覆盖公开版本，审核结论、七维质量评分、报告关联与正式资料在同一事务更新。修订冲突返回 409，不部分保存。
+
+首次审核通过仍为禁用，管理员另行启用后才进入目录。API 继续使用 `listingStatus=listed/unlisted`，数据库为 `status=enabled/disabled`。禁用后用户端目录、详情、榜单、收藏和下载均遵守状态与权限限制，历史资料和互动仍保留。
+
+开放范围为全部用户或指定成员，成员从 `users` 获取，规则和成员关系使用共用可见范围表。表单单位名称不赋予权限，保存须携带当前修订。
+
+## 接口
+
+| 接口 | 职责 |
 | --- | --- |
-| `GET /api/v1/datasets`、`/datasets/{id}` | 目录与详情 |
-| `GET /api/v1/datasets/rankings?metric=downloads&limit=10` | 数据集下载量或收藏量累计排行榜 |
-| `GET /api/v1/dataset-activity` | 本人收藏编号 |
-| `PUT /api/v1/datasets/{id}/favorite` | 幂等收藏设置 |
-| `POST /api/v1/datasets/{id}/sample-download` | 下载公开脱敏样例并累计下载量 |
-| `GET /api/v1/dataset-publication-defaults` | 可信身份默认值与存储模式 |
-| `GET/POST /api/v1/dataset-publications` | 本人申请列表和新建 |
-| `GET/PUT /api/v1/dataset-publications/{id}` | 本人申请读取和修订 |
+| `GET /api/v1/datasets`、`/datasets/{id}` | 用户目录、完整详情、分类筛选和权限过滤 |
+| `GET /api/v1/datasets/rankings` | 当前可见资源的下载或收藏榜单 |
+| `GET /api/v1/dataset-activity` | 当前用户收藏编号 |
+| `PUT /api/v1/datasets/{id}/favorite` | 设置收藏状态，重复请求不累加 |
+| `GET/PUT /api/v1/datasets/{id}/rating` | 当前用户评分和资源平均分 |
+| `POST /api/v1/datasets/{id}/sample-download` | 下载公开样例并登记下载明细 |
+| `GET /api/v1/dataset-publication-defaults` | 可信身份默认值与实际存储方式 |
+| `GET/POST /api/v1/dataset-publications` | 本人申请及新建草稿、提交 |
+| `GET/PUT /api/v1/dataset-publications/{id}` | 查看申请、修改未冻结的资料 |
+| `GET /api/v1/admin/datasets`、`/datasets/{id}` | 含禁用资源的管理目录和详情 |
+| `PUT /api/v1/admin/datasets/{id}/listing`、`/visibility` | 启停与可见成员设置 |
+| `GET /api/v1/admin/dataset-publications` 及详情 | 审核队列、筛选和申请资料 |
+| `POST /api/v1/admin/dataset-publications/{id}/review` | 审核并保存不可变结论和快照 |
+| `/api/v1/admin/dataset-publications/{id}/report-files` | 当前审核员暂存报告；历史报告通过快照读取 |
+| `GET /api/v1/admin/dataset-audit` | 历次审核、提交资料及报告 |
 
-发布必填包含名称、版本、简介、单位、联系人、数据应用、数据形态、AI 应用目的、字段 JSON Schema、数据语言、格式和分级。草稿可缺项，提交由服务端重新验证。更新必须携带最新 `revision`，待审核或已通过的申请不能继续修改。编号、归属身份和状态不能由浏览器指定。草稿和待审核申请不进入目录。
+发布必填名称、版本、简介、详细说明、单位、联系人、用途、形态、字段 Schema、语言、格式、分级，记录数或数据量至少一项，0 是合法记录数。草稿允许缺项，提交和审核前由服务端校验。
 
-`DATASETS_STORAGE=memory` 为单实例开发演示，刷新浏览器仍可回填，服务重启会清空申请与个人活动。`DATASETS_STORAGE=database` 复用项目单库连接池，通过 `dataset_records` 保存数据。迁移链一致的新库先执行 `alembic upgrade head`；共享库版本不属于当前代码时，执行 `alembic -c alembic.datasets.ini upgrade head`，只管理数据集表及独立版本表，不改写全局版本。迁移成功后设置该配置并重启服务；启动时不自动迁移。
+审核评分为七项 1–5 整数：格式规范性、安全规范性、标注规范性、结构完整性、内容真实性、内容一致性、内容干净性。用户评分与质量评分分别保存，未知综合质量分不由平均值冒充。驳回须填写原因，发布者修改重提后仍保留上轮资料与结论。
 
-当前目录由开发样例及已审核上架的数据库快照共同组成。下载只提供已公开的脱敏样例 JSON，不代表完整数据文件接入。已支持后台审核及开放范围管理；正式数据源及工具链接口尚未接入。默认本地通道审核通过即上架到平台；第三方通道尚未配置时保留待同步，不能伪造外部入库成功。
+收藏、评分各用户各资源一条。统计从 `resource_favorites/resource_ratings/resource_downloads` 聚合，不写主表计数。下载生成后登记 `link_issued`，响应输出结束后记录 `completed`，不代表用户已经在磁盘保存文件；当前范围仍只是脱敏样例，不等于第三方完整数据下载。
 
-管理端沿用场景应用的会话、CSRF、分页及请求异常处理，入口为 `/datasets`、`/datasets/reviews` 和 `/datasets/audit`。目录显示上下架状态及下载/收藏统计，支持状态筛选与上下架操作；申请支持搜索、状态及提交日期筛选（日期按 UTC，包含起止当天）。系统管理员管理全部申请，单位管理员仅管理可信会话组织内申请；缺失组织不能获得单位管理权限，表单中的所属单位名称不参与授权。
+## 外部边界
 
-| 管理接口 | 用途 |
-| --- | --- |
-| `GET /api/v1/admin/datasets`、`/datasets/{id}` | 含下架资料的管理目录、详情及开放范围配置；`listingStatus` 支持 `listed` / `unlisted`，空值查询全部 |
-| `PUT /api/v1/admin/datasets/{id}/listing` | 按上下架修订号保存 `listed` / `unlisted` 状态 |
-| `PUT /api/v1/admin/datasets/{id}/visibility` | 按修订号保存全部用户、指定组织、成员或项目组范围 |
-| `GET /api/v1/admin/dataset-publications`、`/dataset-publications/{id}` | 管理范围内的队列和申请详情 |
-| `POST /api/v1/admin/dataset-publications/{id}/review` | 按修订号提交通过、驳回或需补充结论 |
-| `GET /api/v1/admin/dataset-audit` | 分页检索历史审核结论和资料快照 |
+本地发布通道使用平台正式表；第三方完整文件、外部版本、血缘、加工和授权接口仍待实际接入。外部调用失败不得用本地样例冒充成功；不能仅改连接地址就宣称完成联调。
 
-只有 `pending` 可审核，通过需提供格式规范性、安全规范性、标注规范性、结构完整性、内容真实性、内容一致性、内容干净性七项 1–5 分整数；旧三项评分仅保留在历史快照中显示；驳回和需补充必须填写原因。审核意见、审核人、评分、当次资料快照与状态在 `dataset_records` 的同一次条件更新中保存，并发冲突返回 409。退回后发布者可以修改重提，历史快照保持不变。`approved` 在本地通道对应 `syncStatus=local_published`，外部通道对应 `pending`，其他状态为 `not_ready`。本次无需新增数据库迁移，沿用此前的数据集表迁移。
+## 验证
 
-开放范围沿用场景应用的四类规则和可信身份目录，保存后作用于用户端目录、筛选选项、排行榜、详情、收藏与样例下载；通用模拟调用入口也校验范围。目标编号不向普通用户公开。管理详情提供当前配置、可选目录及编辑授权；仅系统管理员或具有可信资源组织归属的单位管理员可以修改，历史样例缺失组织编号时仅系统管理员可修改。认证启用但身份目录未接入时不会补出模拟组织，可手动填写已确认的目标标识；已有可信目录时会校验目标存在且在管理员可选择范围内。
-
-范围配置使用 `dataset_records` 的 `visibility:` 记录，与申请和活动分开保存。未配置时全部用户可见且 `revision=0`，每次保存必须携带当前修订号；并发失败返回 409。`memory` 模式重启后重置，`database` 模式跨实例保留，无需新增表。撤销访问后隐藏旧收藏但保留活动记录，恢复权限后收藏重新显示。
-
-管理员可在数据集目录或详情中确认上架、下架。请求示例为 `{ "status": "unlisted", "revision": 0 }`；管理目录和详情通过 `listing` 返回当前状态及修订，通过 `canManageListing` 返回可信操作权限。仅系统管理员或资源所属单位管理员可操作；待审核、待同步且尚无发布快照的申请不能通过此接口上架。下架后用户端目录、筛选、排行、详情、收藏、评分、样例下载及通用调用均不可访问；后台仍保留资料并可重新上架或调整开放范围。恢复上架继续遵守原开放范围，保留审核历史和所有活动统计。
-
-上下架状态使用既有 `dataset_records` 表中的 `listing:` 记录，保存操作人、时间和独立修订，无需数据库迁移。历史目录默认 `listed`、修订为 0；旧修订写入返回 409。`database` 模式持久化，`memory` 模式重启重置。审核通过仍按原通道发布；补发接口不会恢复已手动下架的资料。管理端及发布者的申请响应增加 `listingStatus`，用于区分当前下架与历史发布成功，不改变原审核状态或修订。
-
-相关测试覆盖字段校验、申请隔离、修订冲突、重复收藏、下载统计、动态筛选、范围限制、CSRF 和越权拦截，以及数据库跨实例读取。数据库仓储使用 SQLAlchemy 通用 JSON 与条件更新，自动回归使用临时 SQLite；`python -m scripts.verify_datasets_postgresql` 使用当前配置的真实 PostgreSQL 验证接口跨实例读写、评分与评价、收藏、下载统计、范围仓储及并发修订冲突，最后清理本次随机身份的验证数据。该脚本在进程内使用隔离身份，不改变已部署服务的认证配置。
-
-排行榜的 `metric` 支持 `downloads` 和 `favorites`，`limit` 为 1–100，默认 10 条。同分按数据集编号稳定排序，返回 `rank`、`id`、`name`、`owner`、`downloadCount`、`favoriteCount`，不公开用户明细。收藏量是当前收藏人数，同一用户重复收藏不累加，取消收藏扣减；下载量是已成功生成的公开脱敏样例下载次数，同一用户再次下载再次计数，不代表浏览器最终保存文件成功。响应携带 `downloadScope: "sample"`，第三方完整下载接口接入前首页应标注为样例下载榜，不能混作完整数据下载榜。
-
-统计复用数据集现有的 `dataset_records` 仓储，不依赖第三方正式资源入库接口；统计包含既有样例与本地审核上架的数据集；未实现第三方真实文件入库。首页展示留待后续接入，前端可使用 `datasetApi.rankings`，查询缓存键统一以 `dataset-rankings` 开头，收藏或下载后会失效刷新。数据库长期保存仍需按上述步骤显式启用，默认内存模式服务重启会清空。
-
-
-## 本地流程补齐（2026-09-17）
-
-- 提交必填 Markdown 详细描述；数据规模按记录数或数据量至少填写一项，0 是有效记录数。草稿允许缺项，旧申请若缺少必填信息须退回补充后通过审核。
-- 新审核保存七维评分，JSON 键为 formatCompliance、safetyCompliance、annotationCompliance、structuralCompleteness、authenticity、consistency、cleanliness。历史三项不补造七维分值，不擅自计算综合质量评分。
-- 审核记录支持 reviewer（审核人编号或姓名包含匹配）、start/end（包含起止当天的 UTC 日期），与已有关键词、结论及分页组合使用。
-- 用户目录与详情使用公开字段白名单；开放范围、密级、联系人及内部服务地址仅保留在管理接口。管理端内部资源仍保留可信组织字段用于鉴权。
-- 所属组织使用 organization 多选维度，与卡片所属单位一致；同组取并集，不同维度取交集。
-
-## 第三方接入前置资料
-
-以下资料需甲方提供后才能实现并验证真实同步，不约定尚未确认的外部 URL 或伪造成功响应：
-
-| 能力 | 需要提供的接口或规则 | 当前行为 |
-| --- | --- | --- |
-| 工具链发布 | 登录/跳转地址、授权方式、工作空间权限、发布结果查询及分页、外部资源和版本唯一标识 | 手动发布可用，工具链入口明确未接入 |
-| 审核后入库及上架 | 发布提交/确认接口，状态机，幂等键，回调验签或轮询方式，错误码、重试策略、权限映射 | 本地通道通过后直接上架；external 通道保留 syncStatus=pending |
-| 版本与技术元数据 | 版本列表、首次发布时间、变更记录、存储位置、上游血缘、关联资源、服务地址及字段可见性 | 展示样例及本地发布版本，外部血缘和存储位置待接入 |
-| 综合质量评级 | 评分来源、量表和七维审核到综合评级的计算规则 | 七维审核可保存；综合评分未知时显示暂未评测，五星展示只接受 0–5 的明确分值 |
-| 数据共享与下载 | 申请、授权结果、有效期、实际下载/数据服务调用接口、下载成功确认口径 | 仅提供脱敏样例，下载量不代表完整数据下载量 |
-
-质量报告附件、审核优先级、发布敏感词策略、完整操作审计、个人中心聚合和首页榜单联动仍为本地待办，不归因于第三方 API 缺失。工具链清洗、标注等加工功能由外部工具链负责。
-
-
-## 数据集用户评分
-
-`GET /datasets/{id}/rating` 读取本人星级、ratingAverage 和 ratingCount；`PUT` 同路径接收 `{ "rating": 1 }`（1–5 的整数）。登录身份来自可信会话，写入复用 CSRF 和开放范围控制，不接收客户端用户编号。
-
-每个账号对同一数据集只保留一份评分，重复保存或修改不会增加人数。评分与收藏、样例下载共用现有 dataset_records 活动记录及条件更新，无需新数据库迁移；database 模式持久保存，memory 模式重启清空。目录和详情的 rating/ratingCount 来自真实用户记录，初始为 null/0，固定样例评分不参与平均。质量审核评分 qualityScore 独立展示，用户评分不依赖工具链 API。
-
-评分表单与场景应用共用：星级、最多 1000 字可选评价、保存提示及评价列表。评分写入可携带 comment，GET /datasets/{id}/ratings 返回 id/rating/comment/updatedAt；列表遵循数据集开放范围，不公开账号。旧无文字评分按空评论展示，更新一份评价不增加人数。
-
-## PostgreSQL 启用（2026-09-17）
-
-接入时共享库存在当前代码未包含的全局迁移版本，且其他模块可能继续推进该版本。使用独立入口建立 `dataset_records` 和 `alembic_version_datasets`，保留全局版本及其他模块表；不要手工 stamp、回退或覆盖未知版本。独立入口只允许升级，避免误删已被全量迁移接管的共享表。
+普通契约、筛选和权限用例位于 `tests/test_dataset_*.py`。新 PostgreSQL 仓储回归使用显式 `RESOURCE_FOUNDATION_TEST_DATABASE_URL`，在随机 schema 中运行并整体回滚：
 
 ```powershell
-.\.venv\Scripts\python.exe -m alembic -c alembic.datasets.ini upgrade head
-.\.venv\Scripts\python.exe -m alembic -c alembic.datasets.ini check
-.\.venv\Scripts\python.exe -m scripts.verify_datasets_postgresql
+python -m pytest tests/test_foundation_module_flows.py -k dataset -q
+python -m pytest tests/test_foundation_resource_storage.py -q
 ```
 
-本次已将根目录 `.env` 设置为 `DATASETS_STORAGE=database` 并重载后端，运行接口响应头已确认生效。其他环境部署时同样需要设置并重载。非生产接口响应头 `X-Dataset-Storage: database` 及登录后的 `GET /api/v1/dataset-publication-defaults` 返回 `storage=database` 可确认生效。示例配置仍默认 memory，方便无数据库开发；不能据此判断运行实例。
-
-已有数据库表会先校验字段、类型、非空和主键，再允许独立与全量迁移相互接管；结构不符时中止，不删除数据。内存模式此前记录没有落盘，本次迁移不恢复已经因服务重载丢失的演示记录。业务记录持久化不等于第三方真实目录、版本及完整文件接入，目录包含样例与本地审核通过的元数据快照。
-
-本次验证结果：数据集相关自动回归 79 项通过；真实 PostgreSQL 接口跨应用实例持久化、并发写入及修订冲突验证通过；验证数据已清理，部署认证保持启用。
-
-## 本地发布临时方案
-
-默认 `DATASETS_PUBLICATION_MODE=local`。审核通过时，发布适配器把申请资料、公开脱敏样例、版本及可信归属投影为 `publishedResource`，与审核结论、七维评分、历史快照一起在原 `dataset_records` 记录中条件更新。无需新增迁移；提交失败或修订冲突不会出现半完成上架。目录从已通过申请的持久化快照读取，新上架资料沿用开放范围、搜索、收藏、下载统计和评分接口。
-
-历史 `approved + pending` 申请可在管理审核详情点击“发布到平台”，调用 `POST /api/v1/admin/dataset-publications/{id}/publish`，请求为 `{ "revision": 当前修订 }`。补发重新校验必填资料、管理员权限及组织范围；成功保持审核历史不变，重复发布不生成新资源。资料不完整时提示补齐，不自动伪造缺失资料；本次不会批量发布历史申请。
-
-`publishing.py` 的 `DatasetPublisher.prepare` 是适配入口。后续第三方通道应在审核事务中保存待同步任务，以申请编号和审核修订组成幂等键，由任务处理外部提交、重试及确认；外部确认成功后按修订保存目录快照。不要在数据库条件更新前执行不可回滚的外部发布。`external` 当前仅保留待同步状态，补发返回 503；切换通道不会删除此前已上架快照。
-
-本地上架仅覆盖已审核元数据和公开样例，不代表第三方完整数据文件、外部版本、血缘或工具链已接入。用户评分与综合质量评级仍独立，不把七维分值自动拼成未知规则的综合评级。
+回归覆盖发布、审核、显式启用、收藏、评分、下载、报告上传、历史读取和引用保护。旧直接操作 `dataset_records` 的验证脚本已移除，不能用于新库。

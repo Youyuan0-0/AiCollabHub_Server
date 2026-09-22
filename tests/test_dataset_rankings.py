@@ -2,12 +2,10 @@ from copy import deepcopy
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 
 from app.core.config import Settings
 from app.main import create_app
 from app.modules.common.fixtures import fixture
-from app.modules.datasets.repository import DatasetRecord
 
 
 @pytest.fixture
@@ -79,25 +77,3 @@ def test_zero_counts_stable_order_and_missing_samples(client, monkeypatch):
     assert client.get("/api/v1/datasets/rankings?limit=100").json()["items"] == ranking
     resources.clear()
     assert client.get("/api/v1/datasets/rankings").json()["items"] == []
-
-
-def test_ranking_statistics_survive_database_app_restart(tmp_path):
-    """临时数据库跨应用保留统计，复用数据集表，不创建模型表或正式资源资料。"""
-    url = f"sqlite:///{tmp_path / 'datasets.db'}"
-    engine = create_engine(url)
-    DatasetRecord.__table__.create(engine)
-    engine.dispose()
-    settings = Settings(datasets_storage="database", database_url=url)
-    with TestClient(create_app(settings)) as first:
-        assert (
-            first.put("/api/v1/datasets/ds-fault-v3/favorite", json={"favorite": True}).status_code
-            == 200
-        )
-        assert first.post("/api/v1/datasets/ds-fault-v3/sample-download").status_code == 200
-    with TestClient(create_app(settings)) as second:
-        item = second.get("/api/v1/datasets/rankings?metric=downloads&limit=1").json()["items"][0]
-        assert item["id"] == "ds-fault-v3"
-        assert item["downloadCount"] == item["favoriteCount"] == 1
-        # 误加的模型统计入口已撤回，原模型目录依然可用。
-        assert second.get("/api/v1/models").status_code == 200
-        assert second.get("/api/v1/models/rankings").status_code == 404

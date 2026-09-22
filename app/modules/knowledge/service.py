@@ -76,11 +76,18 @@ class KnowledgeService:
         if admin:
             require_admin(actor)
         record = self.repository.get(base_id)
+        if (
+            record
+            and not admin
+            and not can_edit(actor, record)
+            and hasattr(self.repository, "public_record")
+        ):
+            record = self.repository.public_record(record)
         allowed = record is not None and (
             can_manage(actor, record)
             if admin
             else can_edit(actor, record)
-            or (is_approved(record) and visible(actor, record, record["visibility"]))
+            or (self.is_published(record) and visible(actor, record, record["visibility"]))
         )
         if not allowed:
             raise HTTPException(404, "知识库不存在或无权访问")
@@ -88,9 +95,22 @@ class KnowledgeService:
             raise HTTPException(403, "当前账号不能修改此知识库")
         return record
 
+    @staticmethod
+    def is_published(record: dict) -> bool:
+        """审批通过且已启用才能对非维护者公开；内存测试实现保持原协议。"""
+        return is_approved(record) and record.get("listingStatus", "listed") == "listed"
+
+    def set_listing(self, base_id: str, status: str, revision: int, actor: Actor) -> dict:
+        """仅管理员可以启停已经有正式版本的知识库。"""
+        require_admin(actor)
+        if not hasattr(self.repository, "set_listing"):
+            raise HTTPException(409, "请使用数据库知识库")
+        return self.repository.set_listing(base_id, status, revision, actor)
+
     def present(self, record: dict, actor: Actor, *, admin: bool = False) -> dict:
         """公开响应使用白名单，管理响应也不暴露原文件路径、正文缓存或向量。"""
         result = {key: record[key] for key in PUBLIC_FIELDS}
+        result["listingStatus"] = record.get("listingStatus", "listed")
         # 重启或 worker 中断不会伪装成永远构建中；租约过期后允许用户明确重试。
         expired = (
             record["status"] == "syncing"
@@ -175,14 +195,25 @@ class KnowledgeService:
         """在关键词过滤和分页前隔离不可见资源，目录不会泄露未授权的总数。"""
         if admin:
             require_admin(actor)
+        source_records = self.repository.list()
+        if not admin and hasattr(self.repository, "public_record"):
+            source_records = [
+                item
+                for original in source_records
+                if (
+                    item := original
+                    if can_edit(actor, original)
+                    else self.repository.public_record(original)
+                )
+            ]
         records = [
             record
-            for record in self.repository.list()
+            for record in source_records
             if (
                 can_manage(actor, record)
                 if admin
                 else can_edit(actor, record)
-                or (is_approved(record) and visible(actor, record, record["visibility"]))
+                or (self.is_published(record) and visible(actor, record, record["visibility"]))
             )
         ]
         records.sort(key=lambda record: (record["updatedAt"], record["id"]), reverse=True)
@@ -199,10 +230,15 @@ class KnowledgeService:
 
     def published_resources(self, actor: Actor) -> list[dict]:
         """向应用依赖目录提供已通过创建审批且当前账号可见的本地知识库。"""
+        records = self.repository.list()
+        if hasattr(self.repository, "public_record"):
+            records = [
+                item for record in records if (item := self.repository.public_record(record))
+            ]
         return [
             self.present(record, actor)
-            for record in self.repository.list()
-            if is_approved(record) and visible(actor, record, record["visibility"])
+            for record in records
+            if self.is_published(record) and visible(actor, record, record["visibility"])
         ]
 
     def publications(self, actor: Actor) -> list[dict]:
@@ -226,7 +262,7 @@ class KnowledgeService:
         now = timestamp()
         record = {
             **payload.model_dump(by_alias=True),
-            "id": "kb-" + uuid4().hex,
+            "id": str(uuid4()),
             "owner": (payload.owner if isinstance(payload, AdminInput) else "")
             or defaults["owner"],
             "contact": (payload.contact if isinstance(payload, AdminInput) else "")
@@ -352,7 +388,10 @@ class KnowledgeService:
         try:
             total = 0
             for upload, name in zip(uploads, names, strict=True):
-                identifier, size = self.files.save(upload.file)
+                if hasattr(self.files, "save_document"):
+                    identifier, size = self.files.save_document(upload.file, name, actor)
+                else:
+                    identifier, size = self.files.save(upload.file)
                 written.append(identifier)
                 total += size
                 if total > MAX_FILE_BYTES:

@@ -2,6 +2,7 @@
 
 import base64
 import importlib.util
+import os
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -10,21 +11,25 @@ from uuid import uuid4
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import create_engine, func, inspect, select
+from sqlalchemy import create_engine, func, inspect, select, update
 from sqlalchemy.orm import Session
 from test_auth import auth as auth
 from test_auth import csrf, login
 
+from app.db.foundation import identifier, utc_now
 from app.modules.common.auth.mock_iam import ACCOUNTS
 from app.modules.feedback import attachments
-from app.modules.feedback.models import FeedbackAttachment, FeedbackEvent, FeedbackRecord
-from app.modules.feedback.service import utc_now
 from app.storage.client import ObjectInfo, ObjectNotFound, StorageUnavailable
+from app.storage.files import FileStore
+from app.storage.maintenance import cleanup_files
+from tests.test_foundation_resource_storage import foundation
+from tests.test_resource_foundation import connection, schema_connection
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5WQAAAAASUVORK5CYII="
 )
 ROOT = "/api/v1/feedback"
+__all__ = ["foundation", "connection", "schema_connection", "auth"]
 
 
 class MemoryStorage:
@@ -65,19 +70,36 @@ class MemoryStorage:
 
 
 @pytest.fixture
-def feedback(auth, monkeypatch):
+def feedback(auth, monkeypatch, request):
+    if not os.environ.get("RESOURCE_FOUNDATION_TEST_DATABASE_URL"):
+        pytest.skip("Feedback HTTP flows require the explicit PostgreSQL test connection")
+    database = request.getfixturevalue("foundation")
     monkeypatch.setitem(ACCOUNTS, "mock-user-b", "第二个测试用户")
     monkeypatch.setitem(ACCOUNTS, "another-user", "其他测试用户")
     a, b, iam, engine = auth
     storage = MemoryStorage()
     a.app.state.resources.storage = storage
     b.app.state.resources.storage = storage
+    users = database.table("users")
+    with database.transaction() as session:
+        for subject in ("mock-user", "mock-admin", "mock-user-b", "another-user"):
+            session.execute(
+                users.insert().values(
+                    id=uuid4(),
+                    iam_subject=subject,
+                    status="active",
+                    role="admin" if subject == "mock-admin" else "user",
+                )
+            )
+    for client in (a, b):
+        client.app.state.foundation = database
+        client.app.state.file_store = FileStore(database, storage)
     login(a, iam)
     # 两个独立浏览器身份：切断 IAM Cookie，避免换账号触发前一账号的单点退出。
     iam.cookies.clear()
     login(b, iam, scope="admin", subject="mock-admin")
     iam.cookies.clear()
-    yield a, b, iam, engine, storage
+    yield a, b, iam, database.engine, storage
 
 
 def payload(**overrides):
@@ -140,7 +162,12 @@ def test_cross_instance_submission_processing_history_and_counts(feedback):
     assert a.get(download_url).status_code == 404
     assert a.get(url).status_code == 403
     with Session(engine) as db:
-        assert db.scalar(select(func.count()).select_from(FeedbackEvent)) == 2
+        assert (
+            db.scalar(
+                select(func.count()).select_from(a.app.state.foundation.table("feedback_events"))
+            )
+            == 2
+        )
 
 
 def test_submission_retries_and_changed_content(feedback):
@@ -156,7 +183,12 @@ def test_submission_retries_and_changed_content(feedback):
         a.get(ROOT + "/submissions/" + value["clientRequestId"]).json()["id"] == first.json()["id"]
     )
     with Session(engine) as db:
-        assert db.scalar(select(func.count()).select_from(FeedbackRecord)) == 1
+        assert (
+            db.scalar(
+                select(func.count()).select_from(a.app.state.foundation.table("feedback_records"))
+            )
+            == 1
+        )
 
 
 @pytest.mark.parametrize(
@@ -182,8 +214,16 @@ def test_three_attachments_other_and_invalid_binding_atomicity(feedback):
     failed = a.post(ROOT, json=payload(attachmentIds=[files[0], str(uuid4())]), headers=csrf(a))
     assert failed.status_code == 409
     with Session(engine) as db:
-        assert db.get(FeedbackAttachment, files[0]).state == "staged"
-        assert db.scalar(select(func.count()).select_from(FeedbackRecord)) == 0
+        table = a.app.state.foundation.table("files")
+        assert (
+            db.scalar(select(table.c.status).where(table.c.id == identifier(files[0]))) == "ready"
+        )
+        assert (
+            db.scalar(
+                select(func.count()).select_from(a.app.state.foundation.table("feedback_records"))
+            )
+            == 0
+        )
     record = create(
         a,
         type="other",
@@ -222,14 +262,22 @@ def test_storage_failure_and_cleanup_never_delete_attached(feedback):
     storage.fail_put = True
     assert upload(a).status_code == 503
     storage.fail_put = False
-    with Session(engine, expire_on_commit=False) as db:
-        item = db.get(FeedbackAttachment, temporary["id"])
-        item.expires_at = utc_now() - timedelta(seconds=1)
-        db.commit()
-        attachments.cleanup(db, a.app.state.settings, storage)
-        attached_row = db.get(FeedbackAttachment, attached["id"])
-        assert attached_row.object_key in storage.objects
-        assert db.get(FeedbackAttachment, temporary["id"]).state == "deleting"
+    database = a.app.state.foundation
+    table = database.table("files")
+    engine.execute(
+        update(table)
+        .where(table.c.id == identifier(temporary["id"]))
+        .values(expires_at=utc_now() - timedelta(seconds=1))
+    )
+    cleanup_files(database, storage)
+    assert (
+        engine.scalar(select(table.c.object_key).where(table.c.id == identifier(attached["id"])))
+        in storage.objects
+    )
+    assert (
+        engine.scalar(select(table.c.status).where(table.c.id == identifier(temporary["id"])))
+        == "deleted"
+    )
 
 
 def test_stale_admin_updates_and_history_pagination(feedback):

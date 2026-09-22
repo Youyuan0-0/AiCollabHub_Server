@@ -22,7 +22,7 @@ def test_database_routes_require_login_and_keep_health_public(auth):
     login(a, iam)
     for path in ("overview/home", "overview/operations", "conversations"):
         response = a.get(f"/api/v1/{path}")
-        assert response.status_code == 200, response.text
+        assert response.status_code == (503 if path == "overview/home" else 200), response.text
         assert response.headers["x-data-mode"] == "development"
     assert a.get("/api/v1/applications").headers["x-data-mode"] == "mock"
     # 获得登录身份也不会开放尚未配置可信发布方的看板写入。

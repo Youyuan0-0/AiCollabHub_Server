@@ -1,22 +1,17 @@
 """本地审核上架、历史补发及第三方通道边界回归。"""
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_admin import SCORES
 from test_dataset_workspace import client as client
 from test_dataset_workspace import data as data
 
-from app.core.config import Settings
-from app.main import create_app
 from app.modules.datasets.publishing import (
     ExternalDatasetPublisher,
     LocalDatasetPublisher,
     sample_preview,
 )
-from app.modules.datasets.repository import DatasetRecord
 
 
 def approve(client, record):
@@ -92,29 +87,6 @@ def test_pending_cannot_bypass_review_and_failed_save_does_not_publish(client, d
         approve(client, record)
     assert client.get(path).json() == record
     assert client.get("/api/v1/datasets/" + record["datasetId"]).status_code == 404
-
-
-def test_publication_and_ownership_survive_database_app_restart(tmp_path, data):
-    """实例重建后上架资料仍来自数据库快照，已发布时间和版本不会重新生成。"""
-    url = f"sqlite:///{tmp_path / 'publish.db'}"
-    engine = create_engine(url)
-    DatasetRecord.__table__.create(engine)
-    settings = Settings(database_url=url, datasets_storage="database")
-    with TestClient(create_app(settings)) as first:
-        record = first.post(
-            "/api/v1/dataset-publications", json={"data": data, "submit": True}
-        ).json()
-        assert approve(first, record).status_code == 200
-        resource = first.get("/api/v1/datasets/" + record["datasetId"]).json()
-    with TestClient(create_app(settings)) as second:
-        assert second.get("/api/v1/datasets/" + record["datasetId"]).json() == resource
-        second.post(
-            "/api/v1/application-demo-session",
-            json={"actorId": "demo-org-admin", "audience": "admin"},
-        )
-        detail = second.get("/api/v1/admin/datasets/" + record["datasetId"]).json()
-        assert detail["canManageVisibility"] is True
-    engine.dispose()
 
 
 def test_publish_requires_admin_scope_and_csrf(auth, data):

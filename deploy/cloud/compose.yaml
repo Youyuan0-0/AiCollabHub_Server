@@ -86,10 +86,8 @@ services:
       - python
       - -m
       - alembic
-      - -x
-      - auth_archive_dir=/backups/auth
-      - -x
-      - auth_mock_admin_subjects=${AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS:-}
+      - -n
+      - resource_foundation
       - upgrade
       - head
     mem_limit: 256m
@@ -97,13 +95,6 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs: ["/tmp:size=16m,mode=1777"]
-    # 旧认证数据必须先归档；显式创建私有目录，避免自动生成 root 属主目录。
-    volumes:
-      - type: bind
-        source: ./backups/auth
-        target: /backups/auth
-        bind:
-          create_host_path: false
     networks: [services]
 
 networks:

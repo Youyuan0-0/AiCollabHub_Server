@@ -4,11 +4,11 @@ import asyncio
 import logging
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.resources import ApplicationResources
-from app.modules.feedback.attachments import cleanup
+from app.db.foundation import FoundationDatabase
+from app.storage.maintenance import cleanup_files
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,10 @@ async def maintain_feedback(
 
     def run_batch() -> None:
         if resources.database is not None and resources.storage is not None:
-            with Session(resources.database, expire_on_commit=False) as db:
-                cleanup(db, settings, resources.storage, limit=10)
+            if resources.database.dialect.name == "postgresql":
+                cleanup_files(
+                    FoundationDatabase(resources.database, settings), resources.storage, limit=10
+                )
 
     while not stopping.is_set():
         try:
@@ -32,4 +34,4 @@ async def maintain_feedback(
         try:
             await run_in_threadpool(run_batch)
         except Exception as error:
-            logger.warning("Feedback cleanup deferred (%s)", type(error).__name__)
+            logger.warning("File cleanup deferred (%s)", type(error).__name__)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy import Engine
 
+from app.cache.client import RedisCache
 from app.core.config import Settings
+from app.db.foundation import FoundationDatabase
 from app.modules.applications.application_service import ApplicationService
 from app.modules.applications.memory_repository import InMemoryApplicationRepository
 from app.modules.applications.providers import DemoApplicationProvider
@@ -16,13 +18,24 @@ def create_demo_application_service() -> ApplicationService:
     return ApplicationService(InMemoryApplicationRepository(), DemoApplicationProvider())
 
 
-def create_database_application_service(engine: Engine, settings: Settings) -> ApplicationService:
+def create_database_application_service(
+    engine: Engine,
+    settings: Settings,
+    *,
+    cache: RedisCache | None = None,
+    foundation: FoundationDatabase | None = None,
+) -> ApplicationService:
     """平台数据存 PostgreSQL；实际接口缺席期间，外部资料仍由开发模拟器提供。"""
-    from app.modules.applications.database_repository import DatabaseApplicationRepository
-    from app.modules.applications.demo_marketplace import DemoMarketplaceStore
+    from app.modules.applications.configuration import default_configuration
+    from app.modules.common.resource_database import ResourceDatabase
+    from app.modules.common.resource_runtime import ResourceRuntime
 
-    marketplace = DemoMarketplaceStore(settings.applications_demo_directory)
     return ApplicationService(
-        DatabaseApplicationRepository(engine, settings, marketplace),
-        DemoApplicationProvider(marketplace),
+        ResourceDatabase(
+            foundation or FoundationDatabase(engine, settings),
+            "application",
+            configuration=default_configuration(),
+            runtime=ResourceRuntime(cache, "applications") if cache else None,
+        ),
+        DemoApplicationProvider(),
     )

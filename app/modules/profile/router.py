@@ -1,12 +1,10 @@
-"""个人中心聚合各业务模块真实状态，联系方式暂存内存，不修改身份数据库。"""
+"""个人中心聚合各业务模块真实状态，身份资料由 IAM 维护。"""
 
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import Field
 
 from app.modules.applications.application_service import application_service
-from app.modules.common.access_schemas import StrictPayload
 from app.modules.common.fixtures import paginate
 from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import configured_directory, publication_defaults
@@ -24,12 +22,6 @@ class ProfileQuery(PageQuery):
 
     kind: Literal["", "dataset", "model", "application", "knowledge", "tool"] = ""
     status: str = ""
-
-
-class ContactInput(StrictPayload):
-    """只允许修改平台联系方式，姓名、工号、部门和角色保持只读。"""
-
-    contact: str = Field(max_length=200)
 
 
 @router.get("")
@@ -52,16 +44,8 @@ def profile(request: Request) -> dict:
         "organization": identity["owner"],
         "department": trusted.get("department", ""),
         "role": actor.role,
-        "contact": request.app.state.profile_contacts.get(actor.id, trusted.get("contact", "")),
+        "contact": trusted.get("contact", ""),
     }
-
-
-@router.put("/contact")
-def contact(payload: ContactInput, request: Request) -> dict:
-    """在当前实例维护本人联系方式，不能修改其他账号或身份字段。"""
-    actor = current_actor(request)
-    request.app.state.profile_contacts[actor.id] = payload.contact
-    return profile(request)
 
 
 @router.get("/publications")
@@ -129,12 +113,9 @@ def favorites(request: Request, query: Annotated[ProfileQuery, Query()]) -> dict
         )
     if query.kind in ("", "model"):
         workspace = model_workspace(request)
-        with workspace.lock:
-            items.extend(
-                {**item, "kind": "model"}
-                for item in workspace.catalog(actor)
-                if workspace.activities.get((actor.id, item["id"]), {}).get("favorite")
-            )
+        items.extend(
+            {**item, "kind": "model"} for item in workspace.catalog(actor) if item.get("isFavorite")
+        )
     if query.kind in ("", "application"):
         service = application_service(request)
         ids = service.workflows.activity(actor)["favoriteIds"]

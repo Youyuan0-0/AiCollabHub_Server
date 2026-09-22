@@ -28,8 +28,9 @@ def test_resources_close_on_shutdown_and_state_is_cleared():
     assert app.state.resources is None and app.state.database_engine is None
 
 
-def test_real_client_factories_and_liveness_do_not_connect_to_services(monkeypatch):
-    connect = Mock(side_effect=AssertionError("Startup must not contact external services"))
+def test_real_client_factories_do_not_connect_to_services(monkeypatch):
+    """客户端工厂保持惰性；业务启动时的新表预读由 PostgreSQL 集成测试覆盖。"""
+    connect = Mock(side_effect=AssertionError("Factories must not contact external services"))
     monkeypatch.setattr(Engine, "connect", connect)
     monkeypatch.setattr(Redis, "execute_command", connect)
     monkeypatch.setattr(Minio, "_execute", connect)
@@ -40,12 +41,13 @@ def test_real_client_factories_and_liveness_do_not_connect_to_services(monkeypat
         minio_access_key="placeholder-access",
         minio_secret_key="placeholder-secret",
     )
-    app = create_app(settings)
-    with TestClient(app) as client:
-        assert client.get("/api/v1/health/live").json() == {"status": "ok"}
-        assert app.state.resources.database is app.state.database_engine
-        assert app.state.resources.cache is not None
-        assert app.state.resources.storage is not None
+    resources = create_resources(settings)
+    try:
+        assert resources.database is not None
+        assert resources.cache is not None
+        assert resources.storage is not None
+    finally:
+        resources.close()
     connect.assert_not_called()
 
 

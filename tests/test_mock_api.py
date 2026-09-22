@@ -12,13 +12,12 @@ from app.main import create_app
 
 @pytest.fixture
 def clients(monkeypatch):
-    # Mock API 即使配置了不可用的真实服务，也不允许读取或写入它们。
+    # 未配置 PostgreSQL 的隔离单元测试仍可使用内存业务替身。
     connect = Mock(side_effect=AssertionError("Mock business routes must not access services"))
     monkeypatch.setattr(Engine, "connect", connect)
     monkeypatch.setattr(Redis, "execute_command", connect)
     monkeypatch.setattr(Minio, "_execute", connect)
     settings = Settings(
-        database_url="postgresql+psycopg://unused@127.0.0.1/test",
         redis_url="redis://127.0.0.1:1/0",
         minio_endpoint="http://127.0.0.1:1",
         minio_access_key="unused",

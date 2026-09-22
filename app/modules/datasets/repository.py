@@ -1,82 +1,152 @@
-"""数据集申请与个人活动仓储；内存演示和数据库使用相同的修订号约束。"""
+"""数据集仓储；正式模式使用独立资源表和共用明细，内存实现仅供隔离测试。"""
 
+import json
 from copy import deepcopy
+from hashlib import sha256
 from threading import RLock
 
 from fastapi import HTTPException
-from sqlalchemy import JSON, Engine, Integer, String, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy import Engine
 
-from app.db.base import Base
-
-
-class DatasetRecord(Base):
-    """保存用户端阶段的独立业务记录，key 前缀区分申请与单用户单资源活动。"""
-
-    __tablename__ = "dataset_records"
-    key: Mapped[str] = mapped_column(String(240), primary_key=True)
-    revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+from app.core.config import Settings
+from app.db.foundation import FoundationDatabase
+from app.modules.common.resource_database import ResourceDatabase
+from app.modules.common.resource_runtime import ResourceRuntime
 
 
 class DatasetRepository:
-    """有 engine 时使用事务和条件更新；否则提供线程安全、实例隔离的演示存储。"""
+    """保持数据集服务的记录契约，将各类业务明确映射到对应的新表。"""
 
-    def __init__(self, engine: Engine | None = None) -> None:
+    def __init__(
+        self,
+        engine: Engine | None = None,
+        settings: Settings | None = None,
+        *,
+        foundation: FoundationDatabase | None = None,
+        runtime: ResourceRuntime | None = None,
+    ) -> None:
         self.engine = engine
+        self.database = (
+            ResourceDatabase(
+                foundation or FoundationDatabase(engine, settings or Settings(_env_file=None)),
+                "dataset",
+                runtime=runtime,
+            )
+            if foundation is not None or engine is not None
+            else None
+        )
         self._records: dict[str, dict] = {}
         self._lock = RLock()
 
+    def resources(self) -> list[dict]:
+        """读取正式目录，数据库模式不会混入静态演示卡片。"""
+        if self.database is None:
+            return []
+        with self.database.transaction(is_readonly=True) as session:
+            return session.list_resources()
+
+    @staticmethod
+    def activity_view(value: dict) -> dict:
+        """兼容数据集当前互动响应；修订指纹用于比较内容，不占用额外表字段。"""
+        result = {
+            **value,
+            "userId": value["actorId"],
+            "downloadCount": value.get("downloadCount", 0),
+        }
+        result["ratingUpdatedAt"] = value.get("updatedAt")
+        result["revision"] = int(
+            sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12], 16
+        )
+        return result
+
     def list(self, prefix: str) -> list[dict]:
-        """返回指定业务前缀下的独立副本，调用方不能通过修改结果绕过版本校验。"""
-        if self.engine is not None:
-            with Session(self.engine) as session:
+        """按已知业务种类读取，不在数据库保存可随意扩展的键值记录。"""
+        if self.database is None:
+            with self._lock:
                 return deepcopy(
-                    list(
-                        session.scalars(
-                            select(DatasetRecord.data).where(DatasetRecord.key.startswith(prefix))
-                        )
-                    )
+                    [value for key, value in self._records.items() if key.startswith(prefix)]
                 )
-        with self._lock:
-            return deepcopy([data for key, data in self._records.items() if key.startswith(prefix)])
+        with self.database.transaction(is_readonly=True) as session:
+            if prefix == "publication:":
+                return session.list_publications()
+            if prefix == "activity:":
+                return [self.activity_view(item) for item in session.entries("interactions")]
+            if prefix in {"listing:", "visibility:"}:
+                return [
+                    {
+                        "datasetId": item["id"],
+                        **(
+                            {"status": item["listingStatus"], "revision": item["revision"]}
+                            if prefix == "listing:"
+                            else session.get_visibility(item["id"])
+                        ),
+                    }
+                    for item in session.list_resources()
+                ]
+            return session.entries(prefix.rstrip(":"))
 
     def get(self, key: str) -> dict | None:
-        """按内部业务键读取记录，不存在时返回 None。"""
-        if self.engine is not None:
-            with Session(self.engine) as session:
-                row = session.get(DatasetRecord, key)
-                return deepcopy(row.data) if row else None
-        with self._lock:
-            return deepcopy(self._records.get(key))
+        """按业务编号读取，用户身份始终来自已验证的服务参数。"""
+        if self.database is None:
+            with self._lock:
+                return deepcopy(self._records.get(key))
+        kind, _, item_id = key.partition(":")
+        with self.database.transaction(is_readonly=True) as session:
+            if kind == "publication":
+                return session.get_publication(item_id)
+            if kind == "listing":
+                resource = session.get_resource(item_id)
+                return (
+                    {
+                        "datasetId": item_id,
+                        "status": resource["listingStatus"],
+                        "revision": resource["revision"],
+                    }
+                    if resource
+                    else None
+                )
+            if kind == "visibility":
+                return {"datasetId": item_id, **session.get_visibility(item_id)}
+            value = session.entry("interactions" if kind == "activity" else kind, item_id)
+            return self.activity_view(value) if kind == "activity" and value else value
 
     def save(self, key: str, data: dict, expected: int | None) -> dict:
-        """原子比较修订号并保存；expected=None 只允许新建，竞争失败返回 409。"""
+        """比较修订并原子保存；审核记录和正式版本由共用发布事务保证一致。"""
         result = {**deepcopy(data), "revision": (expected or 0) + 1}
         conflict = HTTPException(409, "记录已更新，请刷新后重试；当前输入尚未覆盖服务端内容")
-        if self.engine is not None:
-            try:
-                with Session(self.engine) as session, session.begin():
-                    if expected is None:
-                        session.add(DatasetRecord(key=key, revision=1, data=result))
-                    else:
-                        changed = session.execute(
-                            update(DatasetRecord)
-                            .where(
-                                DatasetRecord.key == key,
-                                DatasetRecord.revision == expected,
-                            )
-                            .values(revision=result["revision"], data=result)
-                        )
-                        if changed.rowcount != 1:
-                            raise conflict
-            except IntegrityError as error:
-                raise conflict from error
-        else:
+        if self.database is None:
             with self._lock:
                 current = self._records.get(key)
                 if (current["revision"] if current else None) != expected:
                     raise conflict
                 self._records[key] = deepcopy(result)
+            return result
+        kind, _, item_id = key.partition(":")
+        with self.database.transaction() as session:
+            if kind == "publication":
+                if result.get("publishedResource"):
+                    session.put_resource(result["publishedResource"])
+                session.put_publication(result)
+            elif kind == "listing":
+                resource = session.get_resource(item_id)
+                if resource is None or resource["revision"] != expected:
+                    raise conflict
+                resource["listingStatus"] = result["status"]
+                session.save_resource_state(resource)
+                result["revision"] = session.get_resource(item_id)["revision"]
+            elif kind == "visibility":
+                current = session.get_visibility(item_id)
+                if current["revision"] != (expected or 0):
+                    raise conflict
+                session.put_visibility(item_id, result)
+            elif kind == "activity":
+                current = session.entry("interactions", item_id)
+                if (self.activity_view(current)["revision"] if current else None) != expected:
+                    raise conflict
+                session.put_entry("interactions", item_id, {**result, "actorId": result["userId"]})
+            else:
+                current = session.entry(kind, item_id)
+                if (current.get("revision") if current else None) != expected:
+                    raise conflict
+                session.put_entry(kind, item_id, result)
         return result

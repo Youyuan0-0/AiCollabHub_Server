@@ -103,7 +103,7 @@ class DatasetAdminService:
         # 样例缺少可信组织编号时仅系统管理员可改，不能用 owner 显示名称推断授权。
         if not can_manage(actor, resource):
             raise HTTPException(403, "只能配置有管理权限的数据集开放范围")
-        if payload.scope == "members":
+        if payload.scope == "members" and not self.workspace.repository.database:
             previous = self.workspace.visibility(dataset_id)
             if previous["scope"] != "members" or set(previous["targets"]) != set(payload.targets):
                 raise HTTPException(
@@ -168,7 +168,7 @@ class DatasetAdminService:
             validate_submission(DatasetInput(**record["data"]))
         now = timestamp()
         review = {
-            "id": "dsr-" + uuid4().hex,
+            "id": str(uuid4()),
             "decision": payload.decision,
             "reason": payload.reason,
             "reviewerId": actor.id,

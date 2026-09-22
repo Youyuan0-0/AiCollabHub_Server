@@ -51,7 +51,11 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
             service = application.state.application_service
             service.provider = AgentCatalogProvider(service.provider, clients["applications"])
             service.workflows.provider = service.provider
-        if clients["knowledge"].mode != "disabled" and settings.app_env != "production":
+        if (
+            clients["knowledge"].mode != "disabled"
+            and settings.app_env != "production"
+            and getattr(application.state, "foundation", None) is None
+        ):
             application.state.knowledge_workspace = EngineKnowledgeWorkspace(
                 KnowledgeEngineProvider(clients["knowledge"]), mocks["knowledge"]
             )

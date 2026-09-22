@@ -1,6 +1,7 @@
 """资源开放目标目录；演示对象和正式身份目录均由服务端决定。"""
 
 from fastapi import HTTPException, Request
+from sqlalchemy import select
 
 from app.modules.common.access_schemas import ScopeTargets
 from app.modules.common.identity import DIRECTORY, Actor
@@ -9,6 +10,19 @@ from app.modules.common.identity_directory import configured_directory, visible_
 
 def visibility_directory(request: Request, actor: Actor) -> dict[str, list[dict]] | None:
     """返回当前管理员可选目标；None 表示正式目录未配置，允许手动填写已确认编号。"""
+    foundation = getattr(request.app.state, "foundation", None)
+    if foundation is not None:
+        users = foundation.table("users")
+        with foundation.transaction(is_readonly=True) as session:
+            members = [
+                {"id": row.iam_subject, "name": row.display_name}
+                for row in session.execute(
+                    select(users.c.iam_subject, users.c.display_name)
+                    .where(users.c.status == "active")
+                    .order_by(users.c.display_name, users.c.id)
+                )
+            ]
+        return {"members": members}
     if configured_directory(request) is not None:
         return visible_directory(request, actor)
     if request.app.state.settings.auth_mode != "disabled":
@@ -40,6 +54,8 @@ def validate_visibility_targets(request: Request, actor: Actor, payload: ScopeTa
     directory = visibility_directory(request, actor)
     if directory is None:
         return
+    if payload.scope not in directory:
+        raise HTTPException(422, "仅支持全部用户或指定用户可见")
     allowed_ids = {item["id"] for item in directory[payload.scope]}
     if set(payload.targets) - allowed_ids:
         raise HTTPException(422, "开放范围包含不存在或当前管理员无权选择的对象")

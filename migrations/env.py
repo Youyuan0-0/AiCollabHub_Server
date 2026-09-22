@@ -5,14 +5,14 @@ from sqlalchemy.engine import make_url
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.conversations import Conversation, StoredConversationMessage  # noqa: F401
-from app.db.overview import OverviewSnapshot  # noqa: F401
 from app.db.session import normalize_database_url
 from app.modules.common.auth import models  # noqa: F401
 from app.modules.common.identity_sync import models as identity_models  # noqa: F401
 from app.modules.common.system_logs import SystemLog  # noqa: F401
-from app.modules.datasets.repository import DatasetRecord  # noqa: F401
 from app.modules.feedback import models as feedback_models  # noqa: F401
 from app.modules.knowledge.repository import KnowledgeRecord  # noqa: F401
+from migrations.legacy_models import DatasetRecord  # noqa: F401
+from migrations.legacy_overview import OverviewSnapshot  # noqa: F401
 
 # 复用应用的数据库配置，不在 alembic.ini 中另外保存连接凭据。
 settings = Settings()

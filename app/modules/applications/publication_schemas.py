@@ -97,6 +97,9 @@ class ApplicationDependency(ApplicationPayload):
 
     kind: Literal["model", "dataset", "knowledge", "tool"]
     resource_id: str = Field(min_length=1, max_length=200)
+    resource_version_id: str | None = Field(
+        default=None, max_length=64, exclude_if=lambda value: value is None
+    )
 
 
 # 请求正文 data 对应的应用资料；Field 和校验函数在路由处理前检查长度与格式。

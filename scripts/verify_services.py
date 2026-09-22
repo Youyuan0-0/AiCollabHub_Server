@@ -12,12 +12,7 @@ from sqlalchemy import Engine, inspect, text
 
 from app.core.config import Settings
 from app.core.resources import create_resources
-from app.db.base import Base
-from app.db.conversations import Conversation, StoredConversationMessage  # noqa: F401
-from app.db.overview import OverviewSnapshot  # noqa: F401
-from app.modules.common.auth import models  # noqa: F401
-from app.modules.common.identity_sync import models as identity_models  # noqa: F401
-from app.modules.common.system_logs import SystemLog  # noqa: F401
+from app.db.foundation import COMMON_TABLES, RESOURCE_TABLES
 
 
 def verify(
@@ -60,9 +55,12 @@ def verify(
             check("postgresql", database_status)
 
             def database_schema() -> dict[str, list[str]]:
-                """列出当前数据库缺少的业务表。"""
+                """检查新基线 43 张业务表，不将历史迁移 ORM 视为当前运行依赖。"""
                 actual = set(inspect(engine).get_table_names())
-                return {"missingTables": sorted(set(Base.metadata.tables) - actual)}
+                required = set(COMMON_TABLES)
+                for main, prefix, _ in RESOURCE_TABLES.values():
+                    required.update((main, prefix + "_publications", prefix + "_versions"))
+                return {"missingTables": sorted(required - actual)}
 
             schema = check("database_schema", database_schema)
             if schema is not None:

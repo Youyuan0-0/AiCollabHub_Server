@@ -57,16 +57,16 @@ docker build -t aicollabhub-admin:<版本> admin
 
 ### 云端配置与持久化
 
-当前应用目录为 `/opt/aicollabhub-app`，其中 `compose.yaml` 来自本项目，`.env` 保存 `RELEASE_TAG`、`HTTP_PORT`、`SERVICES_NETWORK`，以及旧 Mock 账号迁移使用的 `AUTH_MIGRATION_MOCK_ADMIN_SUBJECTS`。管理员名单按逗号分隔，与 `app.env` 的 `AUTH_MOCK_ADMIN_SUBJECTS` 对齐；非 Mock 环境留空。下列凭据文件权限均应为 `0600`，不进入镜像或版本库：
+当前应用目录为 `/opt/aicollabhub-app`，其中 `compose.yaml` 来自本项目，`.env` 保存 `RELEASE_TAG`、`HTTP_PORT` 和 `SERVICES_NETWORK`。下列凭据文件权限均应为 `0600`，不进入镜像或版本库：
 
-- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`APPLICATIONS_STORAGE=database`、`DATASETS_STORAGE=database`、`DATASETS_PUBLICATION_MODE=local`；PostgreSQL 为 `postgres-primary:5432`，Redis 为 `redis:6379`，MinIO 为 `http://minio:9000`，填写原有应用账号。每个 API worker 配置 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`、`DB_POOL_TIMEOUT=5`，两个 worker 合计最多 14 条连接；数据库总连接额度还须计入其他应用、迁移及运维连接。
+- `app.env`：参考根目录 `.env.example`；使用 `APP_ENV=test`、`AUTH_MODE=mock`、`DATASETS_PUBLICATION_MODE=local`。PostgreSQL 必须指向已确认的 43 表新库，不能沿用旧业务库地址；Redis 和 MinIO 使用本环境可达的服务入口。每个 API worker 配置 `DB_POOL_SIZE=5`、`DB_MAX_OVERFLOW=2`、`DB_POOL_TIMEOUT=5`，两个 worker 合计最多 14 条连接；总额度还须计入其他应用、迁移及运维连接。
 - `iam.env`：仅包含认证相关变量和用于配置校验的 `DATABASE_URL=sqlite://`，模拟 IAM 不连接业务库。模拟 IAM 必须单进程运行。
 - 两者共用随机 `AUTH_MOCK_SECRET`；公网 `AUTH_PUBLIC_ORIGIN`、`AUTH_MOCK_IAM_URL` 均为 `http://1.92.86.74`；`AUTH_INTERNAL_ORIGIN=http://api:8000`，`AUTH_MOCK_IAM_INTERNAL_URL=http://mock-iam:18002`。内网来源只用于票据校验和注销通知，浏览器回调始终保留公网来源。
 - `migration.env`：仅包含 `POSTGRES_MIGRATION_*`，使用同一库的 DDL 账号；正常 API 容器不加载此文件。
 
 开发联调数据库建议以 `max_connections=60`、`superuser_reserved_connections=3` 为连接预算起点，调整前核对主机及数据库容器的内存限额。普通账号共享剩余 57 条连接；例如三套各两个 worker 的后端合计最多 42 条，剩余 15 条供工具、迁移及其他连接使用。应用 `.env` 只控制本实例连接池，不会修改数据库服务端参数；服务端修改 `max_connections` 后必须重启 PostgreSQL，若参数来自 Docker 启动命令，则修改对应 Compose 配置并重建该数据库容器。
 
-API 挂载 `./data:/data`，属主为 `10001:10001`。配置 `APPLICATIONS_DEMO_DIRECTORY=/data/application-marketplace-demo`、`CONVERSATION_ATTACHMENT_DIR=/data/attachments`。这两处需要随数据库一起备份。数据库已有快照引用时必须迁移对应文件并核对内容摘要，不能用空目录覆盖。前端容器只读运行，API 使用两个 worker，模拟 IAM 独立单 worker。
+API 挂载 `./data:/data`，属主为 `10001:10001`，用于上传暂存和工具链接入配置。平台正式资料存 PostgreSQL，原件和预览存 MinIO，外部模拟运行态存 Redis；不再依赖旧应用快照或本地会话附件目录。新代码不会导入旧目录数据，旧环境文件须保留在其备份中。前端容器只读运行，API 使用两个 worker，模拟 IAM 独立单 worker。
 
 反馈单附件上限为 1 GiB，用户端 Nginx 对 `/api/v1/feedback/attachments` 单独配置 1025 MiB 请求上限并关闭请求缓冲。发布前执行 `install -d -m 0700 -o 10001 -g 10001 data/tmp`；API 的 `TMPDIR=/data/tmp` 用于磁盘临时文件，上传结束会关闭并删除暂存文件，运行数据备份可排除此目录。
 
@@ -74,7 +74,7 @@ API 挂载 `./data:/data`，属主为 `10001:10001`。配置 `APPLICATIONS_DEMO_
 
 1. 暂停所有连接该库的旧版本后端和同步发送器，再备份数据库以及 `data/`，保留旧版本镜像和配置；首次部署备份在 `backups/pre-app-20260916-01.dump`。使用与服务端兼容的 `pg_dump` 并验证恢复。
 2. 更新 `/opt/aicollabhub-app/.env` 的 `RELEASE_TAG` 并同步 Compose 配置，执行 `docker compose config --quiet`。
-3. 执行 `install -d -m 0700 -o 10001 -g 10001 backups/auth` 创建认证归档目录，再执行一次 `docker compose run --rm migrate`。迁移服务将旧认证数据归档到该持久化目录，确认迁移成功后再启动；这份归档不能代替整库备份。
+3. 确认连接目标为新结构数据库，执行一次 `docker compose run --rm migrate`，使用 `alembic -n resource_foundation upgrade head`。此入口不能把旧库原地转换为新库，发现旧表会停止；不允许用 stamp 跳过检查。确认迁移成功后再启动。
 4. 执行 `docker compose up -d --wait --wait-timeout 120`。
 5. 执行 `docker compose exec -T api python -m scripts.verify_services`，并验证两端登录、切换、注销、应用详情以及会话附件。
 
@@ -94,9 +94,9 @@ docker compose restart api
 
 - 数据库：填写 `POSTGRES_HOST/PORT/DB/USER/PASSWORD`，也支持优先级更高的 `DATABASE_URL`。
 - 缓存与对象存储：按实际接入填写 `REDIS_*`、`MINIO_*`，并创建业务使用的 MinIO Bucket。
-- 框架迁移：发布时执行一次 `python -m alembic upgrade head`，不随 worker 启动重复执行。当前唯一迁移头为 `20260917_merge_ds_auth`，汇合数据集、反馈及认证迁移；已执行独立数据集迁移的库会先校验并保留现有表。
-- 场景应用：新库按 [数据库说明](../database/scenario-applications/README.md) 初始化 8 张业务表，再启用 `APPLICATIONS_STORAGE=database`。内存模式使用单 worker。
-- `APPLICATIONS_DEMO_DIRECTORY` 中的供应方模拟快照和 `CONVERSATION_ATTACHMENT_DIR` 中的附件属于运行数据，须保留在固定路径。
+- 框架迁移：执行一次 `python -m alembic -n resource_foundation upgrade head`，不随 worker 启动重复执行。当前头为 `20260921_04_knowledge_external`，共 43 张业务表，见 [新库基线](../database/resource-foundation/README.md)。
+- 配置 PostgreSQL 后五类资源统一装配新仓储，旧存储模式变量不再选择旧表。不要执行旧默认迁移链或场景应用建表 SQL。
+- 业务文件在 MinIO，资料与引用在 PostgreSQL，备份时覆盖两者；Redis 承载共享登录上下文及外部模拟运行态。
 
 ## 前端构建
 

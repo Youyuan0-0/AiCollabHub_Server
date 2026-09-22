@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -18,9 +19,10 @@ class ChatInput(OverviewModel):
     knowledge_base: str = Field(max_length=200)
     tools: list[ShortText] = Field(default_factory=list, max_length=20)
     # 消息只引用已上传的附件编号；元信息由后端仓库读取，不能信任前端文件名或大小。
-    attachment_ids: list[Annotated[str, Field(pattern=r"^attachment-[0-9a-f]{32}$")]] = Field(
+    attachment_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
         default_factory=list, max_length=20
     )
+    idempotency_key: UUID | None = None
 
 
 class AnswerSource(OverviewModel):
@@ -82,6 +84,8 @@ class ConversationMessage(OverviewModel):
     sources: list[AnswerSource] = Field(default_factory=list)
     # 缺省为空以兼容旧历史；关系型消息表保存相同元信息，原文件仍在附件仓库中。
     attachments: list[ConversationAttachment] = Field(default_factory=list)
+    status: Literal["pending", "completed", "failed", "cancelled", "unknown"] = "completed"
+    error_message: str | None = None
 
 
 class ConversationRecord(OverviewModel):

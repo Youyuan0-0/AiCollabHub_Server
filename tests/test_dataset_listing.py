@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_admin import SCORES
@@ -14,7 +13,7 @@ from test_dataset_workspace import data as data
 from app.modules.common.identity import ACTORS, Actor
 from app.modules.datasets.admin_schemas import DatasetListing
 from app.modules.datasets.admin_service import DatasetAdminService
-from app.modules.datasets.repository import DatasetRecord, DatasetRepository
+from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 
 DATASET = "ds-fault-v3"
@@ -157,13 +156,9 @@ def test_listing_permissions_and_publication_history(client, data):
     assert queue["items"][0]["listingStatus"] == "unlisted"
 
 
-@pytest.mark.parametrize("database", [False, True])
-def test_listing_conflicts_and_persistence(tmp_path, database):
-    """首次写入和后续更新均只能一个竞争请求成功，数据库重开后仍保留下架。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'listing.db'}") if database else None
-    if engine is not None:
-        DatasetRecord.__table__.create(engine)
-    workspace = DatasetWorkspace(DatasetRepository(engine))
+def test_listing_conflicts_and_persistence():
+    """首次写入和后续更新均只能一个竞争请求成功。"""
+    workspace = DatasetWorkspace(DatasetRepository())
     admin = DatasetAdminService(workspace)
     for revision in (0, 1):
 
@@ -178,7 +173,7 @@ def test_listing_conflicts_and_persistence(tmp_path, database):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(save_once, range(2)))
         assert results.count(409) == 1
-    reopened = DatasetWorkspace(DatasetRepository(engine)) if engine else workspace
+    reopened = workspace
     assert reopened.listing(DATASET) == {"status": "unlisted", "revision": 2}
     with pytest.raises(HTTPException) as error:
         reopened.resource(DATASET, ACTORS[-1])
@@ -192,8 +187,6 @@ def test_listing_conflicts_and_persistence(tmp_path, database):
                 Actor("a", "管理员", "org_admin", organization),
             )
         assert error.value.status_code == 403
-    if engine is not None:
-        engine.dispose()
 
 
 def test_listing_requires_admin_session_and_csrf(auth):

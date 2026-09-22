@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
 from test_dataset_workspace import client as client
@@ -14,7 +13,7 @@ from app.modules.common.identity import ACTORS, Actor
 from app.modules.common.schemas import CatalogQuery
 from app.modules.datasets.admin_schemas import DatasetVisibility
 from app.modules.datasets.admin_service import DatasetAdminService
-from app.modules.datasets.repository import DatasetRecord, DatasetRepository
+from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.workspace import DatasetWorkspace
 
 DATASET = "ds-fault-v3"
@@ -106,13 +105,9 @@ def test_role_and_trusted_organization_control_edits(client):
         )
 
 
-@pytest.mark.parametrize("database", [False, True])
-def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
-    """首次并发保存只能成功一次；数据库重开仍保留范围，不能覆盖统计或活动。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'visibility.db'}") if database else None
-    if engine is not None:
-        DatasetRecord.__table__.create(engine)
-    workspace = DatasetWorkspace(DatasetRepository(engine))
+def test_scope_save_is_atomic_and_persists_across_instances():
+    """首次并发保存只能成功一次，不能覆盖统计或活动。"""
+    workspace = DatasetWorkspace(DatasetRepository())
     admin = DatasetAdminService(workspace)
     payload = DatasetVisibility(
         scope="organizations", targets=[" org-research ", "org-research"], revision=0
@@ -128,7 +123,7 @@ def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: save_once(), range(2)))
     assert results.count(409) == 1
-    reopened = DatasetWorkspace(DatasetRepository(engine)) if engine else workspace
+    reopened = workspace
     assert reopened.visibility(DATASET) == {
         "scope": "organizations",
         "targets": ["org-research"],
@@ -141,8 +136,6 @@ def test_scope_save_is_atomic_and_persists_across_instances(tmp_path, database):
     with pytest.raises(HTTPException) as error:
         reopened.resource(DATASET, ACTORS[2])
     assert error.value.status_code == 404
-    if engine is not None:
-        engine.dispose()
 
 
 def test_authenticated_scope_changes_require_csrf(auth):

@@ -17,12 +17,12 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.router import api_router, database_router, mock_router
 from app.core.config import Settings
+from app.core.foundation_services import configure_foundation
 from app.core.resources import ApplicationResources, create_resources
 from app.core.system_log_middleware import SystemLogContextMiddleware
 from app.core.system_logging import SystemLogWriter, capture_system_logs
 from app.modules.applications.application_service import ApplicationService
 from app.modules.applications.demo_store import (
-    create_database_application_service,
     create_demo_application_service,
 )
 from app.modules.common.auth.cas import MockCasClient
@@ -85,26 +85,17 @@ def create_app(
                     settings.feedback_upload_concurrency
                 )
                 application.state.database_engine = resources.database
-                # 本地知识库复用连接池和持久文件目录，启动不自动创建业务表。
-                if settings.app_env != "production" and settings.knowledge_storage == "database":
-                    application.state.knowledge_service = KnowledgeService(
-                        KnowledgeRepository(resources.database),
-                        KnowledgeFiles(settings.knowledge_document_dir),
-                        RetrievalProvider(settings),
-                    )
-                # 数据集与应用复用单库连接池，但申请及活动记录独立存储；启动时不自动建表。
-                if settings.app_env != "production" and settings.datasets_storage == "database":
-                    application.state.dataset_workspace = DatasetWorkspace(
-                        DatasetRepository(resources.database),
-                        create_dataset_publisher(settings.datasets_publication_mode),
-                    )
                 if (
-                    settings.app_env != "production"
-                    and applications_factory is None
-                    and settings.applications_storage == "database"
+                    resources.database is not None
+                    and resources.database.dialect.name == "postgresql"
                 ):
-                    application.state.application_service = create_database_application_service(
-                        application.state.database_engine, settings
+                    await run_in_threadpool(
+                        configure_foundation,
+                        application,
+                        resources,
+                        settings,
+                        configure_applications=applications_factory is None,
+                        configure_attachments=attachment_store is None,
                     )
                 # 工具链复用已装配的业务仓储；启动失败和正常退出都先关闭客户端再释放连接池。
                 toolchain_clients = configure_toolchains(application)
@@ -134,6 +125,7 @@ def create_app(
                     feedback_stopping.set()
                     await feedback_maintenance
         finally:
+            application.state.foundation = None
             application.state.system_log_writer = None
             application.state.database_engine = None
             application.state.resources = None
@@ -162,6 +154,7 @@ def create_app(
         else LocalAttachmentStore(settings.conversation_attachment_dir)
     )
     application.state.database_engine = None
+    application.state.foundation = None
     application.state.resources = None
     application.state.system_log_writer = None
     application.state.resource_reports = MemoryReports()
@@ -170,7 +163,6 @@ def create_app(
         "model", application.state.model_provider.list_models()
     )
     application.state.knowledge_workspace = KnowledgeWorkspace(create_knowledge_provider())
-    application.state.profile_contacts = {}
 
     @application.middleware("http")
     async def request_context(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -217,6 +209,17 @@ def create_app(
                     response.headers["X-Knowledge-Storage"] = settings.knowledge_storage
         if request.url.path.startswith("/api/v1/auth/"):
             response.headers["Referrer-Policy"] = "no-referrer"
+        if (
+            request.url.path.startswith("/api/")
+            and not request.url.path.startswith("/api/v1/auth/")
+            and application.state.foundation is not None
+        ):
+            response.headers["X-Data-Mode"] = (
+                "mock" if request.url.path.startswith("/api/v1/overview/operations") else "database"
+            )
+            for header in ("X-Application-Storage", "X-Dataset-Storage", "X-Knowledge-Storage"):
+                if header in response.headers:
+                    response.headers[header] = "postgresql"
         return response
 
     @application.exception_handler(SQLAlchemyError)
