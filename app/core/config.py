@@ -127,14 +127,19 @@ class Settings(BaseSettings):
     conversation_attachment_dir: Path = (
         Path(__file__).resolve().parents[2] / ".runtime" / "attachments"
     )
-    # 本轮仅开放模拟 IAM；真实 CAS 签名规范确认前，不提供生产认证开关。
-    auth_mode: Literal["disabled", "mock"] = "disabled"
+    # 正式模式必须由已验证的外部协议实现注入，不自动使用模拟客户端。
+    auth_mode: Literal["disabled", "mock", "iam"] = "disabled"
     auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
+    auth_callback_origin: AnyHttpUrl | None = None
     auth_mock_iam_url: AnyHttpUrl = "http://127.0.0.1:18002"
     # 容器间验证与注销通知可走内网；浏览器跳转始终使用上方公网来源。
     auth_internal_origin: AnyHttpUrl | None = None
     auth_mock_iam_internal_url: AnyHttpUrl | None = None
     auth_mock_secret: SecretStr | None = None
+    auth_iam_origin: AnyHttpUrl | None = None
+    auth_iam_app_id: str | None = None
+    auth_iam_admin_role_code: str | None = None
+    auth_session_secret: SecretStr | None = None
     auth_cookie_secure: bool = False
     auth_session_ttl: int = Field(default=28800, ge=60, le=86400)
     auth_login_ttl: int = Field(default=300, ge=30, le=600)
@@ -204,7 +209,9 @@ class Settings(BaseSettings):
         """检查认证模式、回调地址与模拟凭据的环境约束。"""
         for url in (
             self.auth_public_origin,
+            self.auth_callback_origin,
             self.auth_mock_iam_url,
+            self.auth_iam_origin,
             self.auth_internal_origin,
             self.auth_mock_iam_internal_url,
         ):
@@ -218,17 +225,45 @@ class Settings(BaseSettings):
                 or url.path not in (None, "/")
             ):
                 raise ValueError("Authentication URLs must be origins without credentials")
-        if self.auth_mode == "mock":
-            if self.app_env == "production":
+        if self.auth_mode in {"mock", "iam"}:
+            if self.auth_mode == "mock" and self.app_env == "production":
                 raise ValueError("Mock IAM is prohibited in production")
             if not self.database_url:
                 raise ValueError(
-                    "Mock authentication requires shared PostgreSQL (POSTGRES_* or DATABASE_URL)"
+                    "Authentication requires shared PostgreSQL (POSTGRES_* or DATABASE_URL)"
                 )
-            if not self.auth_mock_secret or len(self.auth_mock_secret.get_secret_value()) < 32:
+            if self.auth_mode == "mock" and (
+                not self.auth_mock_secret or len(self.auth_mock_secret.get_secret_value()) < 32
+            ):
                 raise ValueError("AUTH_MOCK_SECRET must contain at least 32 characters")
+            if self.auth_mode == "iam" and (
+                not self.auth_iam_origin
+                or not self.auth_callback_origin
+                or not self.auth_iam_app_id
+                or not self.auth_iam_admin_role_code
+                or not self.auth_session_secret
+                or len(self.auth_session_secret.get_secret_value()) < 32
+            ):
+                raise ValueError(
+                    "IAM authentication requires IAM origin, callback origin, app ID, "
+                    "admin role and session secret"
+                )
+            if (
+                self.auth_mode == "iam"
+                and self.app_env == "production"
+                and (
+                    self.auth_public_origin.host in {"127.0.0.1", "localhost"}
+                    or self.auth_callback_origin.host in {"127.0.0.1", "localhost"}
+                )
+            ):
+                raise ValueError("Production IAM callback must use a reachable host")
             if self.auth_public_origin.scheme == "https" and not self.auth_cookie_secure:
                 raise ValueError("HTTPS authentication requires secure cookies")
+            if self.auth_callback_origin and (
+                self.auth_callback_origin.host != self.auth_public_origin.host
+                or self.auth_callback_origin.scheme != self.auth_public_origin.scheme
+            ):
+                raise ValueError("Callback and frontend must use the same host and scheme")
         return self
 
     @field_validator(
@@ -264,6 +299,11 @@ class Settings(BaseSettings):
         "toolchain_knowledge_configuration",
         "auth_internal_origin",
         "auth_mock_iam_internal_url",
+        "auth_callback_origin",
+        "auth_iam_origin",
+        "auth_iam_app_id",
+        "auth_iam_admin_role_code",
+        "auth_session_secret",
         mode="before",
     )
     @classmethod

@@ -37,7 +37,8 @@ config_router = APIRouter(prefix="/auth", tags=["authentication"])
 @config_router.get("/config")
 def config(request: Request) -> dict:
     """返回前端初始化所需的认证启用状态与提供方标识。"""
-    return {"enabled": request.app.state.settings.auth_mode != "disabled", "provider": "mock"}
+    mode = request.app.state.settings.auth_mode
+    return {"enabled": mode != "disabled", "provider": mode}
 
 
 def set_cookie(response: Response, request: Request, name: str, value: str, ttl: int) -> None:
@@ -97,7 +98,8 @@ def login(
             # 已登录时直接返回原页面；切换账号仍通过 renew=true 显式进入 IAM。
             return RedirectResponse(target, 303)
     state, browser = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-    callback = str(settings.auth_public_origin).rstrip("/") + "/api/v1/auth/callback?"
+    callback_origin = settings.auth_callback_origin or settings.auth_public_origin
+    callback = str(callback_origin).rstrip("/") + "/api/v1/auth/callback?"
     callback += urlencode({"state": state, "scope": scope})
     save_login_state(
         request,
@@ -143,11 +145,19 @@ def callback(
         return login_failure(request, db, scope, "iam_unavailable", target)
     prepare_write(db, settings)
     identity = lock_identity(db, principal.subject)
-    # 仅模拟 IAM 的验票成功可激活未同步的占位用户；真实准入规则需另行适配。
-    if identity.status == UserStatus.PENDING and identity.user_sync_time is None:
+    # 正式 IAM 必须先收到可信身份推送，不能靠一次验票激活未知身份。
+    if (
+        settings.auth_mode == "mock"
+        and identity.status == UserStatus.PENDING
+        and identity.user_sync_time is None
+    ):
         identity.status = UserStatus.ACTIVE
         identity.updated_at = service.now()
-    if identity.role_sync_time is None and principal.subject in settings.auth_mock_admin_subjects:
+    if (
+        settings.auth_mode == "mock"
+        and identity.role_sync_time is None
+        and principal.subject in settings.auth_mock_admin_subjects
+    ):
         if identity.role != UserRole.ADMIN:
             identity.role, identity.updated_at = UserRole.ADMIN, service.now()
     if identity.user_sync_time is None and not identity.display_name:
@@ -204,7 +214,11 @@ def current_session(request: Request, db: SessionDependency, scope: Scope = "use
             "expiresAt": value.expires_at.isoformat(),
             "csrfToken": csrf_token(
                 raw,
-                request.app.state.settings.auth_mock_secret.get_secret_value(),
+                (
+                    request.app.state.settings.auth_mock_secret
+                    if request.app.state.settings.auth_mode == "mock"
+                    else request.app.state.settings.auth_session_secret
+                ).get_secret_value(),
             ),
         }
     )
@@ -254,7 +268,7 @@ def logout(
 async def single_logout(request: Request) -> dict:
     """校验统一注销通知来源与报文，并撤销对应票据的会话。"""
     settings = request.app.state.settings
-    if not hmac.compare_digest(
+    if settings.auth_mode == "mock" and not hmac.compare_digest(
         request.headers.get("x-mock-iam-key", "").encode(),
         settings.auth_mock_secret.get_secret_value().encode(),
     ):
@@ -268,6 +282,10 @@ async def single_logout(request: Request) -> dict:
         body.extend(chunk)
         if len(body) > 16384:
             raise HTTPException(413, "notification_too_large")
+    if settings.auth_mode == "iam":
+        await run_in_threadpool(
+            request.app.state.iam_verifier.verify, "logout", bytes(body), request.headers
+        )
     try:
         form = parse_qs(body.decode("utf-8"), strict_parsing=True, max_num_fields=2)
         if set(form) != {"logoutRequest"} or len(form["logoutRequest"]) != 1:
