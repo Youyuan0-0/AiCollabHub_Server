@@ -1,0 +1,59 @@
+worker_processes auto;
+pid @@DATA@@/web/nginx.pid;
+error_log stderr warn;
+events { worker_connections 2048; }
+http {
+    include @@RUNTIME@@/nginx/conf/mime.types;
+    default_type application/octet-stream;
+    # 不记录查询串、票据或 Cookie。
+    log_format application '$request_id $request_method $uri $status $request_time';
+    access_log @@DATA@@/web/access.log application;
+    server_tokens off;
+    sendfile on;
+    keepalive_timeout 30;
+    client_body_temp_path @@DATA@@/web/body;
+    proxy_temp_path @@DATA@@/web/body;
+    fastcgi_temp_path @@DATA@@/web/fastcgi;
+    uwsgi_temp_path @@DATA@@/web/uwsgi;
+    scgi_temp_path @@DATA@@/web/scgi;
+    upstream platform_api {
+        server 127.0.0.1:@@API_PORT@@;
+        keepalive 16;
+    }
+    server {
+        listen 0.0.0.0:@@WEB_PORT@@@@TLS_LISTEN@@;
+        server_name _;
+        @@TLS_CONFIG@@
+        root @@RELEASE@@/frontend/user;
+        client_max_body_size 11m;
+        location ~ ^/api/v1/admin/(application|tool)-publications/[^/]+/report-files$ {
+            client_max_body_size 21m;
+            include @@CONFIG@@/proxy.conf;
+        }
+        location ~ ^/api/v1/knowledge-bases/[^/]+/files$ {
+            client_max_body_size 201m;
+            include @@CONFIG@@/proxy.conf;
+        }
+        location = /api/v1/application-tutorial-files {
+            client_max_body_size 101m;
+            include @@CONFIG@@/proxy.conf;
+        }
+        location = /api/v1/feedback/attachments {
+            client_max_body_size 1025m;
+            include @@CONFIG@@/proxy.conf;
+        }
+        location /api/ { include @@CONFIG@@/proxy.conf; }
+        location /authn-api/v5/cas/platform/ {
+            proxy_pass http://127.0.0.1:@@IAM_PORT@@;
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+        location = /admin { return 302 /admin/; }
+        location /admin/ {
+            alias @@RELEASE@@/frontend/admin/;
+            try_files $uri $uri/ /admin/index.html;
+        }
+        location / { try_files $uri $uri/ /index.html; }
+    }
+}
