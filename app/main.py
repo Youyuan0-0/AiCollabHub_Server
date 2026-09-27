@@ -49,6 +49,7 @@ from app.modules.knowledge.workspace import KnowledgeWorkspace, create_knowledge
 from app.modules.models.workspace import create_model_provider
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
+from app.services.home_activity import HomeActivityStore
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,8 @@ def create_app(
     )
     application.state.database_engine = None
     application.state.foundation = None
+    # 每个应用实例独立保存首页公告和运营设置；不依赖数据库迁移。
+    application.state.home_activity = HomeActivityStore()
     application.state.resources = None
     application.state.system_log_writer = None
     application.state.resource_reports = MemoryReports()

@@ -1,7 +1,9 @@
 """知识库需求回归：真实内容、权限隔离、配置失效、并发、持久化及失败路径。"""
 
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 from zipfile import ZipFile
 
 import httpx
@@ -17,7 +19,9 @@ from test_auth import csrf, login
 from app.core.config import Settings
 from app.main import create_app
 from app.modules.common.identity import ACTORS
-from app.modules.knowledge.documents import parse_document, split_text
+from app.modules.knowledge.database import KnowledgeDatabase
+from app.modules.knowledge.database_files import KnowledgeDatabaseFiles
+from app.modules.knowledge.documents import ALLOWED_EXTENSIONS, parse_document, split_text
 from app.modules.knowledge.repository import KnowledgeRecord, KnowledgeRepository
 from app.modules.knowledge.retrieval import RetrievalProvider
 from app.modules.knowledge.schemas import CreateInput, IndexInput
@@ -351,6 +355,79 @@ def test_upload_rejects_metadata_only_duplicates_empty_and_unsupported(client):
         == 409
     )
     assert client.get(path).json()["documentCount"] == 1
+
+
+def test_database_upload_preflight_rejects_unapproved_base():
+    """待审申请没有正式知识库外键，拒绝必须发生在原文上传之前。"""
+
+    class Resources:
+        @contextmanager
+        def transaction(self, *, is_readonly=False):
+            assert is_readonly
+            yield self
+
+        def get_resource(self, base_id):
+            assert base_id == "pending-base"
+            return None
+
+    database = KnowledgeDatabase(Resources())
+    with pytest.raises(HTTPException) as failure:
+        database.ensure_uploadable("pending-base")
+    assert failure.value.status_code == 409
+
+
+def test_upload_preflight_runs_before_file_save(client, monkeypatch):
+    """数据库适配器拒绝待审库时，不得先写入可能无法关联的原文件。"""
+    base = client.post(ROOT, json={"name": "待审核库", "description": "上传前置校验"}).json()
+    service = client.app.state.knowledge_service
+    checked = []
+
+    def reject(base_id):
+        checked.append(base_id)
+        raise HTTPException(409, "知识库审核通过后才能上传文档")
+
+    def unexpected_save(*args, **kwargs):
+        pytest.fail("审批前不应保存原文件")
+
+    monkeypatch.setattr(service.repository, "ensure_uploadable", reject, raising=False)
+    monkeypatch.setattr(service.files, "save", unexpected_save, raising=False)
+    monkeypatch.setattr(service.files, "save_document", unexpected_save, raising=False)
+    response = client.post(
+        f"{ROOT}/{base['id']}/documents",
+        data={"revision": base["revision"]},
+        files={"files": ("pending.txt", b"test")},
+    )
+    assert response.status_code == 409
+    assert checked == [base["id"]]
+
+
+def test_database_file_upload_uses_parser_extension_whitelist():
+    """旧版 XLS 可经文件服务上传，不接受解析器无法处理的 CSV、PPTX。"""
+    recorded = {}
+
+    class Foundation:
+        @contextmanager
+        def transaction(self, *, is_readonly=False):
+            assert is_readonly
+            yield self
+
+        def user_id(self, session, actor_id):
+            assert actor_id == ACTORS[0].id
+            return uuid4()
+
+    class Files:
+        foundation = Foundation()
+
+        def save(self, user_id, namespace, name, stream, **options):
+            recorded.update(options)
+            assert namespace == "knowledge" and name == "legacy.xls"
+            return {"id": uuid4(), "size_bytes": len(stream.read())}
+
+    identifier, size = KnowledgeDatabaseFiles(Files()).save_document(
+        BytesIO(b"xls"), "legacy.xls", ACTORS[0]
+    )
+    assert identifier and size == 3
+    assert recorded["extensions"] == ALLOWED_EXTENSIONS
 
 
 def test_admin_fields_history_search_and_user_cannot_set_scope(client):

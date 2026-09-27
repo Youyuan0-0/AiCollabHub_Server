@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.conversations import router as conversations_router
 from app.api.health import router as health_router
+from app.api.home_activity import router as home_activity_router
 from app.api.overview import router as overview_router
 from app.modules.admin.logs.router import router as logs_router
 from app.modules.admin.router import router as admin_router
@@ -39,6 +40,7 @@ api_router.include_router(logs_router)
 # 健康检查不依赖登录；看板、会话仍保留各自的环境限制。
 database_router = APIRouter(prefix="/api/v1")
 database_router.include_router(overview_router)
+database_router.include_router(home_activity_router)
 database_router.include_router(conversations_router)
 database_router.include_router(feedback_router)
 
