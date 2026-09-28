@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$NginxRoot,
     [ValidateRange(1, 65535)][int]$ApiPort = 18000,
     [ValidateRange(1, 32)][int]$Workers = 2,
@@ -21,8 +21,15 @@ $runtime = Join-Path $projectRoot ('.runtime/local-' + (Get-Date -Format 'yyyyMM
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 $recordFile = Join-Path $runtime 'processes.json'
 $processes = @()
+$previousDirectory = $env:APPLICATIONS_IDENTITY_DIRECTORY
 Push-Location $projectRoot
 try {
+    # 本地 Mock 登录配套明确标注的测试目录；已配置目录和正式身份模式不受影响。
+    $useMockDirectory = & $python -c "from app.core.config import Settings; s=Settings(); print(int(s.auth_mode == 'mock' and not s.applications_identity_directory))"
+    if ($LASTEXITCODE -ne 0) { throw 'Identity configuration validation failed' }
+    if ($MockIamPort -gt 0 -and $useMockDirectory -eq '1') {
+        $env:APPLICATIONS_IDENTITY_DIRECTORY = Join-Path $projectRoot 'deploy/mock-identity-directory.json'
+    }
     & $python -m scripts.render_nginx --nginx-root $gatewayRoot --api-port $ApiPort --port $GatewayPort
     if ($LASTEXITCODE -ne 0) { throw 'Gateway configuration generation failed' }
     Push-Location $gatewayRoot
@@ -59,4 +66,7 @@ catch {
     }
     throw
 }
-finally { Pop-Location }
+finally {
+    $env:APPLICATIONS_IDENTITY_DIRECTORY = $previousDirectory
+    Pop-Location
+}

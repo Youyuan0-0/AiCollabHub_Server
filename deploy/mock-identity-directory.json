@@ -1,0 +1,17 @@
+{
+  "organizations": [
+    { "id": "mock-research", "name": "模拟研发单位" },
+    { "id": "mock-production", "name": "模拟生产单位" }
+  ],
+  "projects": [
+    { "id": "mock-project-a", "name": "模拟研发项目组", "organizationId": "mock-research" },
+    { "id": "mock-project-b", "name": "模拟生产项目组", "organizationId": "mock-production" }
+  ],
+  "members": [
+    { "id": "mock-user", "name": "模拟用户A", "role": "publisher", "organizationId": "mock-research", "projectIds": ["mock-project-a"] },
+    { "id": "mock-user-b", "name": "模拟用户B", "role": "publisher", "organizationId": "mock-research", "projectIds": ["mock-project-a"] },
+    { "id": "mock-user-c", "name": "模拟用户C", "role": "publisher", "organizationId": "mock-production", "projectIds": ["mock-project-b"] },
+    { "id": "mock-admin", "name": "模拟管理员A", "role": "admin", "organizationId": "mock-research", "projectIds": [] },
+    { "id": "mock-admin-b", "name": "模拟管理员B", "role": "admin", "organizationId": "mock-production", "projectIds": [] }
+  ]
+}
