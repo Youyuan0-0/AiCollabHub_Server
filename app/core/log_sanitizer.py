@@ -41,7 +41,11 @@ def redact_text(value: str) -> str:
 
 
 def sanitize_value(value: object) -> object:
-    """仅保留有界 JSON 值；未知对象和异常只记录类型，不调用其字符串表示。"""
+    """把日志上下文转换为经过脱敏、具有深度及总元素上限的 JSON 值。
+
+    整棵结构共用元素预算，防止多个嵌套集合放大日志体积。未知对象只保留类型名，
+    不调用可能包含凭据的 __str__/__repr__；异常详情由专门的受限提取函数处理。
+    """
     return _sanitize(value, depth=0, budget=[MAX_CONTEXT_ITEMS])
 
 

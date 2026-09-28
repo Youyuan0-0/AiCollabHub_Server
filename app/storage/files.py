@@ -34,7 +34,15 @@ class FileStore:
         file_id: UUID | None = None,
         mime_type: str = "application/octet-stream",
     ) -> dict:
-        """校验大小和名称后上传，编号可由业务幂等键派生，重试不得替换文件内容。"""
+        """校验并暂存输入流，再分阶段登记上传占位、写对象、标记就绪。
+
+        user_id 必须来自可信业务身份；namespace 由业务生成，用于隔离会话等归属。
+        maximum 单位为字节，extensions 是允许的扩展名集合。file_id 可由业务幂等键
+        派生，但相同编号必须匹配上传者、对象键、文件名及内容摘要，不允许覆盖旧内容。
+
+        MinIO 操作不能随 SQL 事务回滚，因此上传前先提交带回收期限的占位。上传或
+        后续提交失败时保留记录和可能存在的对象，由清理任务核对状态及引用后回收。
+        """
         if self.storage is None:
             raise HTTPException(503, "object_storage_not_configured")
         name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
@@ -45,6 +53,8 @@ class FileStore:
         key = file_id or uuid4()
         object_key = f"{namespace}/{key}/original"
         files = self.foundation.table("files")
+        # 小文件留在内存，超过 1 MiB 转为临时磁盘文件；边读取边累计大小并计算内容摘要。
+        # 上传前完成校验，避免超限或空文件进入对象存储。
         with SpooledTemporaryFile(max_size=1024 * 1024) as temporary:
             size, digest = 0, sha256()
             while chunk := stream.read(65536):

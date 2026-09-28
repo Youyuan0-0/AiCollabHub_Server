@@ -29,7 +29,13 @@ async def limited_upload_form(
     invalid_form_message: str,
     max_part_size: int = 1024 * 1024,
 ) -> AsyncIterator[FormData]:
-    """限流并有界解析单文件表单，退出或取消时释放文件及名额；字段规则由调用方检查。"""
+    """限制并发及实际请求体大小，返回需要在上下文内使用的单文件表单。
+
+    max_bytes 包含 multipart 边界和普通字段，不能只按文件正文大小配置；
+    limiter 由应用实例共享，限制当前 worker 同时解析的上传数。等待名额超过
+    0.1 秒返回 429，超过请求体限额返回 413，表单格式错误返回 422。
+    调用方负责字段与业务归属校验，退出时表单和临时文件都会关闭。
+    """
     if not request.headers.get("content-type", "").startswith("multipart/form-data"):
         raise HTTPException(415, "请使用文件上传表单")
     try:
@@ -78,7 +84,12 @@ async def limited_upload_form(
 
 
 def byte_range(value: str | None, size: int) -> tuple[int, int, int]:
-    """解析浏览器单段 Range 请求，支持视频拖动及 PDF 按需读取。"""
+    """解析单段字节范围，返回包含首尾的起止位置及 HTTP 状态码。
+
+    支持 bytes=10-20、bytes=10- 和 bytes=-20；末端超出文件时截到最后一个字节。
+    缺少 Range 返回完整内容的 200，有效范围返回 206，多段或不可满足的范围返回
+    带文件总大小的 416，调用方据此构造 Content-Range 和实际传输长度。
+    """
     if value is None:
         return 0, size - 1, 200
     match = re.fullmatch(r"bytes=(\d*)-(\d*)", value) if len(value) <= 128 else None
@@ -119,6 +130,7 @@ def object_response(
     if cache_control is not None:
         headers["Cache-Control"] = cache_control
     if media_type == "text/html":
+        # 文档预览可能来自用户内容，用沙箱及受限资源策略阻止脚本、外部加载和越权嵌入。
         headers["Content-Security-Policy"] = (
             "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
             "frame-ancestors 'self'; sandbox"

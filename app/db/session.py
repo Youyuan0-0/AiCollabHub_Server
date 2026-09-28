@@ -29,7 +29,15 @@ def create_db_engine(
     idle_session_timeout: int = 120,
     application_name: str = "aicollabhub",
 ) -> Engine:
-    """创建有界连接池；PostgreSQL 空闲回收以秒计，0 关闭，仅影响本引擎连接。"""
+    """创建当前 worker 使用的有界连接池，不在此执行业务查询。
+
+    pool_size 为常驻连接上限，max_overflow 为临时溢出额度；部署总额度需要再乘
+    worker 数量。pool_timeout 是借连接的等待秒数，connect_timeout 是建立连接的
+    等待秒数，pool_recycle 是池内连接的回收年龄，三者不是同一个超时。
+
+    PostgreSQL 的 idle_session_timeout 按秒限制普通空闲连接，0 表示关闭，
+    只影响本引擎新建的连接。pre_ping 可替换失效连接，但不会重试已执行的业务事务。
+    """
     # 从连接池取出连接时检查存活状态，减少长时间闲置后使用失效连接的风险。
     options = {}
     url = normalize_database_url(database_url)

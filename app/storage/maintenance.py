@@ -19,7 +19,12 @@ REFERENCE_TABLES = (
 def cleanup_files(
     foundation: FoundationDatabase, storage: MinioStorage, *, limit: int = 100
 ) -> dict[str, int]:
-    """多进程通过行锁领取；业务引用与历史预览优先保留，失败五分钟后重试。"""
+    """分批领取无引用的过期文件，在事务外删除对象，再记录删除结果。
+
+    limit 限制候选原件数，返回的 deleted/deferred 按文件数计，包含关联预览。
+    首次扫描只选候选；真正删除前锁定原件和预览，并重新核对引用和期限，防止
+    扫描之后已被业务使用的文件遭到回收。deleting 状态保留五分钟租约以便失败续作。
+    """
     files, previews = foundation.table("files"), foundation.table("file_previews")
 
     def unused(file_id: object) -> object:
@@ -70,6 +75,7 @@ def cleanup_files(
                 .mappings()
                 .all()
             )
+            # 任一关联文件已被其他 worker 锁定就跳过整组，不能只删除拿到锁的部分文件。
             if len(rows) != len(preview_ids) + 1 or any(
                 row["status"] == "deleted" or row["bucket"] != storage.bucket for row in rows
             ):

@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.transactions import commit_write, prepare_write
 
+# 元组依次表示资源主表名、发布申请/版本表前缀、业务模块标识。
+# 知识库和工具的数据库命名与接口资源类型不同，统一在此映射，调用方不要自行拼主表名。
 RESOURCE_TABLES = {
     "dataset": ("datasets", "dataset", "datasets"),
     "model": ("models", "model", "models"),
@@ -123,7 +125,15 @@ class FoundationDatabase:
 
     @contextmanager
     def transaction(self, *, is_readonly: bool = False) -> Iterator[Session]:
-        """一次业务调用使用同一事务；只读快照不提交，写入保留超时和不确定提交处理。"""
+        """为一次业务操作提供 Session，并在退出时提交写入或结束只读快照。
+
+        使用 Engine 时，只读事务采用 REPEATABLE READ，使一次聚合读取中的列表、
+        计数和关联资料保持同一快照。传入已有 Connection 时沿用其事务配置，
+        通过保存点支持测试的外层回滚，不替调用方修改外层隔离级别。
+
+        写事务沿用统一超时和提交规则；唯一约束、序列化、死锁及锁等待冲突映射为
+        409。提交结果不确定的 503 由 commit_write 处理，此处不自动重放业务。
+        """
         engine = (
             self.engine.execution_options(
                 isolation_level="REPEATABLE READ", postgresql_readonly=True
@@ -153,6 +163,7 @@ class FoundationDatabase:
 
     def user_id(self, session: Session, subject: str) -> UUID:
         """将可信 IAM 身份映射到已建立的本地用户，不在业务中创建虚构用户。"""
+        # 映射仅在本次 Session 内复用，避免跨请求缓存身份变更后的旧资料。
         cache = session.info.setdefault("subject_ids", {})
         if subject in cache:
             return cache[subject]
@@ -178,7 +189,11 @@ class FoundationDatabase:
 
     @staticmethod
     def lock(session: Session, key: str) -> None:
-        """锁定包含首次创建的业务键，避免不存在记录时行锁无法保护幂等操作。"""
+        """按业务键取得 PostgreSQL 事务级咨询锁，保护首次创建和后续修改。
+
+        key 应包含业务类型及资源、用户或请求编号，让竞争同一操作的 worker 使用
+        相同键。锁随事务结束自动释放；即使目标行尚不存在，也能串行化幂等检查。
+        """
         session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": "foundation:" + key},

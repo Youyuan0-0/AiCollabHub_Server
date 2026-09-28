@@ -11,7 +11,11 @@ from app.storage.client import MinioStorage
 
 @dataclass
 class ApplicationResources:
-    """保存各 worker 的单库连接池与服务客户端，并统一管理回收顺序。"""
+    """保存一个应用生命周期内的连接池与客户端，并统一管理回收顺序。
+
+    多 worker 部署时各进程分别持有一份资源；请求复用这些客户端，但不能共享
+    数据库 Session。字段为 None 表示未配置对应服务，由使用方决定是否允许缺省。
+    """
 
     database: Engine | None = None
     cache: RedisCache | None = None
@@ -46,4 +50,5 @@ def create_resources(settings: Settings) -> ApplicationResources:
         if settings.minio_endpoint is not None:
             storage = MinioStorage.from_settings(settings)
             cleanup.callback(storage.close)
+        # 把清理职责转交给应用生命周期；不转移时，离开 with 就会关闭刚创建的客户端。
         return ApplicationResources(database, cache, storage, cleanup.pop_all())

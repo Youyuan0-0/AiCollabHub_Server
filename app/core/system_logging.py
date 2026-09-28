@@ -99,7 +99,12 @@ def _snapshot(record: logging.LogRecord, writer: SystemLogWriter) -> dict[str, o
 
 
 class SystemLogWriter:
-    """每个应用实例维护一个队列和写线程，复用连接池但不复用业务事务。"""
+    """将已脱敏的系统日志从请求线程转交给独立写线程。
+
+    每个应用实例持有有界队列；日志写入使用独立短事务，业务回滚不会撤销诊断记录。
+    入队不等待空位，队列满、数据库故障或停机超时均降级到控制台。该内存队列
+    不是持久化消息队列，进程被强制终止时仍可能丢失尚未处理的日志。
+    """
 
     def __init__(
         self, engine: Engine | None, instance_id: str, *, queue_capacity: int = QUEUE_CAPACITY
@@ -176,6 +181,7 @@ class SystemLogWriter:
                 if self._shutdown_deadline is not None and monotonic() >= self._shutdown_deadline:
                     self._fallback(rows, "shutdown_timeout")
                 elif monotonic() < self._retry_after:
+                    # 退避期内的批次直接输出到控制台，不积压重试队列，避免故障持续占用内存。
                     self._fallback(rows, "database_backoff")
                 else:
                     self._write(rows)

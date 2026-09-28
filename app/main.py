@@ -55,8 +55,6 @@ from app.storage.client import ObjectNotFound, StorageUnavailable
 logger = logging.getLogger(__name__)
 
 
-# settings 与 resources_factory 隔离实例配置和连接池；chat_provider 可注入回复实现，默认回显。
-# 返回独立 FastAPI 应用，启动仅创建资源客户端，不自动执行数据库迁移。
 def create_app(
     settings: Settings | None = None,
     *,
@@ -67,7 +65,15 @@ def create_app(
     iam_verifier: IamIngressVerifier | None = None,
     applications_factory: Callable[[], ApplicationService] | None = None,
 ) -> FastAPI:
-    """装配应用路由、认证与资源生命周期，支持开发和测试注入服务。"""
+    """装配独立的 FastAPI 实例，并在 lifespan 中管理外部资源。
+
+    settings 决定环境、认证和存储模式；各 factory/provider 参数供测试或接入层
+    替换具体实现。未注入的问答提供器默认回显问题，不代表已连接真实模型。
+    正式 IAM 模式必须同时提供经过验证的 CAS 客户端和通知验签器。
+
+    调用工厂只完成应用配置；连接池创建、现有表结构读取和后台任务启动发生在
+    lifespan 阶段。数据库迁移须独立执行，启动过程不会补表或导入样例数据。
+    """
     settings = settings if settings is not None else Settings()
     if settings.auth_mode == "iam" and (cas_client is None or iam_verifier is None):
         raise ValueError("IAM mode requires a verified CAS client and notification verifier")
@@ -81,6 +87,8 @@ def create_app(
         """先停止业务后台任务，再排空日志队列，最后释放公共连接池。"""
         try:
             async with AsyncExitStack() as cleanup:
+                # 同步客户端的创建和关闭放到线程池，避免阻塞 ASGI 事件循环。
+                # 退出栈后进先出：先停止日志采集并排空队列，最后才释放数据库连接池。
                 resources = await run_in_threadpool(resources_factory, settings)
                 cleanup.push_async_callback(run_in_threadpool, resources.close)
                 writer = SystemLogWriter(resources.database, settings.instance_id)
@@ -97,6 +105,8 @@ def create_app(
                     resources.database is not None
                     and resources.database.dialect.name == "postgresql"
                 ):
+                    # 配置 PostgreSQL 后以真实仓储替换初始内存实现；反射失败直接中止启动。
+                    # 显式注入的应用服务和附件存储保留，便于隔离契约测试的外部依赖。
                     await run_in_threadpool(
                         configure_foundation,
                         application,
@@ -131,6 +141,7 @@ def create_app(
                 try:
                     yield
                 finally:
+                    # 等清理协程结束后再退出资源栈，防止后台任务使用已经关闭的客户端。
                     feedback_stopping.set()
                     await feedback_maintenance
         finally:

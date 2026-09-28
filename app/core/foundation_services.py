@@ -31,7 +31,12 @@ def configure_foundation(
     configure_applications: bool = True,
     configure_attachments: bool = True,
 ) -> None:
-    """平台资料始终使用新库，外部服务的模拟结果使用共享运行态。"""
+    """将平台业务切换到新基线仓储，并复用同一套数据库和文件客户端。
+
+    先反射全部必需表，成功后才装配各模块；缺表或连接失败会向上传播，不能以
+    内存数据掩盖部署问题。Redis 只承接外部服务的模拟运行态，正式资料仍存数据库。
+    两个 configure 开关用于保留调用方显式注入的场景应用服务或会话附件存储。
+    """
     if resources.database is None:
         return
     foundation = FoundationDatabase(resources.database, settings)

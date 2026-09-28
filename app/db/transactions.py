@@ -27,7 +27,13 @@ def prepare_write(session: Session, settings: Settings) -> None:
 
 
 def commit_write(session: Session) -> None:
-    """单库也可能在提交后断连；不自动重试，调用方使用原事件核对结果。"""
+    """提交当前业务事务，将提交阶段的数据库错误标记为结果待核对。
+
+    flush 先暴露可确定的约束错误；进入 commit 后若连接异常，服务端可能已经落盘，
+    客户端却未收到确认。此时返回 commit_outcome_unknown，调用方应使用原幂等键
+    查询结果，不能生成新请求或盲目重放。后续 rollback 只清理本地事务状态，
+    不能证明数据库端此前的提交没有成功。
+    """
     # 约束冲突在提交之前交给调用方处理，不能误报为提交结果不确定。
     session.flush()
     try:
