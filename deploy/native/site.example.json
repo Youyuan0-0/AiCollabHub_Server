@@ -1,0 +1,18 @@
+{
+  "profile": "rehearsal",
+  "database_environment": "test",
+  "postgres_db": "aicollabhub_test",
+  "public_origin": "http://CHANGE_ME",
+  "data_dir": "/data/aicollabhub",
+  "web_port": 80,
+  "api_port": 18000,
+  "iam_port": 18002,
+  "postgres_port": 5432,
+  "redis_port": 6379,
+  "minio_port": 9000,
+  "minio_console_port": 9001,
+  "api_workers": 2,
+  "open_firewall": true,
+  "tls_certificate": "",
+  "tls_private_key": ""
+}

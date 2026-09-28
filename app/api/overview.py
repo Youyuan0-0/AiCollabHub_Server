@@ -65,7 +65,9 @@ def home_overview(request: Request, session: SessionDependency) -> HomeOverviewR
     # 仅服务端非生产环境可补充固定样例，生产请求不能通过查询参数启用。
     if getattr(request.app.state, "foundation", None) is None:
         raise HTTPException(503, "overview_storage_requires_postgresql")
-    return database_home(request.app.state.foundation, current_actor(request))
+    return database_home(
+        request.app.state.foundation, current_actor(request), request.app.state.home_activity
+    )
 
 
 @router.get(

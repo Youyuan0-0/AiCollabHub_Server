@@ -263,6 +263,12 @@ class KnowledgeDatabase:
         with self.resources.transaction(is_readonly=True) as unit:
             return self._read(unit, base_id)
 
+    def ensure_uploadable(self, base_id: str) -> None:
+        """确认审批已生成正式知识库；上传前拒绝待审申请，避免产生孤立原文件。"""
+        with self.resources.transaction(is_readonly=True) as unit:
+            if unit.get_resource(base_id) is None:
+                raise HTTPException(409, "知识库审核通过后才能上传文档")
+
     def list(self) -> list[dict]:
         """合并正式资源与当前发布申请，平台 UUID 始终稳定。"""
         with self.resources.transaction(is_readonly=True) as unit:

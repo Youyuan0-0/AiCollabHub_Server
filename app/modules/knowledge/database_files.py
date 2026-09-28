@@ -3,7 +3,7 @@
 from typing import BinaryIO
 
 from app.modules.common.identity import Actor
-from app.modules.knowledge.documents import MAX_FILE_BYTES
+from app.modules.knowledge.documents import ALLOWED_EXTENSIONS, MAX_FILE_BYTES
 from app.storage.files import FileStore
 
 
@@ -23,7 +23,8 @@ class KnowledgeDatabaseFiles:
             name,
             stream,
             maximum=MAX_FILE_BYTES,
-            extensions={".txt", ".md", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv"},
+            # 文件服务与知识库解析器共用格式白名单，避免页面接受后在存储层被拒绝。
+            extensions=ALLOWED_EXTENSIONS,
         )
         return str(row["id"]), row["size_bytes"]
 

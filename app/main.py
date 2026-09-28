@@ -26,10 +26,12 @@ from app.modules.applications.demo_store import (
     create_demo_application_service,
 )
 from app.modules.common.auth.cas import MockCasClient
+from app.modules.common.auth.iam import CasClient, IamIngressVerifier
 from app.modules.common.auth.router import config_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
 from app.modules.common.identity import DemoIdentityProvider, SessionIdentityProvider
+from app.modules.common.identity_sync.iam_router import router as iam_sync_router
 from app.modules.common.identity_sync.router import router as identity_sync_router
 from app.modules.common.memory_reports import MemoryReports
 from app.modules.common.resource_workspace import ResourceWorkspace
@@ -47,6 +49,7 @@ from app.modules.knowledge.workspace import KnowledgeWorkspace, create_knowledge
 from app.modules.models.workspace import create_model_provider
 from app.services.attachment_store import AttachmentStore, LocalAttachmentStore
 from app.services.chat_provider import ChatProvider, EchoChatProvider
+from app.services.home_activity import HomeActivityStore
 from app.storage.client import ObjectNotFound, StorageUnavailable
 
 logger = logging.getLogger(__name__)
@@ -60,11 +63,16 @@ def create_app(
     resources_factory: Callable[[Settings], ApplicationResources] = create_resources,
     chat_provider: ChatProvider | None = None,
     attachment_store: AttachmentStore | None = None,
-    cas_client: MockCasClient | None = None,
+    cas_client: CasClient | None = None,
+    iam_verifier: IamIngressVerifier | None = None,
     applications_factory: Callable[[], ApplicationService] | None = None,
 ) -> FastAPI:
     """装配应用路由、认证与资源生命周期，支持开发和测试注入服务。"""
     settings = settings if settings is not None else Settings()
+    if settings.auth_mode == "iam" and (cas_client is None or iam_verifier is None):
+        raise ValueError("IAM mode requires a verified CAS client and notification verifier")
+    if settings.auth_mode == "iam" and isinstance(cas_client, MockCasClient):
+        raise ValueError("Mock CAS client cannot be used in IAM mode")
     toolchain_configuration = ToolchainConfigurationStore(settings)
     settings = toolchain_configuration.settings(settings)
 
@@ -112,6 +120,7 @@ def create_app(
                     )
                     service.workflows.provider = service.provider
                 application.state.cas_client = cas_client
+                application.state.iam_verifier = iam_verifier
                 if settings.auth_mode == "mock" and cas_client is None:
                     application.state.cas_client = MockCasClient(settings)
                     cleanup.callback(application.state.cas_client.close)
@@ -155,6 +164,8 @@ def create_app(
     )
     application.state.database_engine = None
     application.state.foundation = None
+    # 每个应用实例独立保存首页公告和运营设置；不依赖数据库迁移。
+    application.state.home_activity = HomeActivityStore()
     application.state.resources = None
     application.state.system_log_writer = None
     application.state.resource_reports = MemoryReports()
@@ -298,13 +309,18 @@ def create_app(
     application.include_router(api_router)
     # 持久化接口与 Mock 业务共用认证开关，健康检查和登录入口保持独立。
     business_dependencies = (
-        [Depends(require_business_identity)] if settings.auth_mode == "mock" else []
+        [Depends(require_business_identity)] if settings.auth_mode != "disabled" else []
     )
     application.include_router(database_router, dependencies=business_dependencies)
     application.include_router(config_router, prefix="/api/v1")
-    if settings.auth_mode == "mock":
+    if settings.auth_mode != "disabled":
         application.include_router(auth_router, prefix="/api/v1")
+    if settings.auth_mode == "mock":
         application.include_router(identity_sync_router, prefix="/api/v1")
+    if settings.auth_mode == "iam":
+        application.include_router(iam_sync_router, prefix="/api/v1")
+    if settings.auth_mode != "disabled":
+        application.state.application_identity = SessionIdentityProvider()
     # 认证按配置启用；生产环境不提供模拟 IAM 或样例业务。
     if settings.app_env != "production":
         from app.modules.tools.workspace import ToolWorkspace
@@ -324,9 +340,8 @@ def create_app(
         application.state.application_service = (
             applications_factory or create_demo_application_service
         )()
-        application.state.application_identity = (
-            SessionIdentityProvider() if settings.auth_mode == "mock" else DemoIdentityProvider()
-        )
+        if settings.auth_mode == "disabled":
+            application.state.application_identity = DemoIdentityProvider()
         application.include_router(
             mock_router,
             dependencies=business_dependencies,

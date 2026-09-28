@@ -2,6 +2,29 @@
 
 认证模块位于 `app/modules/common/auth/`，最小身份同步位于 `app/modules/common/identity_sync/`。当前支持开发环境中的模拟 IAM，正式集团 CAS、组织档案和完整角色映射仍需接入。
 
+## 集团 IAM 接入预留（默认不启用）
+
+按单服务器部署的网络约定，平台服务端访问集团 CAS 的 80 端口；浏览器沿 IAM 重定向经 8086 返回本平台，IAM 经 8086 通知单点登出、经 8085 推送身份数据。8085/8086 是**入站 Nginx 监听**，不是数据库端口，也不要求 FastAPI 运行三个实例。部署时登记以下确切路径：
+
+| 方向 | 地址示意 | 用途 |
+| --- | --- | --- |
+| 平台 → IAM | `http://<IAM 主机>:80/authn-api/v5/cas/<appId>/...` | 登录跳转、服务端验票、统一退出；真实主机、签名和 TLS 策略待甲方确认 |
+| 浏览器 → 平台 8086 | `http://<平台主机>:8086/api/v1/auth/callback` | 返回带 ticket 的 CAS 登录回调 |
+| IAM → 平台 8086 | `http://<平台主机>:8086/api/v1/auth/single-logout` | 表单 XML 单点登出通知 |
+| IAM → 平台 8085 | `http://<平台主机>:8085/api/v1/auth/iam/identity-sync` | IAM-02 身份推送 |
+
+前端站点和 8086 回调必须使用**同一主机名和协议**（端口可以不同），浏览器才能携带绑定的临时登录 Cookie，并在回调后复用共享会话。IAM 登记的 `service` 要允许当前 `/callback?state=...&scope=...` 参数，验证票据时须原样传回。两端口的 Nginx 配置只代理上述三个精确路径，其余路径 404，默认不生成、不监听。示例生成参数：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.render_nginx --nginx-root <Nginx根目录> --user-dist <用户端dist> --admin-dist <管理端dist> --listen-host 0.0.0.0 --iam-callback-port 8086 --iam-sync-port 8085
+```
+
+此配置**不是联通证明**。部署前还须设置防火墙/来源范围、证书或甲方认可的传输保护，并执行 `nginx -t`；8086 的浏览器回调必须能被用户浏览器访问，不能只允许 IAM 的来源地址。应用的 `AUTH_PUBLIC_ORIGIN` 指向用户端实际入口，`AUTH_CALLBACK_ORIGIN` 指向同主机的 8086；`AUTH_IAM_ORIGIN` 指向 IAM 的 80 端口地址。正式模式还需要 `AUTH_IAM_APP_ID`、`AUTH_IAM_ADMIN_ROLE_CODE`、独立的 `AUTH_SESSION_SECRET`（至少 32 字符）。这些变量仅是预留配置，密钥不得提交。
+
+**目前不能把 `AUTH_MODE` 直接改为 `iam` 上线**：`create_app` 必须注入符合 `CasClient` 和 `IamIngressVerifier` 的可信实现，缺失时启动即报错。甲方 CAS 验票签名与推送/登出来源认证规范仍未提供，不能用模拟密钥、报文里的 `appId` 或转发头替代。当前仅使用隔离的假实现验证流程。`iam` 模式不会按 Mock 名单授予管理员，也不会在首次验票时激活尚未同步的用户。
+
+IAM-02 的入口已按文档字段映射 `workNo`、`userNo`、`displayName`、`status`、`syncStatus`、`roleCode`、`syncTime`、`size`；只受理用户和本平台管理员角色，忽略其他无关个人信息字段，未知状态/角色或 org/dict 类型不返回成功。`2000` 暂按正常、`3000` 暂按停用、`-1000` 暂按注销，`recycle`/`syncStatus=800` 按回收；这些状态及 CAS `user` 与推送 `workNo/userNo` 的稳定对应关系、多个角色或组织关系、来源版本和重试语义必须先取得甲方确认。同步前的账号保持 `pending`，不凭登录票据自行激活。
+
 ## 模拟账号
 
 | 登录页名称 | IAM 标识 | 初始角色 |

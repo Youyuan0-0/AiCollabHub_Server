@@ -1,8 +1,10 @@
 """首页从正式资源、互动明细及首页配置表生成，不导入固定业务样例。"""
 
+from urllib.parse import urlencode
+
 from sqlalchemy import select
 
-from app.db.foundation import RESOURCE_TABLES, FoundationDatabase, iso
+from app.db.foundation import RESOURCE_TABLES, FoundationDatabase
 from app.modules.common.identity import Actor, visible
 from app.modules.common.resource_database import ResourceDatabase
 from app.schemas.overview import (
@@ -15,6 +17,7 @@ from app.schemas.overview import (
     TokenAnalysis,
 )
 from app.services.budget import budget_summary
+from app.services.home_activity import HomeActivityStore, activity_records
 from app.services.overview_demo import demo_snapshot
 
 LABELS = {
@@ -24,10 +27,45 @@ LABELS = {
     "knowledge": "知识库",
     "tool": "AI 工具",
 }
+FEATURED_RESOURCE_LIMIT = 4
 
 
-def home_overview(foundation: FoundationDatabase, actor: Actor) -> HomeOverviewResponse:
-    """只展示当前用户可见的启用资源，空库给出真实零值和空内容。"""
+def leaderboard_path(item: dict) -> str:
+    """按资源类型生成站内详情路径；工具页使用 resource，其余模块使用 resourceId。"""
+    kind = item["kind"]
+    parameter = "resource" if kind == "tool" else "resourceId"
+    return f"/{RESOURCE_TABLES[kind][2]}?{urlencode({parameter: item['id']})}"
+
+
+def automatic_featured_resources(catalogs: dict[str, dict[str, dict]]) -> list[dict]:
+    """从已按上架状态和用户权限过滤的目录中选热门资源，互动同分时优先新资源。"""
+    resources = [item for catalog in catalogs.values() for item in catalog.values()]
+    ranked = sorted(
+        resources,
+        key=lambda item: (
+            item["favoriteCount"],
+            item["ratingCount"],
+            item["downloadCount"],
+            item["createdAt"],
+            item["id"],
+        ),
+        reverse=True,
+    )
+    return [
+        {
+            "type": LABELS[item["kind"]],
+            "name": item["name"],
+            "description": item["summary"] or item["name"],
+            "path": leaderboard_path(item),
+        }
+        for item in ranked[:FEATURED_RESOURCE_LIMIT]
+    ]
+
+
+def home_overview(
+    foundation: FoundationDatabase, actor: Actor, activity_store: HomeActivityStore | None = None
+) -> HomeOverviewResponse:
+    """展示当前用户可见的资源；动态运营状态来自传入的应用实例内存。"""
     catalogs = {}
     for kind in RESOURCE_TABLES:
         with ResourceDatabase(foundation, kind).transaction(is_readonly=True) as session:
@@ -39,6 +77,15 @@ def home_overview(foundation: FoundationDatabase, actor: Actor) -> HomeOverviewR
     featured, scenarios = [], []
     with foundation.transaction(is_readonly=True) as session:
         recommendations = foundation.table("home_recommendations")
+        # 已存在的人工配置包括禁用项；禁用全部推荐时不再自动补入其他资源。
+        has_featured_configuration = (
+            session.scalar(
+                select(recommendations.c.id)
+                .where(recommendations.c.placement == "featured_resource")
+                .limit(1)
+            )
+            is not None
+        )
         for row in session.execute(
             select(recommendations)
             .where(recommendations.c.status == "enabled")
@@ -52,7 +99,7 @@ def home_overview(foundation: FoundationDatabase, actor: Actor) -> HomeOverviewR
             item = {
                 "name": row["title"] or resource["name"],
                 "description": row["summary"] or resource["summary"] or resource["name"],
-                "path": "/" + RESOURCE_TABLES[kind][2],
+                "path": leaderboard_path(resource) if resource else "/" + RESOURCE_TABLES[kind][2],
             }
             if row["placement"] == "featured_resource":
                 featured.append({**item, "type": LABELS[kind]})
@@ -67,23 +114,16 @@ def home_overview(foundation: FoundationDatabase, actor: Actor) -> HomeOverviewR
                 .limit(20)
             )
         )
-        announcements = foundation.table("announcements")
-        updates = [
-            {
-                "title": row["title"],
-                "description": row["summary"] or row["content_markdown"][:500],
-                "time": iso(row["published_at"]),
-            }
-            for row in session.execute(
-                select(announcements)
-                .where(announcements.c.status == "published")
-                .order_by(announcements.c.published_at.desc(), announcements.c.id)
-                .limit(20)
-            ).mappings()
-        ]
+    # 复用首页已按上架和用户范围过滤的目录，公告与运营配置仍读取最新数据库状态。
+    updates = activity_records(
+        foundation, actor, activity_store or HomeActivityStore(), catalogs=catalogs
+    )
     all_resources = [item for catalog in catalogs.values() for item in catalog.values()]
+    if not has_featured_configuration:
+        featured = automatic_featured_resources(catalogs)
 
     def entries(items: list[dict]) -> list[dict]:
+        """将可见资源转为榜单项，并按模块使用各自的详情定位参数。"""
         return [
             {
                 "name": item["name"],
@@ -95,6 +135,7 @@ def home_overview(foundation: FoundationDatabase, actor: Actor) -> HomeOverviewR
                 "tone": item["kind"]
                 if item["kind"] in {"dataset", "model", "application"}
                 else "application",
+                "path": leaderboard_path(item),
             }
             for item in items[:10]
         ]

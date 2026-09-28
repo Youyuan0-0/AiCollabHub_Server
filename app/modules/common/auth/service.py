@@ -112,7 +112,10 @@ def verify_csrf(request: Request, raw_token: str) -> None:
     """同时校验来源和共享会话令牌对应的 CSRF 值。"""
     settings = request.app.state.settings
     expected_origin = str(settings.auth_public_origin).rstrip("/")
-    expected = csrf_token(raw_token, settings.auth_mock_secret.get_secret_value())
+    secret = (
+        settings.auth_mock_secret if settings.auth_mode == "mock" else settings.auth_session_secret
+    )
+    expected = csrf_token(raw_token, secret.get_secret_value())
     if (
         not raw_token
         or request.headers.get("origin") != expected_origin

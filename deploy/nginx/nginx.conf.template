@@ -99,4 +99,5 @@ http {
         }
         location / { try_files $uri $uri/ /index.html; }
     }
+@@IAM_INGRESS_SERVERS@@
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Literal
+from urllib.parse import parse_qsl, urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
@@ -45,7 +47,7 @@ class ComputeMetric(OverviewModel):
 
 
 class ApplicationScenario(OverviewModel):
-    """应用场景及其站内入口；不允许发布外部地址或协议相对地址。"""
+    """应用场景及其站内入口；可指向资源目录或具体资源，不允许外部地址。"""
 
     name: Text
     description: Text
@@ -54,10 +56,21 @@ class ApplicationScenario(OverviewModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
-        """限制场景链接为受支持的站内路径。"""
-        # 首页目前仅跳转固定目录；未来资源详情入口需明确加入允许列表。
-        if value not in {"/models", "/applications", "/datasets", "/tools", "/knowledge"}:
-            raise ValueError("path 必须是已支持的站内资源目录")
+        """仅接收五类资源目录或带对应 UUID 参数的详情路径。"""
+        target = urlsplit(value)
+        modules = {"/models", "/applications", "/datasets", "/tools", "/knowledge"}
+        if target.scheme or target.netloc or target.fragment or target.path not in modules:
+            raise ValueError("path 必须是已支持的站内资源路径")
+        if not target.query:
+            return value
+        try:
+            parameters = parse_qsl(target.query, keep_blank_values=True, strict_parsing=True)
+            parameter = "resource" if target.path == "/tools" else "resourceId"
+            if len(parameters) != 1 or parameters[0][0] != parameter:
+                raise ValueError("详情参数不匹配资源类型")
+            UUID(parameters[0][1])
+        except ValueError as error:
+            raise ValueError("path 必须是有效的站内资源详情路径") from error
         return value
 
 
@@ -68,21 +81,29 @@ class FeaturedResource(ApplicationScenario):
 
 
 class RecentUpdate(OverviewModel):
-    """动态时间为展示文本，建议录入绝对时间，避免缓存后仍显示“刚刚”。"""
+    """首页动态关联正式版本或公告；path 仅允许站内资源详情入口。"""
 
+    id: Text | None = None
+    kind: Literal[
+        "announcement", "dataset", "model", "application", "knowledge", "tool"
+    ] | None = None
     time: Text
     title: Text
     description: Text
+    path: Text | None = None
+    is_pinned: bool = False
+    hidden: bool = False
 
 
 class LeaderboardItem(OverviewModel):
-    """榜单条目按发布顺序排名；两个指标保留前端需要的展示单位。"""
+    """榜单条目按发布顺序排名；path 定位所属模块详情，旧快照可不提供。"""
 
     name: Text
     tags: list[Text] = Field(max_length=10)
     metric: Text
     secondary: Text
     tone: Literal["dataset", "model", "application", "user"]
+    path: Text | None = None
 
 
 class LeaderboardGroup(OverviewModel):

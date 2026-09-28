@@ -383,6 +383,9 @@ class KnowledgeService:
         """保存实际原文件后原子登记；同名文档拒绝覆盖，批次失败清理本次全部文件。"""
         record = self.record(base_id, actor, admin=admin, edit=True)
         self._check_revision(record, revision)
+        # 数据库待审申请尚无正式知识库外键；在写入对象存储前拒绝，避免失败批次留下文件。
+        if hasattr(self.repository, "ensure_uploadable"):
+            self.repository.ensure_uploadable(base_id)
         if not 1 <= len(uploads) <= 20 or len(record["documents"]) + len(uploads) > 500:
             raise HTTPException(422, "每批最多上传 20 个文档，每库最多 500 个文档")
         names = [document_name(upload.filename or "") for upload in uploads]

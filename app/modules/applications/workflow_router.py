@@ -62,14 +62,17 @@ def admin_session(request: Request) -> dict:
 
 @router.get("/application-demo-session", response_model=None)
 def demo_session(request: Request, audience: str = "user") -> dict:
-    """读取演示身份选择信息，仅在关闭正式认证时开放。"""
+    """读取演示身份选择信息；仅失效会话返回空身份，其他错误继续上抛。"""
     if request.app.state.settings.auth_mode != "disabled":
         raise HTTPException(404, "演示账号切换仅在关闭登录时提供")
     provider = request.app.state.application_identity
     try:
         actor = provider.resolve(request, "admin" if audience == "admin" else "user")
         current = actor.public()
-    except Exception:
+    except HTTPException as error:
+        if error.status_code != 401:
+            raise
+        # 演示令牌失效后仍允许重新选择账号，权限或服务故障不能伪装成正常响应。
         current = None
     return {
         "current": current,
