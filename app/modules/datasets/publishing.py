@@ -11,7 +11,12 @@ PublicationMode = Literal["local", "external"]
 
 
 def sample_preview(sample: str) -> dict:
-    """把已审核的公开样例转为表格；无法解析时保留原文，空样例不生成下载内容。"""
+    """将已审核的有限样例转换为展示表格，不读取或导入完整数据集。
+
+    优先解析 JSON 对象或对象数组，列按首次出现顺序合并；再尝试列数一致的
+    CSV/TSV。缺少结构时以单列保留原文，避免把自由文本误判成不完整的表格。
+    输入内容的大小与发布合法性由上层校验，本函数只负责展示转换。
+    """
     if not sample.strip():
         return {"columns": [], "rows": []}
     try:

@@ -462,7 +462,12 @@ class KnowledgeService:
         *,
         pending_only: bool = False,
     ) -> dict:
-        """登记任务并仅清理本次处理文档的旧分段；构建期间仍禁止召回。"""
+        """登记新的索引任务，并按本次范围清理旧分段。
+
+        pending_only=True 时只选择已批准且尚未就绪的文档，保留其他成功分段；
+        False 表示重建所有已批准文档。jobId 标识本轮任务，后台每次保存都要核对它，
+        防止被后续重建取代的旧任务继续写入。此方法只登记状态，不执行解析或模型调用。
+        """
         selected = {
             doc["id"]
             for doc in record["documents"]
@@ -482,7 +487,12 @@ class KnowledgeService:
         return self._save(record, revision, actor, action)
 
     def process(self, base_id: str, job_id: str) -> None:
-        """后台逐文档解析并保存进度；每次提交校验任务编号，旧任务不能覆盖新索引。"""
+        """逐篇处理已批准文档，在解析和可选的向量生成之后保存进度。
+
+        单篇可预期失败保留在文档状态中，并继续处理后续文档；全部处理结束后，
+        任一文档失败都会使知识库保持待重建状态。任务被替换时立即停止写入，
+        已就绪文档可在增量重试中复用，不因其他文档失败而重复调用模型。
+        """
         started = perf_counter()
         record = self.repository.get(base_id)
         if record is None or not job_id or record["jobId"] != job_id or not is_approved(record):
@@ -552,7 +562,11 @@ class KnowledgeService:
                 self.repository.save(current, current["revision"])
 
     def _save_progress(self, record: dict, job_id: str) -> dict | None:
-        """合并并发召回统计后保存进度；任务已被替换时返回 None 并停止旧 worker。"""
+        """核对任务归属，合并最新召回统计后尝试保存索引进度。
+
+        仅对修订冲突重新读取并重试，最多五次；这不是重新解析文档或重发模型请求。
+        返回 None 表示知识库已删除或 jobId 已被替换，调用方必须结束旧任务。
+        """
         for _ in range(5):
             current = self.repository.get(record["id"])
             if current is None or current["jobId"] != job_id:

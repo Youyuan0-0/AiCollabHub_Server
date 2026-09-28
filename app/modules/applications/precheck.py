@@ -34,7 +34,12 @@ class ApplicationPrecheck(ApplicationPayload):
 
 
 def precheck(payload: ApplicationPrecheck, configuration: dict, policy: dict) -> dict:
-    """合并结构、必填项、密级与敏感词检查，并分析可识别的元数据。"""
+    """检查尚未完成的发布表单，返回字段提示及本次使用的规则修订号。
+
+    预检不保存资料，也不构成最终提交凭据；配置和策略可能在预检之后变化，
+    提交入口仍须重新执行完整服务端校验。分析只接收类型可识别且未命中敏感词
+    的部分，避免半成品字段导致元数据分析异常或把拦截内容带入建议。
+    """
     configuration = effective_configuration(configuration)
     errors = {}
     data = payload.data

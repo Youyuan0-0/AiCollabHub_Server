@@ -113,7 +113,12 @@ class KnowledgeReviews:
         actor: Actor,
         reports: list[dict] | None = None,
     ) -> dict:
-        """仅处理待审核项；文档通过前必须先批准所属知识库，批准后异步增量索引。"""
+        """提交创建或文档审批结论，通过文档审批后登记增量索引任务。
+
+        document_id 为空时审核知识库创建，非空时审核该库的一篇文档；两者都使用
+        知识库修订号校验并发修改。review.status 表示审批结论，文档 status 表示
+        解析和索引阶段，因此批准文档只会进入后续处理流程，不等同于可以召回。
+        """
         base = self.service.record(base_id, actor, admin=True, edit=True)
         self.service._check_revision(base, payload.revision)
         item = self.document(base, document_id) if document_id else base

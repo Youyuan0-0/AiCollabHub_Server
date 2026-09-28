@@ -354,7 +354,13 @@ class ApplicationWorkflows:
             return value
 
     def run(self, application_id: str, actor: Actor, payload: RunInput) -> dict:
-        """执行应用并保存结果，使用请求指纹检查重复提交，返回前再次验证可见性。"""
+        """校验运行请求，登记任务后调用提供器，并保存成功或失败结果。
+
+        幂等范围为用户、应用和 request_id；指纹同时包含输入、选项及运行模式，
+        防止复用请求号执行不同内容。已有任务直接返回其状态，外部调用安排在两个
+        仓储事务之间，不能因耗时运行长期持有数据库连接。保存结果后再次核对资源
+        可见性，避免运行期间被撤权的用户继续取得结果。
+        """
         mode = getattr(self.provider, "mode", "simulation")
         key = f"{actor.id}:{application_id}:{payload.request_id}"
         serialized = json.dumps(
@@ -447,6 +453,7 @@ class ApplicationWorkflows:
         """统计当前运行模式的已完成任务，无样本时返回空值。"""
         mode = getattr(self.provider, "mode", "simulation")
         with self.repository.transaction(is_readonly=True) as session:
+            # 模拟和真实执行的耗时、成功率不可混算；尚未结束的任务也不能计入成功率分母。
             completed = [
                 item
                 for item in session.entries("runs")

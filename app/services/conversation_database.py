@@ -31,6 +31,11 @@ class ConversationDatabase:
         self.files = foundation.table("files")
 
     def _owned(self, session: Session, conversation_id: str, *, lock: bool = False) -> dict:
+        """把身份归属和软删除条件放入查询；写流程可同时锁住会话行。
+
+        查询不到与无权读取统一返回 404，避免通过会话编号探知他人记录。
+        会话行锁负责协调消息序号、发送幂等检查、回答完成和删除操作。
+        """
         user_id = self.foundation.user_id(session, self.subject)
         query = select(self.conversations).where(
             self.conversations.c.id == identifier(conversation_id),
@@ -181,7 +186,11 @@ class ConversationDatabase:
         )
 
     def get(self, conversation_id: str) -> ConversationRecord:
-        """读取当前用户完整线性历史，包含失败及正在生成的回答。"""
+        """读取完整历史，并把超过十五分钟的未完成占位标记为中断失败。
+
+        常规读取使用只读事务；发现超时占位后才切换写事务并重新检查状态，
+        避免覆盖两次读取之间已经完成的回答。该恢复在读取时触发，不是模型超时计时器。
+        """
         with self.foundation.transaction(is_readonly=True) as session:
             record = self._record(session, self._owned(session, conversation_id))
         cutoff = utc_now() - timedelta(minutes=15)
@@ -237,7 +246,12 @@ class ConversationDatabase:
             ]
 
     def begin(self, conversation_id: str, data: ChatInput) -> tuple[ConversationRecord, str, bool]:
-        """保存完整问题、附件及回答占位；幂等重试不得重新调用供应方。"""
+        """原子保存提问、附件引用和回答占位，返回历史、回答编号及是否调用模型。
+
+        幂等键只在当前会话内识别一次发送；复用键时须逐项核对问题、资源选择、
+        工具及附件。已完成请求直接返回旧回答，进行中返回 409，已失败保留原失败，
+        都不会再次调用提供器。只有本次创建占位的调用者得到 should_call=True。
+        """
         with self.foundation.transaction() as session:
             row = self._owned(session, conversation_id, lock=True)
             old = (
@@ -308,6 +322,7 @@ class ConversationDatabase:
             )
             if sequence >= 200:
                 raise HTTPException(409, "conversation_message_limit")
+            # 问题与回答预留相邻序号；会话锁保证并发发送不会取得相同的最大序号。
             question, answer = uuid4(), uuid4()
             session.execute(
                 insert(self.messages).values(
@@ -325,6 +340,7 @@ class ConversationDatabase:
             if len(data.attachment_ids) != len(set(data.attachment_ids)):
                 raise HTTPException(422, "duplicate_attachment_ids")
             for position, file_id in enumerate(data.attachment_ids, 1):
+                # 上传后到发送前文件状态可能变化，因此在绑定消息的事务中重新验证并锁定。
                 file = (
                     session.execute(
                         select(self.files)
@@ -385,7 +401,11 @@ class ConversationDatabase:
     def finish(
         self, conversation_id: str, answer_id: str, reply: ChatReply | None
     ) -> ConversationRecord:
-        """只完成仍待处理的回答；删除后的迟到结果不能写回。"""
+        """把仍为 pending 的占位转为完成或失败，reply=None 表示提供器失败。
+
+        再次校验会话归属及软删除状态，并以状态条件限制 UPDATE；已取消、超时处理
+        或被其他完成请求更新的回答不能被迟到结果覆盖。网络调用发生在进入本方法之前。
+        """
         with self.foundation.transaction() as session:
             row = self._owned(session, conversation_id, lock=True)
             result = session.execute(

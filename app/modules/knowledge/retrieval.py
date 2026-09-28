@@ -19,7 +19,12 @@ def tokens(text: str) -> list[str]:
 
 
 def keyword_scores(query: str, texts: list[str]) -> list[float]:
-    """计算 BM25 并压缩到 0–1；不相关文本为零分，分数不是语义相似概率。"""
+    """根据本次候选文本集合计算 BM25，按输入顺序返回 0–1 分数。
+
+    词频体现命中强度，逆文档频率降低常见词权重，长度归一化降低长文档优势。
+    最后的 score/(1+score) 仅压缩数值范围，不是语义相关概率；候选集合改变时
+    统计基线也会改变，因此不同知识库或不同候选集合的分数不宜直接横向比较。
+    """
     if not texts:
         return []
     documents = [Counter(tokens(text)) for text in texts]
@@ -88,6 +93,8 @@ class RetrievalProvider:
             batch = texts[offset : offset + 32]
             result = self._post(endpoint, {"model": model, "input": batch})
             try:
+                # 服务端可能按内部批处理顺序返回，先按 index 恢复原文顺序，再验证无缺项或重复。
+                # 分段与向量必须一一对应，否则后续召回会把分数关联到错误原文。
                 items = sorted(result["data"], key=lambda item: item["index"])
                 if [item["index"] for item in items] != list(range(len(batch))):
                     raise ValueError

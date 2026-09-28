@@ -47,7 +47,12 @@ class AgentDevProvider:
         return getattr(self.catalog_provider, name)
 
     def binding(self, resource: dict) -> AgentBinding:
-        """读取可信映射并匹配当前应用版本，缺少配置时返回 503。"""
+        """从服务端配置或可信导入来源解析当前版本的智能体绑定。
+
+        显式绑定必须同时匹配平台 resourceId 和 versionId，资源发布新版后需同步
+        更新映射。使用导入来源时还要核对工作空间、环境和上线状态，不能把客户端
+        提交的外部编号或其他环境的资源当作已授权的运行目标。
+        """
         settings = self.settings
         if not (settings.applications_agent_url and settings.applications_agent_key):
             raise HTTPException(503, "实际运行服务尚未配置地址、凭证和应用对应关系")
@@ -188,7 +193,12 @@ class AgentDevProvider:
 
     @staticmethod
     def stream_result(raw: bytes, session_id: str) -> dict:
-        """合并文档规定的增量事件；不展示思考内容，缺少结束事件不视为成功。"""
+        """将一次完整接收的 SSE 字节串合并为最终内容，不向前端逐段转发。
+
+        只采纳 message.delta 的 content，校验 sessionId 和结束标记；供应方可能
+        返回其他事件，不能将其作为答案拼接。必须收到 end=True 才确认完成，
+        结束后的增量、会话不匹配或连接提前断开都不能作为成功结果保存。
+        """
         content, request_id, ended = [], None, False
         for block in raw.decode("utf-8-sig").replace("\r\n", "\n").split("\n\n"):
             data = "\n".join(

@@ -45,7 +45,12 @@ class DatabaseChatService:
         self.repository.delete(identifier)
 
     def send(self, data: ChatInput, identifier: str | None = None) -> ConversationSendResult:
-        """提问先落库；供应方调用不占数据库事务，失败状态同样保存。"""
+        """按保存提问、调用提供器、保存回答三个阶段完成一次问答。
+
+        begin 提交后才发起可能耗时的外部调用，避免一直占用连接和会话行锁。
+        只有新请求调用提供器；传入的历史仅含已完成消息，排除本轮回答占位。
+        提供器失败时仍保存 failed 状态，再向客户端返回 502，便于刷新后查看结果。
+        """
         if identifier is None:
             identifier = self.new(
                 NewConversationInput(

@@ -95,6 +95,12 @@ class FeedbackService:
         }
 
     def _detail(self, session: Session, row: dict, before: int | None = None) -> dict:
+        """组合反馈详情和按修订倒序的处理历史。
+
+        before 是上一页最后一条事件的修订号，下一页只查更早事件；多读一条判断
+        是否还有下一页，避免偏移分页因新增回复而重复或漏项。顶部 reply 始终取
+        最新事件内容，不随历史分页游标回退。
+        """
         query = (
             select(self.events, self.users.c.display_name, self.users.c.iam_subject)
             .join(self.users, self.users.c.id == self.events.c.actor_id)
@@ -209,7 +215,12 @@ class FeedbackService:
             return self._detail(session, dict(row))
 
     def submit(self, data: FeedbackInput) -> tuple[dict, bool]:
-        """原始资料、附件引用和首次事件同事务保存，重复请求比较真实内容。"""
+        """保存反馈、附件关联和首条事件，返回详情及是否首次创建。
+
+        幂等范围为当前用户与 clientRequestId 的组合，不同用户可以使用相同编号。
+        重试须保持正文和附件顺序一致；内容变化返回 409，完全一致则返回原反馈及
+        False。业务键锁同时保护尚无记录的首次提交，避免并发请求创建两条反馈。
+        """
         with self.foundation.transaction() as session:
             user_id = self.foundation.user_id(session, self.subject)
             self.foundation.lock(session, f"feedback:{user_id}:{data.client_request_id}")
@@ -304,7 +315,12 @@ class FeedbackService:
             return self._detail(session, dict(row)), True
 
     def process(self, record_id: str, data: FeedbackUpdate) -> dict:
-        """管理员处理使用行锁和修订校验；重试返回已提交结果而不重复追加事件。"""
+        """按 expectedVersion 保存管理员处理结果，并追加不可变处理事件。
+
+        先识别本管理员已提交的 clientRequestId，再检查当前修订：这样网络重试
+        即使落后于后续处理，也能确认自己的操作已经成功。新请求必须基于当前修订，
+        否则返回 409，不能覆盖其他管理员的回复或状态修改。
+        """
         if not self.is_admin:
             raise HTTPException(403, "没有处理反馈的权限")
         with self.foundation.transaction() as session:
@@ -386,6 +402,7 @@ class FeedbackService:
             }
 
     def _upload_id(self, request_id: str) -> UUID:
+        """将当前用户与上传请求号映射为稳定文件编号，便于断连后查询上传结果。"""
         return uuid5(NAMESPACE_URL, f"aicollabhub:feedback:{self.subject}:{identifier(request_id)}")
 
     def save_upload(self, request_id: str, name: str, stream: BinaryIO, level: str | None) -> dict:

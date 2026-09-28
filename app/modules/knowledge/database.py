@@ -39,7 +39,12 @@ RUNTIME_FIELDS = (
 
 
 class KnowledgeDatabase:
-    """保持现有知识库服务契约，保存时拆分到确定的业务表，不写整库 JSON。"""
+    """组合知识库正式资料、发布申请、文档审核与外部运行态。
+
+    PostgreSQL 保存业务事实，Redis 保存模拟索引结果。页面 revision 由数据库
+    资料指纹和运行态版本合成，不是某张表的自增修订号；调用方须原样回传，
+    不能自行加一或用发布申请的 reviewRevision 替代。
+    """
 
     def __init__(self, resources: ResourceDatabase) -> None:
         self.resources = resources
@@ -242,6 +247,8 @@ class KnowledgeDatabase:
             ).encode()
         ).hexdigest()
         state = self.resources.runtime.get("index", base_id) if self.resources.runtime else None
+        # 只有运行态对应当前数据库资料时才复用分段；资料或文档审核变化后应显式要求重建。
+        # Redis 丢失或过期也走这一分支，不能用旧索引冒充最新审批内容。
         if state and state.get("databaseStamp") == stamp:
             base.update({key: deepcopy(state[key]) for key in RUNTIME_FIELDS if key in state})
             for doc in base["documents"]:
@@ -277,7 +284,13 @@ class KnowledgeDatabase:
             return [self._read(unit, key) for key in sorted(ids)]
 
     def save(self, record: dict, expected: int | None) -> dict:
-        """按旧页面修订校验后分表保存，索引结果只写模拟工具链 Redis。"""
+        """按页面的整体修订校验并分表保存，再更新模拟索引运行态。
+
+        expected=None 仅用于首次创建；已有记录须使用上次读取的整体 revision。
+        正式资料变更走发布申请，文档及审核走各自的表，RUNTIME_FIELDS 不写入 SQL。
+        Redis 与数据库不是同一个原子事务，读取时通过 databaseStamp 判断运行态
+        是否仍适用于当前资料，不把缓存当作审批、资源身份或权限的事实来源。
+        """
         key = record["id"]
         with self.resources.transaction() as unit:
             unit.lock("knowledge-state:" + key)

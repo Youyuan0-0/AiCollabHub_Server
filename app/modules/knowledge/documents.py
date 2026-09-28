@@ -27,7 +27,13 @@ def document_name(name: str) -> str:
 
 
 def parse_document(name: str, content: bytes) -> str:
-    """提取可检索文字；损坏、加密、扫描件和超限内容明确失败，不伪造分段。"""
+    """把已通过上传校验的原件提取为有限长度的纯文本。
+
+    TXT/Markdown 先尝试 UTF-8，再兼容 GB18030；PDF 仅提取现有文本层，不执行 OCR。
+    Office 读取正文或单元格缓存值，不计算公式。字节大小限制由上传入口落实，
+    这里继续检查提取后字符数，防止体积较小的文件展开出过量文本。
+    损坏、加密、无文本或超限内容返回 422，解析器内部路径不直接返回给用户。
+    """
     suffix = Path(name).suffix.lower()
     try:
         if suffix in (".txt", ".md"):
@@ -125,7 +131,12 @@ def parse_office(content: bytes, suffix: str) -> str:
 
 
 def split_text(text: str, config: IndexInput) -> list[str]:
-    """按字符上限切分；段落和自动模式优先使用边界，重叠不会阻止游标前进。"""
+    """按字符数生成有重叠的分段，不把 chunk_size 当作模型 token 数。
+
+    config 须先通过 IndexInput 校验，保证重叠长度小于分段长度。非固定长度模式
+    在窗口后半段寻找自然边界，避免频繁生成过短片段；只接受超过重叠区的边界，
+    使下一轮游标持续前进。段数超过 MAX_CHUNKS 时明确拒绝，不能静默截掉尾部资料。
+    """
     chunks = []
     start = 0
     while start < len(text):
