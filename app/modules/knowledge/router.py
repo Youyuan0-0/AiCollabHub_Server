@@ -8,6 +8,7 @@ from fastapi.responses import Response
 
 from app.modules.common.identity import current_actor, require_admin
 from app.modules.common.identity_directory import publication_defaults
+from app.modules.common.memory_reports import reports_store
 from app.modules.common.resource_admin import ListingInput
 from app.modules.common.schemas import PageQuery
 from app.modules.common.visibility import validate_visibility_targets, visibility_directory
@@ -83,9 +84,17 @@ def build_router(admin: bool) -> APIRouter:
         def review_base(base_id: str, payload: ReviewInput, request: Request) -> dict:
             """审核创建申请，审批通过不自动扩大开放范围。"""
             actor, service = current_actor(request, True), knowledge_service(request)
-            return service.present(
-                KnowledgeReviews(service).decide(base_id, None, payload, actor), actor, admin=True
-            )
+            current = service.record(base_id, actor, admin=True, edit=True)
+            store = reports_store(request)
+            with store.lock:
+                reports = store.selected(
+                    "knowledge",
+                    {"id": current["publicationId"], "revision": current["reviewRevision"]},
+                    actor,
+                    payload.report_file_ids,
+                )
+                value = KnowledgeReviews(service).decide(base_id, None, payload, actor, reports)
+            return service.present(value, actor, admin=True)
 
         @result.post("/{base_id}/documents/{document_id}/review", response_model=None)
         def review_document(

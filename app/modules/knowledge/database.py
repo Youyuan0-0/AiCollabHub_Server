@@ -103,6 +103,8 @@ class KnowledgeDatabase:
         base = {
             **data,
             "id": base_id,
+            "publicationId": publication["id"] if publication else base_id,
+            "reviewRevision": publication["revision"] if publication else 1,
             "createdBy": author["createdBy"],
             "createdByName": author["createdByName"],
             "organizationId": author.get("organizationId", ""),
@@ -153,6 +155,8 @@ class KnowledgeDatabase:
                     "reviewedAt": review["reviewedAt"],
                     "submittedAt": review["submittedAt"],
                     "submittedName": author["createdByName"],
+                    "scores": review.get("scores"),
+                    "reportFiles": review.get("reportFiles", []),
                 }
                 base["reviewHistory"].append(value)
             if publication["reviews"] and publication["status"] != "pending":
@@ -314,7 +318,8 @@ class KnowledgeDatabase:
                             "decision": decision,
                             "reason": review["reason"],
                             "reviewedAt": review["reviewedAt"],
-                            "reportFiles": [],
+                            "scores": review.get("scores"),
+                            "reportFiles": review.get("reportFiles", []),
                         }
                     )
                 else:

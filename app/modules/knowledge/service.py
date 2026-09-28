@@ -110,6 +110,7 @@ class KnowledgeService:
     def present(self, record: dict, actor: Actor, *, admin: bool = False) -> dict:
         """公开响应使用白名单，管理响应也不暴露原文件路径、正文缓存或向量。"""
         result = {key: record[key] for key in PUBLIC_FIELDS}
+        result["indexConfig"] = IndexInput(**result["indexConfig"]).model_dump(by_alias=True)
         result["listingStatus"] = record.get("listingStatus", "listed")
         # 重启或 worker 中断不会伪装成永远构建中；租约过期后允许用户明确重试。
         expired = (
@@ -141,6 +142,9 @@ class KnowledgeService:
             for doc in record["documents"]
             if admin or result["canEdit"] or is_approved(doc)
         ]
+        result["uploadedAt"] = max(
+            (doc["updatedAt"] for doc in result["documents"]), default=result["createdAt"]
+        )
         # 普通读者只能看到通过审批的文档及对应统计，待审名称和意见不能泄露。
         if not admin and not result["canEdit"]:
             result["documentCount"] = len(result["documents"])
@@ -176,6 +180,8 @@ class KnowledgeService:
                         "retrievalCount",
                         "retrievalSuccessCount",
                         "retrievalElapsedMs",
+                        "publicationId",
+                        "reviewRevision",
                     )
                 }
             )
@@ -291,6 +297,7 @@ class KnowledgeService:
             "review": pending_review(actor),
             "reviewHistory": [],
         }
+        record.update(publicationId=record["id"], reviewRevision=1)
         return self._save(record, None, actor, "创建知识库")
 
     def _save(self, record: dict, expected: int | None, actor: Actor, action: str) -> dict:
@@ -613,20 +620,24 @@ class KnowledgeService:
                 succeeded = True
                 return []
             texts = [chunk["text"] for chunk in chunks]
-            scores = keyword_scores(payload.query, texts)
-            if config.retrieval_mode != "全文检索":
+            scores = (
+                keyword_scores(payload.query, texts)
+                if config.keyword_search
+                else [0.0] * len(texts)
+            )
+            if config.semantic_search:
                 vector = self.provider.embed([payload.query], config.embedding_model)[0]
                 similarities = [cosine(vector, chunk["vector"]) for chunk in chunks]
                 scores = (
                     similarities
-                    if config.retrieval_mode == "向量检索"
+                    if not config.keyword_search
                     else [
                         (keyword + similarity) / 2
                         for keyword, similarity in zip(scores, similarities, strict=True)
                     ]
                 )
             ranked = sorted(range(len(chunks)), key=lambda index: (-scores[index], index))
-            if config.retrieval_mode == "重排序检索":
+            if config.reranking:
                 ranked = ranked[: max(40, config.top_k * 3)]
                 reranked = self.provider.rerank(payload.query, [texts[index] for index in ranked])
                 for index, score in zip(ranked, reranked, strict=True):

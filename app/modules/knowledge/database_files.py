@@ -23,7 +23,7 @@ class KnowledgeDatabaseFiles:
             name,
             stream,
             maximum=MAX_FILE_BYTES,
-            extensions={".txt", ".md", ".pdf", ".docx", ".pptx", ".xlsx", ".csv"},
+            extensions={".txt", ".md", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv"},
         )
         return str(row["id"]), row["size_bytes"]
 

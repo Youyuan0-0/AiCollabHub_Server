@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from test_auth import auth as auth
 from test_auth import csrf, login
-from test_knowledge import ROOT, select_actor
+from test_knowledge import ROOT, knowledge_scores, select_actor
 from test_knowledge import client as client
 
 from app.modules.knowledge.repository import KnowledgeRecord, KnowledgeRepository
@@ -94,7 +94,12 @@ def test_review_lifecycle_and_unapproved_content_isolation(client, tmp_path, dat
             == 409
         )
         base = client.post(
-            admin + "/review", json={"revision": base["revision"], "decision": "approved"}
+            admin + "/review",
+            json={
+                "revision": base["revision"],
+                "decision": "approved",
+                "scores": knowledge_scores(),
+            },
         ).json()
         select_actor(client, "demo-outsider")
         public = client.get(path).json()
@@ -139,7 +144,12 @@ def test_review_authorization_and_rejected_document_audit(client):
     admin = ADMIN + "/" + base["id"]
     path = ROOT + "/" + base["id"]
     base = client.post(
-        admin + "/review", json={"revision": base["revision"], "decision": "approved"}
+        admin + "/review",
+        json={
+            "revision": base["revision"],
+            "decision": "approved",
+            "scores": knowledge_scores(),
+        },
     ).json()
     base = client.post(
         path + "/documents",
@@ -205,7 +215,11 @@ def test_review_requires_admin_session_csrf(auth):
     assert (
         client.post(
             path,
-            json={"revision": base["revision"], "decision": "approved"},
+            json={
+                "revision": base["revision"],
+                "decision": "approved",
+                "scores": knowledge_scores(),
+            },
             headers=csrf(client, "admin"),
         ).status_code
         == 200

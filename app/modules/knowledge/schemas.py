@@ -4,6 +4,7 @@ from typing import Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
+from app.modules.common.management_schemas import ResourceScores
 from app.modules.common.schemas import PageQuery, Payload
 from app.modules.datasets.admin_schemas import DatasetVisibility
 
@@ -28,14 +29,54 @@ class IndexInput(Payload):
     top_k: int = Field(default=5, ge=1, le=20, strict=True)
     similarity_threshold: float = Field(default=0.2, ge=0, le=1, allow_inf_nan=False)
     retrieval_mode: Literal["向量检索", "全文检索", "混合检索", "重排序检索"] = "全文检索"
+    reranking: bool = False
+    semantic_search: bool = False
+    keyword_search: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_retrieval_mode(cls, value: object) -> object:
+        """把历史单选模式映射为三个开关，新请求显式开关时保留其选择。"""
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        keys = set(result)
+        retrieval_keys = {
+            "reranking",
+            "semantic_search",
+            "semanticSearch",
+            "keyword_search",
+            "keywordSearch",
+        }
+        if not retrieval_keys & keys:
+            mode = result.get("retrieval_mode", result.get("retrievalMode", "全文检索"))
+            result.update(
+                reranking=mode == "重排序检索",
+                semanticSearch=mode in {"向量检索", "混合检索", "重排序检索"},
+                keywordSearch=mode in {"全文检索", "混合检索", "重排序检索"},
+            )
+        return result
 
     @model_validator(mode="after")
     def validate_overlap(self) -> Self:
         """重叠小于分段长度才能推进切分；经济模式不建立向量索引。"""
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("分段重叠必须小于分段大小")
-        if self.mode == "经济模式" and self.retrieval_mode != "全文检索":
-            raise ValueError("经济模式使用全文检索，向量或重排序请使用高质量模式")
+        if not self.semantic_search and not self.keyword_search:
+            raise ValueError("至少启用语义检索或关键词检索")
+        if self.mode == "经济模式" and (
+            self.semantic_search or self.reranking or not self.keyword_search
+        ):
+            raise ValueError("经济模式仅支持关键词检索，语义检索或重排序请使用高质量模式")
+        self.retrieval_mode = (
+            "重排序检索"
+            if self.reranking
+            else "混合检索"
+            if self.semantic_search and self.keyword_search
+            else "向量检索"
+            if self.semantic_search
+            else "全文检索"
+        )
         return self
 
 
@@ -103,6 +144,8 @@ class ReviewInput(RevisionInput):
 
     decision: Literal["approved", "rejected", "needs_changes"]
     reason: str = Field(default="", max_length=2000)
+    scores: ResourceScores | None = None
+    report_file_ids: list[str] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def require_reason(self) -> Self:
@@ -110,6 +153,8 @@ class ReviewInput(RevisionInput):
         self.reason = self.reason.strip()
         if self.decision != "approved" and not self.reason:
             raise ValueError("驳回或要求补充材料时，请填写审核意见")
+        if len(set(self.report_file_ids)) != len(self.report_file_ids):
+            raise ValueError("报告编号不能重复")
         return self
 
 

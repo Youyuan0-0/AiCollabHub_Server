@@ -106,7 +106,12 @@ class KnowledgeReviews:
         return {"name": doc["name"], "text": content[:20000], "truncated": len(content) > 20000}
 
     def decide(
-        self, base_id: str, document_id: str | None, payload: ReviewInput, actor: Actor
+        self,
+        base_id: str,
+        document_id: str | None,
+        payload: ReviewInput,
+        actor: Actor,
+        reports: list[dict] | None = None,
     ) -> dict:
         """仅处理待审核项；文档通过前必须先批准所属知识库，批准后异步增量索引。"""
         base = self.service.record(base_id, actor, admin=True, edit=True)
@@ -116,6 +121,8 @@ class KnowledgeReviews:
             raise HTTPException(409, "申请已处理或尚未提交，请刷新后查看")
         if document_id and payload.decision == "approved" and not is_approved(base):
             raise HTTPException(409, "请先通过知识库创建审批，再批准文档")
+        if not document_id and payload.decision == "approved" and payload.scores is None:
+            raise HTTPException(422, "通过前请完成七项质量评分")
         item["review"] = {
             **review_state(item),
             "status": payload.decision,
@@ -132,6 +139,8 @@ class KnowledgeReviews:
                 "owner": base["owner"],
                 "reviewerId": actor.id,
                 "revision": payload.revision + 1,
+                "scores": payload.scores.model_dump(by_alias=True) if payload.scores else None,
+                "reportFiles": reports or [],
             }
         )
         action = ("文档审核：" if document_id else "创建审核：") + payload.decision

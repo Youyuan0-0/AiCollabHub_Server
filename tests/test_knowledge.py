@@ -17,6 +17,7 @@ from test_auth import csrf, login
 from app.core.config import Settings
 from app.main import create_app
 from app.modules.common.identity import ACTORS
+from app.modules.common.review_schemas import ReviewQualityScores
 from app.modules.knowledge.documents import parse_document, split_text
 from app.modules.knowledge.repository import KnowledgeRecord, KnowledgeRepository
 from app.modules.knowledge.retrieval import RetrievalProvider
@@ -25,6 +26,13 @@ from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.storage import KnowledgeFiles
 
 ROOT = "/api/v1/knowledge-bases"
+
+
+def knowledge_scores():
+    """返回知识库创建审批要求的完整七维评分。"""
+    return ReviewQualityScores(**{key: 4 for key in ReviewQualityScores.model_fields}).model_dump(
+        by_alias=True
+    )
 
 
 @pytest.fixture
@@ -40,7 +48,11 @@ def create(client, **changes):
     base = response.json()
     approved = client.post(
         "/api/v1/admin/knowledge-bases/" + base["id"] + "/review",
-        json={"decision": "approved", "revision": base["revision"]},
+        json={
+            "decision": "approved",
+            "revision": base["revision"],
+            "scores": knowledge_scores(),
+        },
     )
     assert approved.status_code == 200, approved.text
     return client.get(ROOT + "/" + base["id"]).json()
@@ -295,7 +307,7 @@ def test_settings_invalidate_index_and_rebuild_restores_real_text(client):
         {"similarityThreshold": 1.1},
         {"chunkSize": 100, "chunkOverlap": 100},
         {"mode": "未知"},
-        {"retrievalMode": "向量检索"},
+        {"keywordSearch": False},
     ],
 )
 def test_invalid_index_config_is_rejected_without_mutation(client, change):
@@ -316,6 +328,8 @@ def test_failed_parsing_and_missing_model_never_report_success(client):
         **IndexInput().model_dump(by_alias=True),
         "mode": "高质量模式",
         "retrievalMode": "向量检索",
+        "semanticSearch": True,
+        "keywordSearch": False,
     }
     base = upload(client, create(client, indexConfig=config))
     assert base["status"] == "failed" and "尚未配置" in base["documents"][0]["error"]
@@ -409,7 +423,12 @@ def test_admin_required_metadata_and_visibility_lifecycle(client):
     base = created.json()
     path = root + "/" + base["id"]
     base = client.post(
-        path + "/review", json={"decision": "approved", "revision": base["revision"]}
+        path + "/review",
+        json={
+            "decision": "approved",
+            "revision": base["revision"],
+            "scores": knowledge_scores(),
+        },
     ).json()
     public_path = ROOT + "/" + base["id"]
     assert base["canManageVisibility"] and base["contact"] == "负责人"
@@ -597,6 +616,8 @@ def test_vector_and_rerank_use_real_chunks_and_record_failure(client, monkeypatc
         **IndexInput().model_dump(by_alias=True),
         "mode": "高质量模式",
         "retrievalMode": "向量检索",
+        "semanticSearch": True,
+        "keywordSearch": False,
         "similarityThreshold": 0.1,
     }
     base = upload(client, create(client, indexConfig=config))
@@ -613,7 +634,10 @@ def test_vector_and_rerank_use_real_chunks_and_record_failure(client, monkeypatc
     monkeypatch.setattr(provider, "rerank", rerank)
     results = client.post(
         path + "/retrieval",
-        json={"query": "涡轮", "config": {**config, "retrievalMode": "重排序检索"}},
+        json={
+            "query": "涡轮",
+            "config": {**config, "retrievalMode": "重排序检索", "reranking": True},
+        },
     ).json()
     assert results[0]["title"] == "finance.txt"
 
