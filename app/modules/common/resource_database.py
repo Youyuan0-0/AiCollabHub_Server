@@ -17,7 +17,12 @@ from app.modules.common.resource_runtime import ResourceRuntime
 
 
 class ResourceDatabaseSession(ResourceRecords, ResourceCatalog, ResourceActivity):
-    """将现有业务 DTO 映射到新表，整个发布或审核流程共享一个数据库事务。"""
+    """在一个数据库事务内组合申请、目录、互动与文件的读写能力。
+
+    db 由 FoundationDatabase 管理，混入的各业务方法不能自行提交。kind 决定
+    模块独立表及共用表的类型过滤；pending_resources 暂存服务层生成的资源投影，
+    供正式发布或事务退出时消费，不是跨请求缓存。
+    """
 
     def __init__(
         self, repository: ResourceDatabase, session: Session, *, is_readonly: bool
@@ -72,7 +77,11 @@ class ResourceDatabase:
 
     @contextmanager
     def transaction(self, *, is_readonly: bool = False) -> Iterator[ResourceDatabaseSession]:
-        """异常时回滚全部关联修改，外部工具调用仍由服务放在事务之外。"""
+        """提供本模块的事务工作单元，退出前写入暂存状态，再由基础层统一提交。
+
+        发布申请、审核历史、版本、文件引用必须在同一工作单元中修改，才能一起
+        成功或回滚。外部 HTTP/对象存储操作不能被数据库回滚，应由服务在事务外执行。
+        """
         with self.foundation.transaction(is_readonly=is_readonly) as session:
             unit = ResourceDatabaseSession(self, session, is_readonly=is_readonly)
             yield unit

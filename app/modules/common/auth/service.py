@@ -94,7 +94,12 @@ def session_by_token(db: Session, raw: str) -> AuthSession | None:
 
 
 def authenticated_session(db: Session, request: Request, scope: str) -> tuple[AuthSession, str]:
-    """校验共享会话与用户当前状态，权限始终从用户表读取。"""
+    """校验共享会话，返回会话记录及供 CSRF 校验使用的原始令牌。
+
+    scope 表示本次访问入口，不代表 Cookie 自带权限。每次请求都读取用户当前状态
+    和角色，因此 IAM 停用账号或撤销管理员授权后，旧 Cookie 也不能继续沿用旧权限。
+    无效、过期或撤销会话返回 401；已登录但不能访问管理端时返回 403。
+    """
     raw = session_tokens(request).get(cookie_name(), "")
     value = session_by_token(db, raw)
     if value is None or value.record_type != SessionRecordType.SESSION or value.user is None:
@@ -109,7 +114,11 @@ def authenticated_session(db: Session, request: Request, scope: str) -> tuple[Au
 
 
 def verify_csrf(request: Request, raw_token: str) -> None:
-    """同时校验来源和共享会话令牌对应的 CSRF 值。"""
+    """同时验证公开站点 Origin 和绑定当前会话的 CSRF 值。
+
+    浏览器会自动携带会话 Cookie，所以写请求还须提供 x-csrf-token；仅通过登录
+    校验并不足以允许修改数据。来源使用配置的公开入口，而非内部代理地址。
+    """
     settings = request.app.state.settings
     expected_origin = str(settings.auth_public_origin).rstrip("/")
     secret = (
@@ -158,7 +167,12 @@ def require_business_identity(request: Request) -> None:
 
 
 def revoke_ticket(db: Session, request: Request, ticket: str) -> None:
-    """原子创建提前撤销标记或撤销现有会话，重复通知不重复写成功日志。"""
+    """按票据摘要处理单点登出，并与成功操作日志一起提交。
+
+    IAM 通知可能早于浏览器登录回调到达，此时先插入票据撤销标记，阻止迟到回调
+    建立新会话。已存在票据则只更新尚未撤销的记录；重复通知不重复写成功日志。
+    标记覆盖会话与登录上下文的有效期，避免仍有效的迟到票据被再次使用。
+    """
     settings = request.app.state.settings
     prepare_write(db, settings)
     current = now()

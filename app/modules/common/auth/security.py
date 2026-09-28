@@ -18,6 +18,8 @@ def csrf_token(token: str, secret: str) -> str:
 def safe_return_path(value: str, scope: str) -> str:
     """验证登录返回地址属于当前入口的站内路径，非法地址返回 400。"""
     decoded = value
+    # 检查多层编码后的路径，识别被编码隐藏的双斜线、反斜线和路径跳转片段。
+    # 解码只用于校验；通过后保留原值，避免重新编码时改变查询参数含义。
     for _ in range(4):
         next_value = unquote(decoded)
         if next_value == decoded:

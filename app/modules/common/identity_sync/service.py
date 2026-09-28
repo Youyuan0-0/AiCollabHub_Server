@@ -51,7 +51,11 @@ def payload_hash(batch: SyncBatch) -> str:
 
 
 def compare_version(previous: int | None, incoming: int, is_same_value: bool) -> str:
-    """拒绝同时间戳内容冲突，忽略更旧推送，不使用本地到达顺序。"""
+    """按来源版本决定应用、忽略或复用；同版本不同内容视为冲突。
+
+    previous 和 incoming 均为 IAM 的原始 syncTime，不与本地接收时间比较，
+    也不在此推断秒或毫秒单位。用户资料和角色分别保存版本，互不覆盖进度。
+    """
     if previous is None or incoming > previous:
         return "applied"
     if incoming < previous:
@@ -107,7 +111,12 @@ def apply_role(user: User, change: RoleChange, batch: SyncBatch) -> bool:
 def receive(
     db: Session, settings: Settings, batch: SyncBatch, *, request_id: str | None = None
 ) -> SyncResult:
-    """通过摘要唯一键协调并发重试，用户、会话、成功日志与回执同事务提交。"""
+    """原子接收一批身份变更，以规范化报文摘要识别重复推送。
+
+    同一批的用户更新、会话撤销、成功日志和回执共用 db 事务；任意一项失败都会
+    回滚本批。只有提交后的回执才可作为已处理证据，重复报文直接复用其编号。
+    request_id 只用于追踪，不参与幂等判断，因此传输重试可以使用新的请求编号。
+    """
     try:
         prepare_write(db, settings)
         fingerprint = payload_hash(batch)
@@ -127,6 +136,7 @@ def receive(
         ).one()
         if inserted:
             changed, revoked = 0, 0
+            # 重叠批次按相同 subject 顺序取得用户锁，降低不同 worker 互相等待的死锁风险。
             for change in sorted(batch.data, key=lambda item: item.subject):
                 user = lock_identity(db, change.subject)
                 if isinstance(change, UserChange):

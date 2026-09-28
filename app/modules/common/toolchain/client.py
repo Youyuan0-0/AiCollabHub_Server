@@ -71,11 +71,16 @@ class PopClient:
         query: dict | None = None,
         body: dict | None = None,
     ) -> object:
-        """校验业务成功并返回 data；写操作不自动重试，超时明确提示核对结果。"""
+        """签名并发送允许路径下的请求，验证协议成功后返回 data。
+
+        action 用于供应方签名与诊断，query/body 保留第三方字段名。每个客户端
+        最多允许八个并发调用，超额立即返回 429；HTTP 200 仍须同时满足 success=True
+        且包含 data 才算业务成功。超时可能发生在外部写入之后，因此不自动重试。
+        """
         if self.mode == "disabled":
             raise HTTPException(503, "工具链尚未配置")
-        allowed_paths = ("/model/",) if self.pop_code == "aipaas" else (
-            "/gatectl/", "/knowledge-engine/"
+        allowed_paths = (
+            ("/model/",) if self.pop_code == "aipaas" else ("/gatectl/", "/knowledge-engine/")
         )
         if not path.startswith(allowed_paths):
             raise ValueError("Unsupported toolchain API path")
@@ -126,6 +131,7 @@ class PopClient:
                 else None
             )
             if content is not None:
+                # 签名必须基于实际发送的同一份字节；签名后再次序列化可能改变摘要或参数含义。
                 request.set_content(content)
             request.trans_to_acs_request()
             key_id = self.settings.toolchain_access_key_id

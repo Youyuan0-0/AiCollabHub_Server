@@ -113,7 +113,11 @@ class ResourceCatalog:
         return [self.resource_view(dict(row)) for row in rows]
 
     def prefetch_catalog(self, rows: list) -> None:
-        """同一目录快照批量读取关联，避免每条资源都往返远程数据库。"""
+        """在当前只读事务中批量读取版本、作者、统计和可见范围。
+
+        结果仅缓存在当前仓储工作单元，避免目录每增加一条资源就增加一组查询。
+        这些数据依赖当前事务快照，不能挪成全局缓存，否则可能继续展示旧权限或统计。
+        """
         ids = [row["id"] for row in rows]
         versions = self.table(self.prefix + "_versions")
         self._catalog_versions = {key: [] for key in ids}
@@ -244,6 +248,7 @@ class ResourceCatalog:
                     .order_by(versions.c.published_at.desc(), versions.c.id)
                 ).mappings()
             )
+        # 展示基线由主表的当前版本外键确定，不能假定按发布时间排序的第一条就是当前版。
         current = next(item for item in history if item["id"] == row["current_version_id"])
         resource = deepcopy(current["snapshot"])
         context = resource.pop("publicationContext", {})
@@ -406,7 +411,12 @@ class ResourceCatalog:
             )
 
     def publish_version(self, publication: dict, row: dict, review: dict) -> tuple:
-        """正式资料、版本、依赖和文件引用一次写入，首次发布保持禁用。"""
+        """在审核事务内固化正式资料、不可变版本、依赖和教程引用。
+
+        首次发布依赖主表的默认禁用状态；后续发布保留原有启停状态。主表概览与
+        current_version_id 在同一事务更新，读者不会看到新概览搭配旧版本的中间状态。
+        申请基线与当前版本不一致时返回 409，要求申请人基于最新资料重新提交。
+        """
         main = self.table(self.main_name)
         resource_id = identifier(publication[self.resource_key])
         resource = self.pending_resources.pop(str(resource_id), None) or deepcopy(
@@ -420,6 +430,7 @@ class ResourceCatalog:
         if current is None:
             self.db.execute(insert(main).values(id=resource_id, **values))
         else:
+            # 多个申请可以基于同一旧版本送审，但首个发布后，其余申请不能覆盖它的成果。
             if row["base_version_id"] != current["current_version_id"]:
                 raise HTTPException(409, "资源版本已更新，请基于最新版本重新提交")
             self.db.execute(update(main).where(main.c.id == resource_id).values(**values))

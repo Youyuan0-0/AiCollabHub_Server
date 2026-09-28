@@ -168,7 +168,11 @@ class ResourceFiles:
         )
 
     def sync_tutorials(self, publication_id: UUID, data: dict, creator_id: UUID) -> None:
-        """在草稿或退回阶段同步教程引用，提交后由触发器冻结。"""
+        """按草稿内容增删申请的教程引用，提交后由数据库触发器冻结。
+
+        删除的是当前申请的关联，不删除文件本体；审核历史和正式版本可能仍引用
+        同一文件。新关联同时核对上传者，不能仅凭客户端传来的文件编号借用他人文件。
+        """
         expected = {
             identifier(item["attachment"]["id"])
             for item in data.get("tutorials", [])
@@ -195,7 +199,11 @@ class ResourceFiles:
             self.reference_file("publication", publication_id, file_id, "tutorial", creator_id)
 
     def archive_tutorials(self, publication_id: UUID, owner_type: str, owner_id: UUID) -> None:
-        """为每次审核和正式版本固化同一组教程引用。"""
+        """把申请教程复制为审核或版本的独立引用，保留原文件编号。
+
+        归档复制引用关系，不复制对象内容；后续申请删改教程时，历史所有者仍能
+        保护并读取原文件。此方法必须与对应审核或版本的写入处于同一事务。
+        """
         refs = self.table("resource_file_references")
         rows = (
             self.db.execute(
@@ -249,7 +257,11 @@ class ResourceFiles:
         )
 
     def archive_reports(self, publication: dict, review_id: UUID, review: dict) -> None:
-        """选中的报告转入审核历史，删除暂存关联但保留原始文件。"""
+        """先建立审核历史引用，再移除审核者在申请上的暂存关联。
+
+        整个引用转移属于结论事务，避免文件在归档过程中暂时失去保护。未选中的
+        报告不在本方法内迁移，已归档的文件本体也不能随着暂存关联一起删除。
+        """
         refs = self.table("resource_file_references")
         reviewer = self.foundation.user_id(self.db, review["reviewerId"])
         for file in review.get("reportFiles", []):

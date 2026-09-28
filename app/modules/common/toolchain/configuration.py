@@ -208,7 +208,11 @@ def configuration_lock(path: Path) -> Iterator[None]:
 
 
 class ToolchainConfigurationStore:
-    """保存值与运行快照分开；接口切换统一在后端重启时生效。"""
+    """分别维护磁盘配置和当前进程的启动快照。
+
+    管理员保存后只更新文件，不热替换正在服务的客户端。view 通过 revision 与
+    activeRevision 标明是否需要重启；多 worker 部署须整体重启，才能使用同一份新配置。
+    """
 
     def __init__(self, settings: Settings) -> None:
         """读取一份启动快照，文件不存在时沿用现有环境配置。"""
@@ -350,7 +354,12 @@ class ToolchainConfigurationStore:
         }
 
     def save(self, payload: SaveToolchainConfiguration, subject: str) -> dict:
-        """校验版本与密钥后原子替换文件；失败保留上一次可用配置。"""
+        """持有文件锁校验修订、合并凭据，再原子替换配置文件。
+
+        未传入或传入空字符串的凭据沿用原值，清除必须显式列入 clear_credentials；
+        同一密钥不能同时清除和替换。subject 来自已认证管理员，仅用于记录修改者。
+        保存成功不改变 active 启动快照，返回视图会提示是否需要重启。
+        """
         try:
             with configuration_lock(self.path):
                 current = self.read()
@@ -391,6 +400,7 @@ class ToolchainConfigurationStore:
             raise HTTPException(503, "配置文件保存失败，请检查本地目录访问权限") from None
 
     def _write(self, document: ConfigurationDocument) -> None:
+        """先写同目录临时文件并刷盘，再替换目标文件，避免读者读取到半份 JSON。"""
         data = document.model_dump(mode="json", by_alias=True, exclude={"credentials"})
         data["credentials"] = {
             key: secret.get_secret_value() for key, secret in document.credentials.items()
@@ -398,6 +408,7 @@ class ToolchainConfigurationStore:
         encoded = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
         if len(encoded) > MAX_CONFIGURATION_BYTES:
             raise HTTPException(422, "配置文件不能超过 1 MiB")
+        # 临时文件与目标处于同一文件系统，os.replace 才能以原子替换方式切换完整版本。
         descriptor, name = tempfile.mkstemp(prefix=".toolchain-", dir=self.path.parent)
         temporary = Path(name)
         try:

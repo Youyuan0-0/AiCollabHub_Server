@@ -117,7 +117,12 @@ class ResourceRecords:
         return result
 
     def publication_data(self, record: dict) -> dict:
-        """冻结表单和必要的发布上下文，不将互动、运行结果或审核历史塞入申请。"""
+        """生成可持久化的申请资料，并固定资源、版本及应用依赖编号。
+
+        publicationContext 承接跨模块的发布上下文，plannedResourceId 允许尚无
+        主表记录的草稿提前持有稳定资源编号。应用依赖须解析到具体正式版本，
+        不能只保存资源编号后在执行或展示历史时随当前版本漂移。
+        """
         data = deepcopy(record["data"])
         context = {key: deepcopy(record[key]) for key in CONTEXT_FIELDS if key in record}
         context.update(
@@ -152,7 +157,12 @@ class ResourceRecords:
         return data
 
     def put_publication(self, record: dict) -> None:
-        """按修订保存申请；审核、文件归档和正式发布都在本事务中完成。"""
+        """在调用方事务内保存申请或完成审核，不自行提交。
+
+        record.revision 是期望写入的新修订，须为数据库当前值加一。先锁申请再
+        比对修订，避免多个 worker 先读后写导致覆盖。草稿在库中用空 review_status
+        表示；送审另行增加 submission_no，并再次推进 revision，返回值以回填为准。
+        """
         publication_id = identifier(record["id"])
         self.lock("publication:" + record["id"])
         table = self.table(self.prefix + "_publications")
@@ -220,6 +230,7 @@ class ResourceRecords:
             current = {**current, **values, "revision": current["revision"] + 1}
         self.sync_tutorials(publication_id, data, current["applicant_id"])
         if target_status == "pending":
+            # 先保存资料和教程引用，再切换待审状态；进入待审后数据库规则会冻结本轮内容。
             if not values["version"]:
                 raise HTTPException(422, "提交审核前请填写版本号")
             current.update(
@@ -248,7 +259,11 @@ class ResourceRecords:
         )
 
     def conclude_publication(self, record: dict, row: dict, decision: str) -> None:
-        """先归档本轮审核及文件，再更新结论，最后固化版本并回填发布结果。"""
+        """归档本轮审核后更新结论，通过时再生成正式版本和发布结果。
+
+        审核快照取自已锁定的数据库 row，而非客户端传来的可变资料。文件历史、
+        申请结论、主表与版本共用当前事务，任何一步失败都不能留下部分通过的状态。
+        """
         if not record.get("reviews"):
             raise HTTPException(422, "缺少审核记录")
         review = record["reviews"][-1]

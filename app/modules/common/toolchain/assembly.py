@@ -20,7 +20,12 @@ from app.storage.client import MinioStorage
 
 
 def configure_toolchains(application: FastAPI) -> ExitStack:
-    """分别装配各模块连接，任一初始化失败时释放此前创建的客户端。"""
+    """按模块配置一次性装配工具链，返回由应用生命周期负责关闭的退出栈。
+
+    模型、应用、工具等模块可以各自选择真实、模拟或禁用模式；模拟客户端必须
+    配套本地 transport，不能意外访问网络。这里替换外部提供器，正式业务仓储
+    仍由基础服务装配维护。任一模块初始化失败都会释放本轮已创建的客户端。
+    """
     settings = application.state.settings
     clients, mocks = {}, {}
     service = getattr(application.state, "application_service", None)

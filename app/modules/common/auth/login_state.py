@@ -10,6 +10,7 @@ from app.cache.client import get_cache
 logger = logging.getLogger(__name__)
 
 # 浏览器绑定不符时保留请求，避免攻击者提前消费其他浏览器的登录上下文。
+# 校验和删除必须在同一段 Lua 中执行；拆成 GET/DEL 会让并发回调同时通过一次性校验。
 CONSUME_LOGIN = """
 local value = redis.call('GET', KEYS[1])
 if not value then return nil end
@@ -22,7 +23,12 @@ return value
 
 @dataclass(frozen=True)
 class LoginState:
-    """仅在 Redis 中短期存在的一次性浏览器登录上下文。"""
+    """仅在 Redis 中短期存在的一次性浏览器登录上下文。
+
+    browser_hash 绑定发起登录的浏览器，scope 区分用户端和管理端；service_url
+    固定本次 CAS 校验地址，return_path 保存已校验的站内跳转路径。跨 worker
+    回调从 Redis 读取同一份上下文，不能以进程内字典替代。
+    """
 
     browser_hash: str
     scope: str

@@ -101,7 +101,13 @@ class DatabaseResourceWorkspace:
         revision: int | None = None,
         resource_id: str | None = None,
     ) -> dict:
-        """创建或保存本人申请，正式资源的历史资料不能被草稿覆盖。"""
+        """创建或更新发布申请，只保存申请资料，不直接改写正式目录。
+
+        identifier 为空时新建申请；更新时 revision 必须等于页面读取的当前修订号。
+        submit 决定保存草稿还是进入待审，待审和已通过申请不能原地编辑。
+        为已有 resource_id 发布新版本时，记录当前 versionId 作为基线，审核发布时
+        再次比对，防止较旧申请覆盖已经发布的新版本。
+        """
         if actor.role not in {"publisher", "admin", "org_admin"}:
             raise HTTPException(403, "当前身份不能发布资源")
         with self.repository.transaction() as session:
@@ -144,7 +150,11 @@ class DatabaseResourceWorkspace:
     def review(
         self, identifier: str, payload: ResourceReview, actor: Actor, reports: list[dict]
     ) -> dict:
-        """提交本轮结论及文件归档，审核通过后显式启用才进入用户目录。"""
+        """校验本轮申请修订并保存结论，由仓储原子完成历史归档和版本发布。
+
+        reviews 中保留本轮资料的深拷贝，后续退回编辑不会改变旧审核记录。
+        通过审核只形成正式版本；首次发布仍禁用，需管理员另行启用才进入用户目录。
+        """
         require_admin(actor)
         with self.repository.transaction() as session:
             record = self.check_publication(session.get_publication(identifier), actor, True)
