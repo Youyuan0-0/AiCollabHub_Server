@@ -25,6 +25,14 @@ def client():
         yield client
 
 
+@pytest.fixture
+def toolchain_client():
+    """工具链流程显式启用协议模拟，不再依赖 disabled 时的旧样例回退。"""
+    settings = Settings(app_env="test", auth_mode="disabled", toolchain_mode="mock")
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
 def select(client, actor, audience="user"):
     response = client.post(
         API + "/application-demo-session", json={"actorId": actor, "audience": audience}
@@ -77,11 +85,11 @@ def policy(client, **changes):
     return response.json()
 
 
-def sync(client, version="v1.0", **changes):
+def sync(client, version="20260921001", **changes):
     response = client.post(
         API + "/application-toolchain/syncs",
         json={
-            "externalId": "tc-report",
+            "externalId": "demo-agent-001",
             "externalVersion": version,
             "requestId": str(uuid4()),
             **changes,
@@ -441,24 +449,51 @@ def test_concurrent_repeated_run_invokes_provider_once(client, app_id, monkeypat
     assert client.get(f"{API}/applications/{app_id}").json()["usage"] == 1
 
 
-def test_toolchain_duplicate_versions_failures_and_new_version_review(client):
-    failed = sync(client, simulateFailure=True)
+def test_toolchain_duplicate_versions_failures_and_new_version_review(
+    toolchain_client, monkeypatch
+):
+    client = toolchain_client
+    upstream = client.app.state.toolchain_mocks["applications"]
+    original_dispatch = upstream.dispatch
+
+    def dispatch(request, body):
+        result = original_dispatch(request, body)
+        if request.url.path.endswith("/agent/version/pageQuery") and result["list"]:
+            result["list"].append({**result["list"][0], "agentVersion": "20260922002"})
+            result["total"] = 2
+        return result
+
+    monkeypatch.setattr(upstream, "dispatch", dispatch)
+    failed = sync(client, "missing-version")
     assert failed["status"] == "failed" and not failed["publicationId"]
     first = sync(client)
     assert first["status"] == "succeeded" and first["mapping"]
     assert sync(client)["publicationId"] == first["publicationId"]
-    assert sync(client, "v2.0")["status"] == "failed"
+    assert sync(client, "20260922002")["status"] == "failed"
     draft = client.get(f"{API}/application-publications/{first['publicationId']}").json()
     record = client.put(
         f"{API}/application-publications/{draft['id']}",
-        json={"data": draft["data"], "submit": True, "revision": draft["revision"]},
+        json={
+            "data": {
+                **draft["data"],
+                "owner": "研发单位",
+                "triggerType": "手动触发",
+                "communicationProtocol": "HTTP",
+                "deployment": "工具链托管",
+            },
+            "submit": True,
+            "revision": draft["revision"],
+        },
     ).json()
     approve(client, record)
-    next_sync = sync(client, "v2.0")
+    next_sync = sync(client, "20260922002")
     version = client.get(f"{API}/application-publications/{next_sync['publicationId']}").json()
     assert version["applicationId"] == record["applicationId"]
-    assert version["source"]["externalVersion"] == "v2.0"
-    assert client.get(f"{API}/applications/{record['applicationId']}").json()["version"] == "v1.0"
+    assert version["source"]["externalVersion"] == "20260922002"
+    assert (
+        client.get(f"{API}/applications/{record['applicationId']}").json()["version"]
+        == "20260921001"
+    )
     assert len(client.get(API + "/admin/application-syncs").json()) == 5
 
 
@@ -487,7 +522,9 @@ def test_policy_presentation_revision_and_scope(client, app_id):
     )
 
 
-def test_toolchain_development_enters_importable_catalog(client):
+def test_toolchain_development_requires_external_workbench(toolchain_client):
+    client = toolchain_client
+    before = client.get(API + "/application-toolchain/resources").json()
     response = client.post(
         API + "/application-toolchain/development-publications",
         json={
@@ -501,16 +538,9 @@ def test_toolchain_development_enters_importable_catalog(client):
             }
         },
     )
-    assert response.status_code == 200, response.text
-    source = response.json()
-    assert any(
-        item["externalId"] == source["externalId"]
-        for item in client.get(API + "/application-toolchain/resources").json()
-    )
-    result = sync(
-        client, externalId=source["externalId"], externalVersion=source["externalVersion"]
-    )
-    assert result["status"] == "succeeded"
+    assert response.status_code == 409, response.text
+    assert "工作台" in response.json()["detail"]
+    assert client.get(API + "/application-toolchain/resources").json() == before
     select(client, "demo-reader")
     assert (
         client.post(

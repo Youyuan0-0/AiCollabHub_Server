@@ -1,4 +1,4 @@
-"""外部工具唯一适配边界；当前不发出网络请求，后续在工厂替换供应方实现。"""
+"""工具运行契约和本地模拟供应方；真实成果查询由 toolchain 适配器装配。"""
 
 import json
 from copy import deepcopy
@@ -102,7 +102,7 @@ class ToolProvider(Protocol):
         """读取可导入工具的元数据，不写入平台目录。"""
         ...
 
-    def get_tool(self, external_id: str) -> dict:
+    def get_tool(self, external_id: str, version: str | None = None) -> dict:
         """读取完整工具元数据，对应工具链 getOne 接口。"""
         ...
 
@@ -134,11 +134,13 @@ class MockToolProvider:
             return json.loads(resource["outputExample"])
         return {"result": f"{resource['name']} 的模拟响应：{str(inputs)[:500]}"}
 
-    def get_tool(self, external_id: str) -> dict:
+    def get_tool(self, external_id: str, version: str | None = None) -> dict:
         """根据稳定外部编号返回模拟详情。"""
         tool = next((item for item in self.list_tools() if item["externalId"] == external_id), None)
         if tool is None:
             raise HTTPException(404, "工具链资源不存在")
+        if version is not None and tool["version"] != version:
+            raise HTTPException(409, "工具链版本已变化，请刷新成果后重新核对")
         return tool
 
 

@@ -4,13 +4,22 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 
-from app.modules.common.identity import current_actor
+from app.modules.common.identity import Actor, current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.interaction_schemas import FavoriteInput, RatingInput
+from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.contracts import authorize
 from app.modules.tools.schemas import InvokeTool, SaveTool, ToolCatalogQuery, ToolInput
 from app.modules.tools.workspace import tool_workspace
 
 router = APIRouter(tags=["tools (simulation)"])
+
+
+def toolchain_actor(request: Request) -> Actor:
+    """工具链成果独立校验启用状态和发布权限，不影响平台已有工具。"""
+    actor = current_actor(request)
+    authorize(module_settings(request.app.state.settings, "tools"), actor)
+    return actor
 
 
 @router.get("/tools", response_model=None)
@@ -52,6 +61,12 @@ def rate(tool_id: str, payload: RatingInput, request: Request) -> dict:
     )
 
 
+@router.get("/tools/{tool_id}/ratings", response_model=None)
+def ratings(tool_id: str, request: Request) -> list[dict]:
+    """读取当前账号可访问工具的用户评价。"""
+    return tool_workspace(request).ratings(tool_id, current_actor(request))
+
+
 @router.post("/tools/{tool_id}/invoke", response_model=None)
 def invoke(tool_id: str, payload: InvokeTool, request: Request) -> dict:
     """通过供应方适配器运行工具；当前仅提供模拟运行。"""
@@ -60,11 +75,16 @@ def invoke(tool_id: str, payload: InvokeTool, request: Request) -> dict:
 
 @router.get("/tool-publication-defaults", response_model=None)
 def defaults(request: Request) -> dict:
-    """返回可信身份默认值及表单字典。"""
+    """返回可信身份、表单字典及独立的工具链接入状态。"""
+    mode = module_settings(request.app.state.settings, "tools").toolchain_mode
+    available = mode != "disabled"
     return {
         **publication_defaults(request, current_actor(request)),
         "configuration": tool_workspace(request).configuration(),
         "mode": tool_workspace(request).provider.mode,
+        "toolchainMode": mode,
+        "toolchainAvailable": available,
+        "toolchainUrl": tool_workspace(request).provider.entry_url() if available else "",
     }
 
 
@@ -111,16 +131,24 @@ def save(record_id: str, payload: SaveTool, request: Request) -> dict:
 
 @router.get("/toolchain-tools", response_model=None)
 def toolchain(request: Request) -> dict:
-    """返回模拟工具链资料，未来由同一适配器读取 Agent Dev 接口。"""
-    current_actor(request)
+    """读取当前启用的工具成果连接，真实模式失败不回退模拟数据。"""
+    toolchain_actor(request)
     provider = tool_workspace(request).provider
-    return {"mode": provider.mode, "entryUrl": provider.entry_url(), "items": provider.list_tools()}
+    return {
+        "mode": module_settings(request.app.state.settings, "tools").toolchain_mode,
+        "entryUrl": provider.entry_url(),
+        "items": provider.list_tools(),
+    }
 
 
 @router.post("/toolchain-tools/{external_id}/import", response_model=None)
-def import_tool(external_id: str, request: Request) -> dict:
+def import_tool(
+    external_id: str,
+    request: Request,
+    version: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+) -> dict:
     """将工具链资料导入本人草稿，不直接上架。"""
-    actor = current_actor(request)
+    actor = toolchain_actor(request)
     return tool_workspace(request).import_tool(
-        external_id, actor, publication_defaults(request, actor)
+        external_id, actor, publication_defaults(request, actor), version=version
     )

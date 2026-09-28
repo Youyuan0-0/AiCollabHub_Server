@@ -16,6 +16,10 @@ class ModelProvider(Protocol):
         """查询可以拉取的外部模型元数据。"""
         ...
 
+    def get_model(self, external_id: str, version: str | None = None) -> dict:
+        """重新读取选中版本的元数据。"""
+        ...
+
 
 class SimulatedModelProvider:
     """读取模型样例并补齐明确标识为模拟的专属字段。"""
@@ -43,7 +47,7 @@ class SimulatedModelProvider:
                     item.removeprefix("支持") for item in seed.get("facets", {}).get("support", [])
                 ],
                 model_status=seed["badge"]
-                if seed.get("badge") in ("NEW", "合集", "推荐", "稳定", "弃用")
+                if seed.get("badge") in ("NEW", "合集", "推进", "推荐", "稳定", "弃用")
                 else "NEW",
                 capabilities=seed.get("capabilities", []),
             ).model_dump(by_alias=True)
@@ -56,6 +60,7 @@ class SimulatedModelProvider:
                     "rating": None,
                     "usage": 0,
                     "externalId": seed["id"],
+                    "versions": [values["version"]],
                     "sourceType": "第三方引入",
                     "trainingDatasetIds": [],
                     "securityLevel": "内部",
@@ -63,6 +68,31 @@ class SimulatedModelProvider:
                 }
             )
         return result
+
+    def get_model(self, external_id: str, version: str | None = None) -> dict:
+        """模拟工作台也核对选中编号和版本。"""
+        from fastapi import HTTPException
+
+        selected = next(
+            (item for item in self.list_models() if item["externalId"] == external_id),
+            None,
+        )
+        if selected is None:
+            raise HTTPException(404, "工具链模型不存在")
+        if version and version != selected["version"]:
+            raise HTTPException(409, "模型版本已变化，请刷新成果后重新选择")
+        return {
+            **selected,
+            "source": {
+                "kind": "toolchain",
+                "provider": "ai-studio",
+                "mode": "mock",
+                "environment": "mock",
+                "region": "",
+                "externalId": external_id,
+                "version": selected["version"],
+            },
+        }
 
 
 def create_model_provider() -> ModelProvider:

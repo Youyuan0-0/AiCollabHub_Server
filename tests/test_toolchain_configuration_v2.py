@@ -31,7 +31,7 @@ def test_module_connections_never_cross_credentials_or_authorization():
     with TestClient(application()) as client:
         data = payload(client)
         data["credentials"] = {}
-        for module in ("applications", "datasets", "knowledge"):
+        for module in ("applications", "datasets", "knowledge", "tools"):
             data["configuration"][module]["connection"].update(
                 mode="live",
                 url=f"https://{module}.invalid",
@@ -44,6 +44,9 @@ def test_module_connections_never_cross_credentials_or_authorization():
         assert client.put(PATH, json=data).status_code == 200
     with TestClient(application()) as restarted:
         for module, adapter in restarted.app.state.toolchain_clients.items():
+            if module == "models":
+                assert adapter.mode == "disabled"
+                continue
             received = []
 
             def upstream(request, received=received):
@@ -69,6 +72,8 @@ def test_single_enabled_module_does_not_enable_other_modules():
             "applications": "disabled",
             "datasets": "mock",
             "knowledge": "disabled",
+            "tools": "disabled",
+            "models": "disabled",
         }
         assert client.get("/api/v1/dataset-toolchain/resources").status_code == 200
         assert client.app.state.toolchain_clients["applications"].mode == "disabled"

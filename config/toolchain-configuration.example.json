@@ -4,6 +4,34 @@
   "updatedAt": "",
   "updatedBy": "",
   "configuration": {
+    "tools": {
+      "connection": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "workspace": "",
+        "region": "",
+        "timeout": 30.0,
+        "allowedSubjects": []
+      },
+      "entryUrl": null,
+      "toolCategory": "my",
+      "toolTypes": ["api", "MY_MCP", "knowledge"]
+    },
+    "models": {
+      "connection": {
+        "proxyUrl": null,
+        "caCertificate": "",
+        "mode": "disabled",
+        "url": null,
+        "workspace": "",
+        "region": "",
+        "timeout": 30.0,
+        "allowedSubjects": []
+      },
+      "entryUrl": null
+    },
     "applications": {
       "proxyUrl": null,
       "caCertificate": "",

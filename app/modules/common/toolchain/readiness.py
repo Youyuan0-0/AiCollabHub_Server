@@ -7,7 +7,7 @@ from app.modules.common.toolchain.configuration_schemas import ConfigurationDocu
 
 
 def configuration_readiness(document: ConfigurationDocument, baseline: Settings) -> dict:
-    """列出三个模块的实际调用和缺项，只返回说明，不返回密钥或发起外部写入。"""
+    """列出各模块的实际调用和缺项，只返回说明，不返回密钥或发起外部写入。"""
     config = document.configuration
     credentials = document.credentials
 
@@ -23,7 +23,10 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
         missing = []
         for value, name in (
             (current.url, "服务地址"),
-            (current.workspace, "工作空间"),
+            (
+                current.region if module == "models" else current.workspace,
+                "地域" if module == "models" else "工作空间",
+            ),
             (current.allowed_subjects, "授权账号"),
             (credentials.get(module + "AccessKeyId"), "AccessKey ID"),
             (credentials.get(module + "AccessKeySecret"), "AccessKey Secret"),
@@ -217,6 +220,46 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
             "平台复用审核权限，并按实际召回请求统计耗时和成功率；首次确认索引完成时记录时间。",
         )
     )
+    tools = [
+        workbench("tools"),
+        connection(
+            "tools",
+            "工具成果目录、详情与版本资料导入",
+            "Agent Dev 工具列表及详情共用本模块 POP 连接；按工具范围和类型查询。",
+        ),
+        item(
+            "tools-platform",
+            "草稿补充、发布审核、可见范围和评价",
+            "platform",
+            "沿用平台数据库及发布审核；供应方未提供的资料在草稿中补齐。",
+        ),
+        item(
+            "tools-runtime",
+            "真实 API / MCP 执行",
+            "supplier",
+            "工具管理接口用于查询和导入资料。实际执行协议及鉴权需另行对接，当前运行仍为模拟。",
+        ),
+    ]
+    models = [
+        workbench("models"),
+        connection(
+            "models",
+            "模型仓库目录、详情及版本导入",
+            "AI Studio 模型接口使用本模块的地址、地域和 AK/SK；缺少的平台字段在草稿中补齐。",
+        ),
+        item(
+            "models-platform",
+            "模型发布审核、可见范围和评价",
+            "platform",
+            "复用现有模型数据库及公共审核流程。",
+        ),
+        item(
+            "models-runtime",
+            "在线体验、训练进度及评测结果",
+            "supplier",
+            "模型目录接口不提供推理结果；运行服务和训练任务状态须分别对接。",
+        ),
+    ]
     return {
         module: {
             "configurationComplete": all(
@@ -228,5 +271,7 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
             ("applications", applications),
             ("datasets", datasets),
             ("knowledge", knowledge),
+            ("tools", tools),
+            ("models", models),
         )
     }

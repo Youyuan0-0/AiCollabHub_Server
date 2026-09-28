@@ -49,6 +49,51 @@ def select(client, actor):
     assert result.status_code == 200
 
 
+@pytest.mark.parametrize("module_override", [False, True])
+def test_disabled_application_toolchain_rejects_legacy_provider_before_any_write(
+    module_override, monkeypatch
+):
+    """全局或模块禁用时，三个业务入口均先拒绝，不读取旧样例或创建草稿。"""
+    settings = Settings(
+        toolchain_mode="mock" if module_override else "disabled",
+        toolchain_module_connections={"applications": {"toolchain_mode": "disabled"}}
+        if module_override
+        else {},
+        auth_mode="disabled",
+    )
+    app = create_app(settings, resources_factory=lambda _: ApplicationResources())
+    with TestClient(app) as client:
+        service = app.state.application_service
+
+        def unexpected_call(*args, **kwargs):
+            raise AssertionError("未启用时不能读取供应方或创建同步记录")
+
+        monkeypatch.setattr(service.provider, "toolchain_resources", unexpected_call)
+        monkeypatch.setattr(service.provider, "develop", unexpected_call)
+        monkeypatch.setattr(service.workflows, "sync", unexpected_call)
+        publications = client.get(API + "/application-publications").json()
+        syncs = client.get(API + "/application-toolchain/syncs").json()
+        responses = [
+            client.get(API + "/application-toolchain/resources"),
+            client.post(
+                API + "/application-toolchain/syncs",
+                json={
+                    "externalId": "tc-report",
+                    "externalVersion": "v1.0",
+                    "requestId": str(uuid4()),
+                },
+            ),
+            client.post(API + "/application-toolchain/development-publications", json={"data": {}}),
+        ]
+        for response in responses:
+            assert response.status_code == 503, response.text
+            assert response.json()["detail"] == "工具链尚未配置"
+        assert client.get(API + "/application-publications").json() == publications
+        assert client.get(API + "/application-toolchain/syncs").json() == syncs
+        if module_override:
+            assert client.get(API + "/dataset-toolchain/resources").status_code == 200
+
+
 def test_pop_signed_json_uses_documented_headers_and_path():
     calls = []
 
@@ -317,7 +362,12 @@ def test_knowledge_local_review_does_not_call_external_engine(client):
     document = base["documents"][0]
     assert document["status"] == "awaiting_review" and base["chunkCount"] == 0
     base = client.post(
-        admin + "/review", json={"revision": base["revision"], "decision": "approved"}
+        admin + "/review",
+        json={
+            "revision": base["revision"],
+            "decision": "approved",
+            "scores": scores(),
+        },
     ).json()
     response = client.post(
         admin + "/documents/" + document["id"] + "/review",

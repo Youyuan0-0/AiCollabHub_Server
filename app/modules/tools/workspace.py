@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from hashlib import sha256
 from time import perf_counter
 from uuid import uuid4
 
@@ -107,7 +108,18 @@ class ToolWorkspace:
         successful = sum(item["success"] for item in runs)
         return {
             **resource,
+            # 数据库版本保存发布表单，不一定包含原型目录派生的分类与筛选字段。
+            "category": resource.get("toolType") or resource.get("category", ""),
+            "facets": {
+                **resource.get("facets", {}),
+                "toolType": [resource.get("toolType") or resource.get("category", "")],
+                "sourceType": [resource.get("sourceType", "")],
+                "team": [resource.get("team", "")],
+                "tags": resource.get("tags", []),
+            },
             "runtimeMode": self.provider.mode,
+            "canPublishVersion": resource.get("createdBy") == actor.id
+            and actor.role in {"publisher", "admin", "org_admin"},
             "usage": len(runs),
             "favoriteCount": sum(bool(item.get("favorite")) for item in interactions),
             "rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
@@ -334,6 +346,21 @@ class ToolWorkspace:
             "revision": previous["revision"] + 1 if previous else 1,
             "reviews": previous["reviews"] if previous else [],
         }
+        if payload.submit:
+            published = session.get_resource(record["toolId"])
+            changes = [key for key in data if not published or published.get(key) != data[key]]
+            labels = {
+                **REQUIRED_FIELDS,
+                **OPTIONAL_FIELDS,
+                "version": "版本号",
+                "inputExample": "输入示例",
+                "outputExample": "输出示例",
+            }
+            record["versionNotes"] = (
+                "首次发布"
+                if not published
+                else "更新：" + "、".join(labels.get(key, key) for key in changes)
+            )
         return record
 
     def review(self, record_id: str, payload: ReviewTool, actor: Actor) -> dict:
@@ -368,13 +395,6 @@ class ToolWorkspace:
                 if previous and previous["version"] != record.get("baseVersion"):
                     raise HTTPException(409, "已发布版本发生变化，请重新读取资料")
                 changes = [key for key in data if not previous or previous.get(key) != data[key]]
-                labels = {
-                    **REQUIRED_FIELDS,
-                    **OPTIONAL_FIELDS,
-                    "version": "版本号",
-                    "inputExample": "输入示例",
-                    "outputExample": "输出示例",
-                }
                 resource = {
                     **data,
                     "id": record["toolId"],
@@ -404,9 +424,7 @@ class ToolWorkspace:
                             "version": data["version"],
                             "releasedAt": timestamp(),
                             "status": "current",
-                            "note": "首次发布"
-                            if not previous
-                            else "更新：" + "、".join(labels.get(key, key) for key in changes),
+                            "note": record.get("versionNotes", ""),
                             "changedFields": changes,
                         }
                     ]
@@ -496,12 +514,32 @@ class ToolWorkspace:
             rows.sort(key=lambda item: item["createdAt"], reverse=True)
             return paginate(rows, query.page, query.page_size)
 
+    def ratings(self, tool_id: str, actor: Actor) -> list[dict]:
+        """读取可见工具的评价，复用公共互动存储且不公开评价者账号。"""
+        with self.repository.transaction(is_readonly=True) as session:
+            self._resource(session, tool_id, actor)
+            reviews = [
+                {
+                    "id": sha256(json.dumps([item["actorId"], tool_id]).encode()).hexdigest(),
+                    "rating": item["rating"],
+                    "comment": item.get("comment") or "",
+                    "updatedAt": item.get("ratingUpdatedAt", item.get("updatedAt", "")),
+                }
+                for item in session.entries("interactions")
+                if item["toolId"] == tool_id
+                and type(item.get("rating")) is int
+                and 1 <= item["rating"] <= 5
+            ]
+            return sorted(reviews, key=lambda item: (item["updatedAt"], item["id"]), reverse=True)
+
     def interact(self, tool_id: str, actor: Actor, **changes: object) -> dict:
         """每账号每工具一份互动记录，重复收藏与修改评分不会重复计数。"""
         with self.repository.transaction() as session:
             resource = self._resource(session, tool_id, actor)
             key = actor.id + ":" + tool_id
             record = session.entry("interactions", key) or {"actorId": actor.id, "toolId": tool_id}
+            if "rating" in changes:
+                changes["ratingUpdatedAt"] = timestamp()
             session.put_entry("interactions", key, {**record, **changes})
             return public_tool(self._summary(session, resource, actor))
 
@@ -544,9 +582,23 @@ class ToolWorkspace:
         text = output.get("result", output) if isinstance(output, dict) else output
         return {**run, "output": output, "text": str(text)}
 
-    def import_tool(self, external_id: str, actor: Actor, defaults: dict) -> dict:
+    def import_tool(
+        self, external_id: str, actor: Actor, defaults: dict, version: str | None = None
+    ) -> dict:
         """工具链导入只创建草稿；重复导入同一版本返回本人已有申请。"""
-        candidate = self.provider.get_tool(external_id)
+        candidate = self.provider.get_tool(external_id, version=version)
+        source = candidate.get("source", {})
+
+        def same_source(item: dict) -> bool:
+            """真实成果按供应方环境与工作空间隔离，兼容已有模拟草稿。"""
+            previous = item.get("source", {})
+            if previous.get("externalId", item.get("externalId")) != external_id:
+                return False
+            return all(
+                previous.get(key) == source.get(key)
+                for key in ("provider", "mode", "environment", "workspace")
+            )
+
         # 重复导入检查、草稿和关联标识在同一个事务内提交。
         with self.repository.transaction() as session:
             existing = next(
@@ -554,8 +606,7 @@ class ToolWorkspace:
                     item
                     for item in session.list_publications()
                     if item["createdBy"] == actor.id
-                    and item.get("source", {}).get("externalId", item.get("externalId"))
-                    == external_id
+                    and same_source(item)
                     and item["data"]["version"] == candidate["version"]
                 ),
                 None,
@@ -570,8 +621,7 @@ class ToolWorkspace:
                 (
                     item
                     for item in session.list_resources()
-                    if item["createdBy"] == actor.id
-                    and item.get("source", {}).get("externalId") == external_id
+                    if item["createdBy"] == actor.id and same_source(item)
                 ),
                 None,
             )
@@ -590,6 +640,7 @@ class ToolWorkspace:
             record["externalId"] = external_id
             record["data"]["version"] = candidate["version"]
             record["source"] = {
+                **source,
                 "kind": "toolchain",
                 "label": "工具链导入",
                 "externalId": external_id,

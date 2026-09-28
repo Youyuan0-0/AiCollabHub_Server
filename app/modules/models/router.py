@@ -1,4 +1,4 @@
-"""模型目录、专属发布和工具链模拟接口。"""
+"""模型目录、专属发布和模型仓库成果导入接口。"""
 
 import json
 from typing import Annotated
@@ -10,9 +10,11 @@ from starlette.background import BackgroundTask
 
 from app.modules.common.catalog import query_resources
 from app.modules.common.downloads import complete_download
-from app.modules.common.identity import current_actor
+from app.modules.common.identity import Actor, current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery, Payload
+from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.contracts import authorize
 from app.modules.models.schemas import SaveModel, validate_model
 from app.modules.models.workspace import model_workspace, public_model
 
@@ -46,17 +48,47 @@ def resources(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict
         ).casefold()
     ]
     for item in items:
+        task_type = item.get("taskType", "")
+        nlp_tasks = {"文本生成", "文本分类", "文本翻译"}
+        speech_tasks = {"语音识别", "语音合成"}
+        metadata = [
+            {"label": label, "value": item.get(key) or "未提供"}
+            for label, key in (
+                ("模型架构", "architecture"),
+                ("参数规模", "parameters"),
+                ("上下文长度", "contextLength"),
+                ("模型框架", "framework"),
+                ("模型格式", "modelFormat"),
+                ("权重精度", "precision"),
+            )
+        ]
+        metrics = [
+            {"label": label, "value": str(value)}
+            for label, value in (
+                ("质量评分", item.get("qualityScore")),
+                ("基准测评", item.get("benchmarkScore")),
+                ("领域测评", item.get("domainScore")),
+                ("推理速度", item.get("inferenceSpeed")),
+                ("显存要求", item.get("gpuMemory")),
+            )
+            if value not in (None, "")
+        ]
         item.update(
             description=item.get("summary", ""),
-            category=item.get("taskType", ""),
+            category=task_type,
             status="available",
             tone="blue",
+            badge=item.get("modelStatus", ""),
+            metadata=metadata,
+            metrics=metrics,
             facets={
                 "support": item.get("serviceCapabilities", []),
-                "taskType": [item.get("taskType", "")],
+                "taskType": [task_type] if task_type else [],
                 "modality": list(
                     set(item.get("inputModalities", []) + item.get("outputModalities", []))
                 ),
+                "nlpCapability": [task_type] if task_type in nlp_tasks else [],
+                "speechCapability": [task_type] if task_type in speech_tasks else [],
             },
         )
     return query_resources(
@@ -99,8 +131,15 @@ def download(identifier: str, request: Request) -> dict:
 
 @router.get("/model-publication-defaults")
 def defaults(request: Request) -> dict:
-    """带出可信单位与联系人。"""
-    return publication_defaults(request, current_actor(request))
+    """带出可信单位、联系人及模型工具链独立接入状态。"""
+    actor = current_actor(request)
+    settings = module_settings(request.app.state.settings, "models")
+    return {
+        **publication_defaults(request, actor),
+        "toolchainMode": settings.toolchain_mode,
+        "toolchainAvailable": settings.toolchain_mode != "disabled",
+        "toolchainUrl": str(request.app.state.settings.toolchain_model_entry_url or ""),
+    }
 
 
 @router.get("/model-publications")
@@ -143,6 +182,13 @@ def save_model(payload: SaveModel, request: Request, identifier: str | None = No
     )
 
 
+def model_toolchain_actor(request: Request) -> Actor:
+    """按模型库独立连接配置检查发布身份及供应方账号授权。"""
+    actor = current_actor(request)
+    authorize(module_settings(request.app.state.settings, "models"), actor)
+    return actor
+
+
 @router.post("/model-publications", status_code=201)
 def create(payload: SaveModel, request: Request) -> dict:
     """新建模型草稿或提交审核。"""
@@ -157,48 +203,63 @@ def update(identifier: str, payload: SaveModel, request: Request) -> dict:
 
 @router.get("/model-toolchain")
 def toolchain(request: Request) -> dict:
-    """返回模拟训推工具链入口和已完成模型。"""
-    current_actor(request)
+    """读取已启用的模型成果；真实服务失败时不回退模拟目录。"""
+    model_toolchain_actor(request)
+    settings = module_settings(request.app.state.settings, "models")
     return {
-        "mode": "simulation",
-        "entryUrl": "/models/toolchain?workspace=1",
+        "mode": settings.toolchain_mode,
+        "entryUrl": str(request.app.state.settings.toolchain_model_entry_url or ""),
         "items": request.app.state.model_provider.list_models(),
     }
 
 
 @router.post("/model-toolchain/{identifier}/import")
-def import_model(identifier: str, request: Request) -> dict:
-    """拉取成果生成草稿，同账号与外部版本重复拉取幂等。"""
-    actor = current_actor(request)
+def import_model(
+    identifier: str,
+    request: Request,
+    version: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+) -> dict:
+    """按供应方版本导入草稿；同来源复用申请，新版本沿用已发布资源。"""
+    actor = model_toolchain_actor(request)
     workspace = model_workspace(request)
-    source = next(
-        (
-            item
-            for item in request.app.state.model_provider.list_models()
-            if item["externalId"] == identifier
-        ),
-        None,
-    )
-    if source is None:
-        raise HTTPException(404, "工具链模型不存在")
+    source = request.app.state.model_provider.get_model(identifier, version)
+    origin = source["source"]
+
+    def same_origin(item: dict) -> bool:
+        saved = item["data"].get("source") or {}
+        return all(
+            saved.get(key) == origin.get(key)
+            for key in ("externalId", "environment", "region", "provider")
+        )
+
     with workspace.lock:
+        records = workspace.publications(actor)
         old = next(
             (
                 item
-                for item in workspace.publications(actor)
-                if item["data"].get("source")
-                == {"externalId": identifier, "version": source["version"]}
+                for item in records
+                if same_origin(item) and item["data"]["source"].get("version") == origin["version"]
             ),
             None,
         )
         if old:
             return old
+        previous = next(
+            (item for item in records if same_origin(item) and item["status"] == "approved"),
+            None,
+        )
+        if previous and any(
+            item["resourceId"] == previous["resourceId"]
+            and item["status"] in ("draft", "pending", "needs_changes")
+            for item in records
+        ):
+            raise HTTPException(409, "此模型已有待处理的新版本，请先完成当前申请")
         data = {
             **source,
             **publication_defaults(request, actor),
-            "source": {"externalId": identifier, "version": source["version"]},
+            "sourceType": "第三方引入",
         }
-        return workspace.save(data, actor)
+        return workspace.save(data, actor, resource_id=previous["resourceId"] if previous else None)
 
 
 @router.post("/model-publications/{identifier}/new-version", status_code=201)
@@ -221,5 +282,9 @@ def new_version(identifier: str, request: Request) -> dict:
         )
         if pending:
             return pending
-        data = {**old["data"], "version": ""}
+        data = {
+            **old["data"],
+            "version": "",
+            "source": {"kind": "manual", "basedOn": old["data"].get("source")},
+        }
         return workspace.save(data, actor, resource_id=old["resourceId"])

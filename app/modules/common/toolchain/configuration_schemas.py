@@ -9,7 +9,7 @@ from app.modules.common.access_schemas import StrictPayload
 from app.modules.common.toolchain.network import http_options
 from app.modules.common.toolchain.parameters import CHUNK_PARAMETERS, parameter_references
 
-MODULE_NAMES = ("applications", "datasets", "knowledge")
+MODULE_NAMES = ("applications", "datasets", "knowledge", "tools", "models")
 CREDENTIAL_NAMES = tuple(
     f"{module}{suffix}"
     for module in MODULE_NAMES
@@ -61,7 +61,7 @@ class NetworkConfiguration(StrictPayload):
 
 
 class PopConfiguration(NetworkConfiguration):
-    """三个模块复用同一字段结构，各自保存独立的 POP 连接取值。"""
+    """各模块复用同一字段结构，各自保存独立的 POP 连接取值。"""
 
     mode: Literal["disabled", "mock", "live"] = "disabled"
     url: AnyHttpUrl | None = None
@@ -323,12 +323,36 @@ class KnowledgeConnection(StrictPayload):
         return self
 
 
+class ToolConnection(DatasetConnection):
+    """工具成果复用 POP 连接和工作台地址，额外保存文档要求的查询范围。"""
+
+    tool_category: Literal["my", "platform"] = "my"
+    tool_types: list[Literal["api", "MY_MCP", "knowledge"]] = Field(
+        default_factory=lambda: ["api", "MY_MCP", "knowledge"], min_length=1, max_length=3
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_mode(cls, value: object) -> object:
+        """兼容此前仅保存开关的配置，读取不改写旧文件。"""
+        if isinstance(value, dict) and "mode" in value and "connection" not in value:
+            value = deepcopy(value)
+            value["connection"] = {"mode": value.pop("mode")}
+        return value
+
+
+class ModelConnection(DatasetConnection):
+    """AI Studio 模型仓库及版本使用独立 POP 连接。"""
+
+
 class ToolchainConfiguration(StrictPayload):
-    """三个模块共享连接能力，同时保留各自配置结构。"""
+    """按模块保存接入配置，保留各自支持的连接能力。"""
 
     applications: ApplicationConnection = Field(default_factory=ApplicationConnection)
     datasets: DatasetConnection = Field(default_factory=DatasetConnection)
     knowledge: KnowledgeConnection = Field(default_factory=KnowledgeConnection)
+    tools: ToolConnection = Field(default_factory=ToolConnection)
+    models: ModelConnection = Field(default_factory=ModelConnection)
 
 
 class SaveToolchainConfiguration(StrictPayload):
@@ -374,7 +398,8 @@ class ConfigurationDocument(StrictPayload):
             raise ValueError("旧配置文件格式不正确")
         common = config.pop("common", {})
         credentials = result.get("credentials", {})
-        for module in MODULE_NAMES:
+        # v1 共享配置不包含 AI 工具，不能在升级时自动启用新增模块。
+        for module in ("applications", "datasets", "knowledge"):
             if module in config and not isinstance(config[module], dict):
                 raise ValueError("旧配置模块格式不正确")
             config.setdefault(module, {})["connection"] = deepcopy(common)
@@ -396,18 +421,24 @@ class ConfigurationDocument(StrictPayload):
             ("applications", "场景应用"),
             ("datasets", "数据集"),
             ("knowledge", "知识库"),
+            ("tools", "AI 工具"),
+            ("models", "模型库"),
         ):
             connection = getattr(self.configuration, module).connection
+            location = connection.workspace if module != "models" else connection.region
             if connection.mode == "live" and not all(
                 (
                     connection.url,
-                    connection.workspace,
+                    location,
                     connection.allowed_subjects,
                     self.credentials.get(module + "AccessKeyId"),
                     self.credentials.get(module + "AccessKeySecret"),
                 )
             ):
-                raise ValueError(label + "的真实接口需要地址、工作空间、AK/SK 和授权账号标识")
+                location_label = "地域" if module == "models" else "工作空间"
+                raise ValueError(
+                    label + "的真实接口需要地址、" + location_label + "、AK/SK 和授权账号标识"
+                )
         if applications.runtime == "agent_dev" and not all(
             (
                 applications.url or applications.connection.url,

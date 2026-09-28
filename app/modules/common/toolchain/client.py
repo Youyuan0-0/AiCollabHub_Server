@@ -19,19 +19,30 @@ logger = logging.getLogger(__name__)
 class PopClient:
     """通过官方 SDK 签名、httpx 传输，模拟与真实环境使用同一套请求代码。"""
 
-    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        transport: httpx.BaseTransport | None = None,
+        *,
+        api_version: str = "2025-11-10",
+        pop_code: str = "sfm",
+    ) -> None:
         self.settings = settings
         self.mode = settings.toolchain_mode
-        self.workspace = settings.toolchain_workspace or "mock-workspace"
+        self.api_version = api_version
+        self.pop_code = pop_code
+        self.workspace = settings.toolchain_workspace or (
+            "mock-workspace" if pop_code == "sfm" else ""
+        )
         if self.mode == "live" and not all(
             (
                 settings.toolchain_pop_url,
-                settings.toolchain_workspace,
+                settings.toolchain_workspace if pop_code == "sfm" else settings.toolchain_region,
                 settings.toolchain_access_key_id,
                 settings.toolchain_access_key_secret,
             )
         ):
-            raise ValueError("真实工具链模式需要 POP 地址、工作空间及 AccessKey 配置")
+            raise ValueError("真实工具链模式需要 POP 地址、地域或工作空间及 AccessKey 配置")
         if self.mode == "mock" and transport is None:
             raise ValueError("模拟工具链必须提供本地传输，不能回退到网络")
         self.http = httpx.Client(
@@ -63,7 +74,10 @@ class PopClient:
         """校验业务成功并返回 data；写操作不自动重试，超时明确提示核对结果。"""
         if self.mode == "disabled":
             raise HTTPException(503, "工具链尚未配置")
-        if not path.startswith(("/gatectl/", "/knowledge-engine/")):
+        allowed_paths = ("/model/",) if self.pop_code == "aipaas" else (
+            "/gatectl/", "/knowledge-engine/"
+        )
+        if not path.startswith(allowed_paths):
             raise ValueError("Unsupported toolchain API path")
         if not self._limiter.acquire(blocking=False):
             raise HTTPException(429, "工具链请求较多，请稍后重试")
@@ -72,17 +86,18 @@ class PopClient:
         try:
             request = CommonRequest(
                 domain=self.http.base_url.host,
-                version="2025-11-10",
+                version=self.api_version,
                 action_name=action,
                 uri_pattern=path,
             )
             request.set_method(method)
             request.set_accept_format("json")
             request.add_header("Content-Type", "application/json")
-            request.add_header("x-acs-popcode", "sfm")
-            request.add_header("x-sfm-workspacecode", self.workspace)
+            request.add_header("x-acs-popcode", self.pop_code)
+            if self.workspace:
+                request.add_header("x-sfm-workspacecode", self.workspace)
             request.add_header("x-acs-action", action)
-            if self.settings.toolchain_app_key:
+            if self.pop_code == "sfm" and self.settings.toolchain_app_key:
                 request.add_header(
                     "x-sfm-authorization",
                     "Bearer " + self.settings.toolchain_app_key.get_secret_value(),

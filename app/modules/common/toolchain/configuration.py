@@ -23,9 +23,11 @@ from app.modules.common.toolchain.configuration_schemas import (
     KnowledgeConnection,
     MarketConnection,
     MarketResourceBinding,
+    ModelConnection,
     PopConfiguration,
     SaveToolchainConfiguration,
     ToolchainConfiguration,
+    ToolConnection,
 )
 from app.modules.common.toolchain.readiness import configuration_readiness
 
@@ -41,6 +43,10 @@ def module_settings(settings: Settings, module: str) -> Settings:
     if module not in MODULE_NAMES:
         raise ValueError("未知工具链模块")
     updates = settings.toolchain_module_connections.get(module)
+    if updates is None and module == "tools":
+        updates = {"toolchain_mode": settings.toolchain_tools_mode}
+    if updates is None and module == "models":
+        updates = {"toolchain_mode": settings.toolchain_models_mode}
     return settings.model_copy(update=updates) if updates is not None else settings
 
 
@@ -128,6 +134,15 @@ def environment_document(settings: Settings, *, load_legacy: bool = True) -> Con
     return ConfigurationDocument(
         revision="environment",
         configuration=ToolchainConfiguration(
+            tools=ToolConnection(
+                connection=connections["tools"],
+                entry_url=settings.toolchain_tool_entry_url,
+                tool_category=settings.toolchain_tools_category,
+                tool_types=settings.toolchain_tools_types,
+            ),
+            models=ModelConnection(
+                connection=connections["models"], entry_url=settings.toolchain_model_entry_url
+            ),
             applications=ApplicationConnection(
                 connection=connections["applications"],
                 runtime=settings.applications_runtime,
@@ -247,6 +262,12 @@ class ToolchainConfigurationStore:
             for binding in config.applications.bindings
         }
         updates = {
+            "toolchain_tools_mode": config.tools.connection.mode,
+            "toolchain_models_mode": config.models.connection.mode,
+            "toolchain_tool_entry_url": config.tools.entry_url,
+            "toolchain_model_entry_url": config.models.entry_url,
+            "toolchain_tools_category": config.tools.tool_category,
+            "toolchain_tools_types": config.tools.tool_types,
             "toolchain_module_connections": {},
             "toolchain_application_entry_url": config.applications.entry_url,
             "toolchain_dataset_entry_url": config.datasets.entry_url,

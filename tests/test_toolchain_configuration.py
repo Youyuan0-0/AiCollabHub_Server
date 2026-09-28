@@ -85,6 +85,54 @@ def test_keep_replace_and_explicit_clear_secrets(client):
     assert "appKey" not in client.app.state.toolchain_configuration.read().credentials
 
 
+def test_tools_mode_saves_and_applies_independently_after_restart(client):
+    """AI 工具独立开关在重启后生效，不随其他模块的模拟模式开启。"""
+    data = payload(client)
+    assert data["configuration"]["tools"]["connection"]["mode"] == "disabled"
+    data["configuration"]["tools"]["connection"]["mode"] = "mock"
+    saved = client.put(PATH, json=data)
+    assert saved.status_code == 200
+    assert saved.json()["activeModes"]["tools"] == "disabled"
+    assert client.get("/api/v1/toolchain-tools").status_code == 503
+    with TestClient(application()) as restarted:
+        modes = restarted.get(PATH).json()["activeModes"]
+        assert modes["tools"] == "mock"
+        assert all(modes[name] == "disabled" for name in ("applications", "datasets", "knowledge"))
+        chain = restarted.get("/api/v1/toolchain-tools").json()
+        assert chain["mode"] == "mock" and chain["items"]
+        data = payload(restarted)
+        data["configuration"]["tools"]["connection"]["mode"] = "disabled"
+        assert restarted.put(PATH, json=data).status_code == 200
+        assert restarted.get("/api/v1/toolchain-tools").status_code == 200
+    with TestClient(application()) as disabled:
+        assert disabled.get("/api/v1/toolchain-tools").status_code == 503
+
+
+def test_legacy_configuration_defaults_tools_to_disabled_without_rewriting(client):
+    """旧配置没有 AI 工具字段时默认关闭，读取不修改配置文件。"""
+    assert client.put(PATH, json=payload(client)).status_code == 200
+    path = client.app.state.toolchain_configuration.path
+    document = json.loads(path.read_text("utf-8"))
+    del document["configuration"]["tools"]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    before = path.read_bytes()
+    with TestClient(application(Settings(toolchain_tools_mode="mock"))) as restarted:
+        assert restarted.get(PATH).json()["activeModes"]["tools"] == "disabled"
+        assert restarted.get("/api/v1/toolchain-tools").status_code == 503
+    assert path.read_bytes() == before
+
+
+def test_tools_rejects_incomplete_live_configuration(client):
+    """真实工具链同样要求地址、工作空间、独立凭据和授权账号。"""
+    assert client.put(PATH, json=payload(client)).status_code == 200
+    path = client.app.state.toolchain_configuration.path
+    before = path.read_bytes()
+    data = payload(client)
+    data["configuration"]["tools"]["connection"]["mode"] = "live"
+    assert client.put(PATH, json=data).status_code == 422
+    assert path.read_bytes() == before
+
+
 @pytest.mark.parametrize("actor", ["demo-reader", "demo-publisher", "demo-org-admin"])
 def test_only_system_admin_can_read_or_save(client, actor):
     data = payload(client)

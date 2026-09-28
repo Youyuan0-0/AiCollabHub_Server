@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
     # 兼容旧环境 POP 配置；后台文件按模块分别覆盖，mock 使用文档响应且不访问网络。
     toolchain_mode: Literal["disabled", "mock", "live"] = "disabled"
+    # AI 工具独立启用，避免其他模块启用时自动开放工具成果。
+    toolchain_tools_mode: Literal["disabled", "mock", "live"] = "disabled"
+    toolchain_models_mode: Literal["disabled", "mock", "live"] = "disabled"
+    toolchain_model_entry_url: AnyHttpUrl | None = None
+    toolchain_tool_entry_url: AnyHttpUrl | None = None
+    toolchain_tools_category: Literal["my", "platform"] = "my"
+    toolchain_tools_types: list[Literal["api", "MY_MCP", "knowledge"]] = Field(
+        default_factory=lambda: ["api", "MY_MCP", "knowledge"], min_length=1, max_length=3
+    )
     toolchain_pop_url: AnyHttpUrl | None = None
     toolchain_access_key_id: SecretStr | None = None
     toolchain_access_key_secret: SecretStr | None = None

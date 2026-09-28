@@ -16,8 +16,48 @@ from app.modules.tools.providers import INPUT_SCHEMA, OUTPUT_SCHEMA
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(Engine, "connect", Mock(side_effect=AssertionError("no database access")))
-    with TestClient(create_app(Settings(_env_file=None))) as value:
+    with TestClient(create_app(Settings(_env_file=None, toolchain_tools_mode="mock"))) as value:
         yield value
+
+
+@pytest.mark.parametrize("other_mode", ["disabled", "mock"])
+def test_disabled_toolchain_never_reads_samples_or_imports(monkeypatch, other_mode):
+    """其他模块启用模拟也不会开放 AI 工具；拒绝请求前不读取成果或写草稿。"""
+    monkeypatch.setattr(Engine, "connect", Mock(side_effect=AssertionError("no database access")))
+    with TestClient(create_app(Settings(_env_file=None, toolchain_mode=other_mode))) as client:
+        workspace = client.app.state.tool_workspace
+        list_tools = Mock(side_effect=AssertionError("disabled provider accessed"))
+        import_tool = Mock(side_effect=AssertionError("disabled draft imported"))
+        monkeypatch.setattr(workspace.provider, "list_tools", list_tools)
+        monkeypatch.setattr(workspace, "import_tool", import_tool)
+        defaults = client.get("/api/v1/tool-publication-defaults").json()
+        assert defaults["toolchainMode"] == "disabled"
+        assert defaults["toolchainAvailable"] is False
+        assert defaults["toolchainUrl"] == ""
+        before = client.get("/api/v1/tool-publications").json()
+        assert client.get("/api/v1/toolchain-tools").status_code == 503
+        assert (
+            client.post("/api/v1/toolchain-tools/agent-dev-tool-abstract/import").status_code == 503
+        )
+        list_tools.assert_not_called()
+        import_tool.assert_not_called()
+        assert client.get("/api/v1/tool-publications").json() == before
+        assert client.get("/api/v1/tools").status_code == 200
+        assert (
+            client.post("/api/v1/tool-publications", json={"data": tool_data()}).status_code == 201
+        )
+
+
+def test_mock_toolchain_requires_publisher_permission(client):
+    """模拟成果也复用平台发布权限，普通读者不能查询或导入。"""
+    defaults = client.get("/api/v1/tool-publication-defaults").json()
+    assert defaults["toolchainMode"] == "mock" and defaults["toolchainAvailable"] is True
+    candidate = client.get("/api/v1/toolchain-tools").json()["items"][0]
+    token, _ = client.app.state.application_identity.select("demo-reader")
+    client.cookies.set("application_user", token)
+    assert client.get("/api/v1/toolchain-tools").status_code == 403
+    path = f"/api/v1/toolchain-tools/{candidate['externalId']}/import"
+    assert client.post(path).status_code == 403
 
 
 def tool_data(**changes):
@@ -146,6 +186,34 @@ def test_tools_catalog_facets_favorites_and_per_account_ratings(client):
     assert not result["isFavorite"] and result["myRating"] == 0 and result["ratingCount"] == 1
 
 
+def test_tool_rating_list_reads_saved_comments_without_exposing_accounts(client):
+    """评价入口显示持久互动，重复评分只更新本人记录且不能读取不可见工具。"""
+    items = client.get("/api/v1/tools?pageSize=2").json()["items"]
+    path = f"/api/v1/tools/{items[0]['id']}"
+    assert client.get(path + "/ratings").json() == []
+    client.put(path + "/favorite", json={"favorite": True})
+    assert client.get(path + "/ratings").json() == []
+    for rating in (3, 5):
+        assert (
+            client.put(path + "/rating", json={"rating": rating, "comment": "已保存"}).status_code
+            == 200
+        )
+    reviews = client.get(path + "/ratings").json()
+    assert len(reviews) == 1
+    assert set(reviews[0]) == {"id", "rating", "comment", "updatedAt"}
+    assert reviews[0]["rating"] == 5 and reviews[0]["comment"] == "已保存"
+    assert DEFAULT_USER.id not in reviews[0]["id"]
+    assert reviews[0]["updatedAt"]
+    assert client.get(f"/api/v1/tools/{items[1]['id']}/ratings").json() == []
+    token, _ = client.app.state.application_identity.select("demo-reader")
+    client.cookies.set("application_user", token)
+    assert client.get(path + "/ratings").json() == reviews
+    assert client.get(path).json()["myRating"] == 0
+    client.put(path + "/rating", json={"rating": 3, "comment": "另一账号"})
+    assert len(client.get(path + "/ratings").json()) == 2
+    assert client.get(path).json()["rating"] == 4
+
+
 def test_unlisting_and_visibility_protect_details_interactions_and_legacy_route(client):
     tool_id = approved(client)["toolId"]
     path = f"/api/v1/tools/{tool_id}"
@@ -162,6 +230,7 @@ def test_unlisting_and_visibility_protect_details_interactions_and_legacy_route(
     token, _ = client.app.state.application_identity.select("demo-outsider")
     client.cookies.set("application_user", token)
     assert client.get(path).status_code == 404
+    assert client.get(path + "/ratings").status_code == 404
     assert client.put(path + "/favorite", json={"favorite": True}).status_code == 404
     assert (
         client.post(f"/api/v1/resources/{tool_id}/invoke", json={"prompt": "绕过"}).status_code
@@ -174,6 +243,7 @@ def test_unlisting_and_visibility_protect_details_interactions_and_legacy_route(
     )
     client.cookies.clear()
     assert client.get(path).status_code == 404
+    assert client.get(path + "/ratings").status_code == 404
     assert client.get(admin).json()["listingStatus"] == "unlisted"
     assert client.get("/api/v1/admin/tool-audit").json()["total"] == 3
 
@@ -233,6 +303,7 @@ def test_toolchain_import_is_atomic_idempotent_and_isolated(client):
 def test_replaced_provider_propagates_mode_and_records_output_failures(client):
     """替换供应方后模式随接口返回，非法输出与服务异常都应计入失败。"""
     provider = Mock(mode="live")
+    provider.entry_url.return_value = "/tools/toolchain/workbench"
     provider.invoke.side_effect = [
         {"wrong": 1},
         RuntimeError("供应方内部异常"),

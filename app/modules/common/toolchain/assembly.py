@@ -1,4 +1,4 @@
-"""三类工具链统一装配；配置切换传输，业务请求和字段转换保持一致。"""
+"""各模块工具链统一装配；连接凭据和业务仓储分别管理。"""
 
 from contextlib import ExitStack
 
@@ -14,11 +14,13 @@ from app.modules.common.toolchain.configuration_schemas import MODULE_NAMES
 from app.modules.common.toolchain.mock import DocumentedToolchainMock
 from app.modules.knowledge.engine import KnowledgeEngineProvider
 from app.modules.knowledge.engine_workspace import EngineKnowledgeWorkspace
+from app.modules.models.toolchain import StudioModelProvider
+from app.modules.tools.toolchain import AgentToolCatalogProvider
 from app.storage.client import MinioStorage
 
 
 def configure_toolchains(application: FastAPI) -> ExitStack:
-    """分别装配三类连接，任一初始化失败时释放此前创建的客户端。"""
+    """分别装配各模块连接，任一初始化失败时释放此前创建的客户端。"""
     settings = application.state.settings
     clients, mocks = {}, {}
     service = getattr(application.state, "application_service", None)
@@ -44,13 +46,23 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
                 if specific.toolchain_mode == "mock"
                 else None
             )
-            client = PopClient(specific, httpx.MockTransport(mock) if mock else None)
+            client = PopClient(
+                specific,
+                httpx.MockTransport(mock) if mock else None,
+                api_version="2024-06-24" if module == "models" else "2025-11-10",
+                pop_code="aipaas" if module == "models" else "sfm",
+            )
             cleanup.callback(client.close)
             clients[module], mocks[module] = client, mock
+        if clients["models"].mode == "live":
+            application.state.model_provider = StudioModelProvider(clients["models"])
         if clients["applications"].mode != "disabled" and settings.app_env != "production":
             service = application.state.application_service
             service.provider = AgentCatalogProvider(service.provider, clients["applications"])
             service.workflows.provider = service.provider
+        if clients["tools"].mode == "live" and settings.app_env != "production":
+            workspace = application.state.tool_workspace
+            workspace.provider = AgentToolCatalogProvider(workspace.provider, clients["tools"])
         if (
             clients["knowledge"].mode != "disabled"
             and settings.app_env != "production"

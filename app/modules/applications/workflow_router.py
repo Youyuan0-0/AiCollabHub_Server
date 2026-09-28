@@ -21,9 +21,10 @@ from app.modules.applications.workflow_schemas import (
     WorkflowPolicy,
 )
 from app.modules.common.downloads import complete_download
-from app.modules.common.identity import ACTORS, DIRECTORY, current_actor, require_admin
+from app.modules.common.identity import ACTORS, DIRECTORY, Actor, current_actor, require_admin
 from app.modules.common.identity_directory import visible_directory
 from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.contracts import authorize
 
 router = APIRouter(tags=["application workflows (development)"])
 
@@ -167,10 +168,17 @@ def read_notification(notification_id: str, request: Request) -> dict:
     )
 
 
+def toolchain_actor(request: Request) -> Actor:
+    """统一校验场景工具链配置及发布者授权，禁用时不回退到旧演示供应方。"""
+    actor = current_actor(request)
+    authorize(module_settings(request.app.state.settings, "applications"), actor)
+    return actor
+
+
 @router.get("/application-toolchain/resources", response_model=None)
 def toolchain(request: Request) -> list[dict]:
     """读取当前供应方可导入的工具链资源列表。"""
-    actor = current_actor(request)
+    actor = toolchain_actor(request)
     provider = application_service(request).provider
     if hasattr(provider, "authorize"):
         provider.authorize(actor)
@@ -186,7 +194,7 @@ def syncs(request: Request) -> list[dict]:
 @router.post("/application-toolchain/syncs", response_model=None)
 def sync(payload: SyncInput, request: Request) -> dict:
     """导入工具链资源的指定版本并记录同步结果。"""
-    return application_service(request).workflows.sync(current_actor(request), payload)
+    return application_service(request).workflows.sync(toolchain_actor(request), payload)
 
 
 @router.get("/admin/application-policy", response_model=None)
@@ -244,9 +252,7 @@ def admin_notifications(
 @router.post("/application-toolchain/development-publications", response_model=None)
 def develop(payload: SaveApplicationPublication, request: Request) -> dict:
     """校验发布资料、关联资源及密级后提交工具链开发资料。"""
-    actor = current_actor(request)
-    if actor.role not in ("publisher", "admin", "org_admin"):
-        raise HTTPException(403, "当前演示账号没有工具链发布权限")
+    actor = toolchain_actor(request)
     from app.modules.applications.configuration import validate_submission
 
     service = application_service(request)
