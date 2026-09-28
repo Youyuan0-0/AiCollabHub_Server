@@ -18,7 +18,7 @@ from app.modules.knowledge.reviews import KnowledgeReviews
 from app.modules.knowledge.schemas import CreateInput, ReviewInput
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.tools.providers import default_configuration
-from app.modules.tools.schemas import ReviewTool, SaveTool
+from app.modules.tools.schemas import ReviewTool, SaveTool, ToolCatalogQuery, ToolListing
 from app.modules.tools.workspace import ToolWorkspace
 from app.storage.client import ObjectInfo
 from app.storage.files import FileStore
@@ -132,6 +132,76 @@ def test_dataset_http_report_review_and_archive(foundation, connection):
     flush_constraints(connection)
 
 
+def test_knowledge_http_report_scores_and_archive(foundation, connection):
+    """知识库创建审批保存七维评分，并把质量报告归档到审核历史。"""
+    from app.modules.common.database_reports import DatabaseReports
+    from app.modules.knowledge.report_router import router as report_router
+    from app.modules.knowledge.router import admin_router, router
+
+    repository = KnowledgeDatabase(ResourceDatabase(foundation, "knowledge", runtime=Runtime()))
+    files = KnowledgeDatabaseFiles(FileStore(foundation, Storage()))
+    service = KnowledgeService(repository, files, RetrievalProvider(foundation.settings))
+    app = FastAPI()
+    app.state.settings = foundation.settings
+    app.state.foundation = foundation
+    app.state.application_identity = SimpleNamespace(
+        resolve=lambda request, audience: ADMIN if audience == "admin" else WRITER
+    )
+    app.state.knowledge_service = service
+    app.state.resource_reports = DatabaseReports(foundation, Storage())
+    for routes in (router, admin_router, report_router):
+        app.include_router(routes, prefix="/api/v1")
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/knowledge-bases",
+            json={"name": "知识库报告联调", "description": "验证评分与质量报告归档"},
+        )
+        assert created.status_code == 201, created.text
+        record = created.json()
+        detail = client.get(f"/api/v1/admin/knowledge-bases/{record['id']}")
+        assert detail.status_code == 200, detail.text
+        record = detail.json()
+        publication_id = record["publicationId"]
+        report_path = f"/api/v1/admin/knowledge-publications/{publication_id}/report-files"
+        uploaded = client.post(
+            report_path,
+            params={"revision": record["reviewRevision"]},
+            files={"file": ("knowledge-report.txt", b"knowledge review report", "text/plain")},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        report_id = uploaded.json()["id"]
+        reviewed = client.post(
+            f"/api/v1/admin/knowledge-bases/{record['id']}/review",
+            json={
+                "revision": record["revision"],
+                "decision": "approved",
+                "scores": SCORES,
+                "reportFileIds": [report_id],
+            },
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        history = reviewed.json()["reviewHistory"][-1]
+        assert history["scores"] == SCORES
+        assert history["reportFiles"][0]["id"] == report_id
+        content = client.get(report_path + f"/{report_id}/content")
+        assert content.status_code == 200 and content.content == b"knowledge review report"
+
+    stored = connection.exec_driver_sql(
+        "SELECT id, quality_scores FROM resource_reviews "
+        "WHERE resource_type='knowledge' AND publication_id=%s",
+        (publication_id,),
+    ).mappings().one()
+    assert stored["quality_scores"] == SCORES
+    archived = connection.exec_driver_sql(
+        "SELECT owner_type, owner_id FROM resource_file_references "
+        "WHERE resource_type='knowledge' AND file_id=%s",
+        (report_id,),
+    ).mappings().one()
+    assert archived["owner_type"] == "review" and str(archived["owner_id"]) == str(stored["id"])
+    flush_constraints(connection)
+
+
 def test_knowledge_publication_and_document_review(foundation, connection):
     repository = KnowledgeDatabase(ResourceDatabase(foundation, "knowledge", runtime=Runtime()))
     files = KnowledgeDatabaseFiles(FileStore(foundation, Storage()))
@@ -143,7 +213,10 @@ def test_knowledge_publication_and_document_review(foundation, connection):
     )
     assert item["review"]["status"] == "pending"
     approved = KnowledgeReviews(service).decide(
-        item["id"], None, ReviewInput(revision=item["revision"], decision="approved"), ADMIN
+        item["id"],
+        None,
+        ReviewInput(revision=item["revision"], decision="approved", scores=SCORES),
+        ADMIN,
     )
     assert approved["review"]["status"] == "approved"
     assert approved["listingStatus"] == "unlisted"
@@ -181,7 +254,10 @@ def test_knowledge_publication_and_document_review(foundation, connection):
     assert changed["review"]["status"] == "pending"
     assert repository.public_record(changed)["name"] == "测试知识库"
     reviewed = KnowledgeReviews(service).decide(
-        item["id"], None, ReviewInput(revision=changed["revision"], decision="approved"), ADMIN
+        item["id"],
+        None,
+        ReviewInput(revision=changed["revision"], decision="approved", scores=SCORES),
+        ADMIN,
     )
     assert repository.public_record(reviewed)["name"] == "更新知识库"
     flush_constraints(connection)
@@ -247,6 +323,88 @@ def test_tool_import_reopen_and_new_version(foundation, connection):
     assert persisted["source"]["externalId"] == external_id
     assert reopen().new_version(approved["toolId"], WRITER)["id"] == persisted["id"]
     assert connection.exec_driver_sql("SELECT count(*) FROM ai_tool_versions").scalar_one() == 1
+
+
+def test_tool_ratings_reopen_from_shared_table(foundation, connection):
+    """工具评分与评论复用公共评价表，重建仓储后仍可读取且修改不会新增行。"""
+    from tests.test_tools import tool_data
+
+    def reopen():
+        return ToolWorkspace(
+            ResourceDatabase(foundation, "tool", configuration=default_configuration())
+        )
+
+    workspace = reopen()
+    record = workspace.save(
+        SaveTool(data=tool_data(), submit=True), WRITER, {"owner": "测试单位", "contact": "联系人"}
+    )
+    workspace.review(
+        record["id"],
+        ReviewTool(revision=record["revision"], decision="approved", scores=SCORES),
+        ADMIN,
+    )
+    resource = workspace.resource(record["toolId"], ADMIN, True)
+    workspace.listing(
+        record["toolId"], ToolListing(status="listed", revision=resource["revision"]), ADMIN
+    )
+    for rating in (3, 5):
+        reopen().interact(record["toolId"], WRITER, rating=rating, comment="可复用的工具评价")
+    flush_constraints(connection)
+    rows = (
+        connection.exec_driver_sql("SELECT resource_type, rating, comment FROM resource_ratings")
+        .mappings()
+        .all()
+    )
+    assert len(rows) == 1 and dict(rows[0]) == {
+        "resource_type": "tool",
+        "rating": 5,
+        "comment": "可复用的工具评价",
+    }
+    reviews = reopen().ratings(record["toolId"], ADMIN)
+    assert len(reviews) == 1 and reviews[0]["comment"] == "可复用的工具评价"
+    assert reviews[0]["rating"] == 5 and reviews[0]["updatedAt"]
+    mine = reopen().resource(record["toolId"], WRITER)
+    assert mine["myRating"] == 5 and mine["ratingCount"] == 1
+
+
+def test_tool_catalog_facets_use_persisted_form_fields(foundation, connection):
+    """数据库快照无需额外保存派生 facets，重读后分类、来源、团队与标签均可筛选。"""
+    from tests.test_tools import tool_data
+
+    workspace = ToolWorkspace(
+        ResourceDatabase(foundation, "tool", configuration=default_configuration())
+    )
+    record = workspace.save(
+        SaveTool(data=tool_data(team="研发团队", sourceType="第三方接入"), submit=True),
+        WRITER,
+        {"owner": "测试单位", "contact": "联系人"},
+    )
+    workspace.review(
+        record["id"],
+        ReviewTool(revision=record["revision"], decision="approved", scores=SCORES),
+        ADMIN,
+    )
+    resource = workspace.resource(record["toolId"], ADMIN, True)
+    workspace.listing(
+        record["toolId"], ToolListing(status="listed", revision=resource["revision"]), ADMIN
+    )
+    reopened = ToolWorkspace(ResourceDatabase(foundation, "tool"))
+    page = reopened.catalog(ToolCatalogQuery(), WRITER)
+    assert {group["id"]: group["options"] for group in page["filterGroups"]} == {
+        "toolType": ["文本处理"],
+        "tags": ["测试"],
+        "sourceType": ["第三方接入"],
+        "team": ["研发团队"],
+    }
+    assert page["items"][0]["category"] == "文本处理"
+    query = ToolCatalogQuery(
+        facets='{"toolType":["文本处理"],"sourceType":["第三方接入"],"team":["研发团队"]}'
+    )
+    assert reopened.catalog(query, WRITER)["total"] == 1
+    assert (
+        reopened.catalog(ToolCatalogQuery(facets='{"toolType":["图像处理"]}'), WRITER)["total"] == 0
+    )
+    flush_constraints(connection)
 
 
 def test_tool_publication_list_reads_legacy_and_current_owner_fields(foundation, connection):

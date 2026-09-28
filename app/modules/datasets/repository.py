@@ -6,10 +6,10 @@ from hashlib import sha256
 from threading import RLock
 
 from fastapi import HTTPException
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select, update
 
 from app.core.config import Settings
-from app.db.foundation import FoundationDatabase
+from app.db.foundation import FoundationDatabase, identifier, utc_now
 from app.modules.common.resource_database import ResourceDatabase
 from app.modules.common.resource_runtime import ResourceRuntime
 
@@ -44,6 +44,44 @@ class DatasetRepository:
             return []
         with self.database.transaction(is_readonly=True) as session:
             return session.list_resources()
+
+    def save_metadata(self, dataset_id: str, values: dict, expected: int) -> dict:
+        """按资源修订保存交付元数据；数据库与内存模式均拒绝过期写入。"""
+        if self.database is None:
+            with self._lock:
+                key = "metadata:" + dataset_id
+                current = self._records.get(key)
+                current_revision = current["revision"] if current else expected
+                if current_revision != expected:
+                    raise HTTPException(409, "数据集已更新，请刷新后重试")
+                result = {**deepcopy(values), "revision": expected + 1}
+                self._records[key] = result
+                return deepcopy(result)
+        with self.database.transaction() as session:
+            resource = session.get_resource(dataset_id)
+            if resource is None or resource["revision"] != expected:
+                raise HTTPException(409, "数据集已更新，请刷新后重试")
+            table = session.table("datasets")
+            session.db.execute(
+                update(table)
+                .where(table.c.id == identifier(dataset_id))
+                .values(
+                    data_lineage=values["dataLineage"] or None,
+                    storage_location=values["storageLocation"] or None,
+                    api_endpoint=values["apiEndpoint"] or None,
+                    updated_at=utc_now(),
+                )
+            )
+            row = session.db.execute(
+                select(table).where(table.c.id == identifier(dataset_id))
+            ).mappings().one()
+            return {
+                "dataLineage": row["data_lineage"] or "",
+                "storageLocation": row["storage_location"] or "",
+                "apiEndpoint": row["api_endpoint"] or "",
+                "updatedAt": row["updated_at"].isoformat(),
+                "revision": int(row["updated_at"].timestamp() * 1_000_000),
+            }
 
     @staticmethod
     def activity_view(value: dict) -> dict:

@@ -115,7 +115,7 @@ class ResourceActivity(ResourceFiles):
                 )
 
     def get_visibility(self, resource_id: str) -> dict:
-        """读取指定用户范围，未配置时沿用平台默认全部登录用户可见。"""
+        """读取用户或可信目录范围，未配置时默认全部登录用户可见。"""
         if resource_id in getattr(self, "_catalog_visibility", {}):
             return deepcopy(self._catalog_visibility[resource_id])
         policies, targets, users = (
@@ -136,6 +136,12 @@ class ResourceActivity(ResourceFiles):
         )
         if row is None:
             return {"scope": "all", "targets": [], "revision": 1}
+        if row["scope"] in {"organizations", "projects"}:
+            return {
+                "scope": row["scope"],
+                "targets": list(row["directory_targets"]),
+                "revision": row["revision"],
+            }
         subjects = list(
             self.db.scalars(
                 select(users.c.iam_subject)
@@ -147,11 +153,13 @@ class ResourceActivity(ResourceFiles):
         return {"scope": row["scope"], "targets": subjects, "revision": row["revision"]}
 
     def put_visibility(self, resource_id: str, value: dict) -> None:
-        """仅保存已确认的 all/members，不将模拟组织和项目写入用户范围表。"""
+        """按修订保存范围；本地用户引用和可信目录编号分别存储。"""
         if hasattr(self, "_catalog_visibility"):
             self._catalog_visibility.pop(resource_id, None)
-        if value["scope"] not in {"all", "members"}:
-            raise HTTPException(422, "当前开放范围支持全部用户或指定用户")
+        if value["scope"] not in {"all", "members", "organizations", "projects"}:
+            raise HTTPException(422, "不支持的开放范围")
+        if value["scope"] != "all" and not value["targets"]:
+            raise HTTPException(422, "请选择开放目标")
         self.lock("visibility:" + resource_id)
         policies, targets = (
             self.table("resource_visibility_policies"),
@@ -179,7 +187,14 @@ class ResourceActivity(ResourceFiles):
         self.db.execute(
             update(policies)
             .where(policies.c.id == policy_id)
-            .values(scope=value["scope"], revision=current + 1, updated_at=utc_now())
+            .values(
+                scope=value["scope"],
+                revision=current + 1,
+                updated_at=utc_now(),
+                directory_targets=sorted(set(value["targets"]))
+                if value["scope"] in {"organizations", "projects"}
+                else [],
+            )
         )
         self.db.execute(delete(targets).where(targets.c.policy_id == policy_id))
         if value["scope"] == "members":
@@ -254,6 +269,8 @@ class ResourceActivity(ResourceFiles):
         """按业务能力查询对应明细，外部临时运行结果使用共享协调存储。"""
         if kind == "interactions":
             return self.interaction_entries()
+        if kind == "runs" and self.kind == "tool":
+            return self.tool_run_entries()
         if kind == "policy":
             value = self.configuration_record("workflow")
             return [value] if value else []
@@ -285,7 +302,7 @@ class ResourceActivity(ResourceFiles):
             select(logs, resources.c.name.label("resource_name"), users.c.display_name)
             .outerjoin(resources, logs.c.target_id == cast(resources.c.id, String))
             .outerjoin(users, logs.c.user_id == users.c.id)
-            .where(logs.c.target_type == "tool")
+            .where(logs.c.target_type == "tool", logs.c.action != "invoke")
             .order_by(logs.c.created_at.desc())
         ).mappings()
         return [
@@ -303,9 +320,27 @@ class ResourceActivity(ResourceFiles):
             for row in rows
         ]
 
+    def tool_run_entries(self) -> list[dict]:
+        """从持久调用摘要恢复统计；同一目录请求只读取一次，缓存过期不影响累计值。"""
+        if not hasattr(self, "_tool_runs"):
+            logs = self.table("operation_logs")
+            self._tool_runs = [
+                deepcopy(row["data"])
+                for row in self.db.execute(
+                    select(logs.c.data).where(
+                        logs.c.target_type == "tool",
+                        logs.c.action == "invoke",
+                    )
+                ).mappings()
+                if isinstance(row["data"].get("success"), bool)
+            ]
+        return self._tool_runs
+
     def entry(self, kind: str, key: str) -> dict | None:
         """取得幂等对象；临时调用状态读取失败时不能当作尚未执行。"""
         self.lock(kind + ":" + key)
+        if kind == "runs" and self.kind == "tool":
+            return next((item for item in self.tool_run_entries() if item["id"] == key), None)
         if kind == "interactions":
             subject, _, resource_id = key.rpartition(":")
             return next(iter(self.interaction_entries(subject, resource_id)), None)
@@ -345,6 +380,10 @@ class ResourceActivity(ResourceFiles):
             self.save_download(key, value)
         elif kind == "audit":
             self.write_operation(key, value)
+        elif kind == "runs" and self.kind == "tool":
+            self.write_operation(key, value, action="invoke")
+            if hasattr(self, "_tool_runs"):
+                del self._tool_runs
         else:
             if self.repository.runtime is None:
                 raise HTTPException(503, "runtime_state_unavailable")
@@ -353,7 +392,7 @@ class ResourceActivity(ResourceFiles):
                 self.write_operation(key, value, action="invoke")
 
     def write_operation(self, key: str, value: dict, *, action: str = "update") -> None:
-        """只记录成功操作的必要摘要，不复制调用输入、输出、令牌或临时链接。"""
+        """保存操作及调用结果的必要摘要，不复制输入、输出、令牌或临时链接。"""
         table = self.table("operation_logs")
         self.lock("operation:" + key)
         if self.db.scalar(
@@ -378,6 +417,7 @@ class ResourceActivity(ResourceFiles):
                 "decision",
                 "version",
                 "status",
+                "success",
                 "mode",
                 "durationMs",
                 "createdAt",

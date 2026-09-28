@@ -225,9 +225,10 @@ class ResourceWorkspace:
                     "visibility": previous.get(
                         "visibility", {"scope": "all", "targets": [], "revision": 1}
                     ),
-                    "rating": round(sum(payload.scores.model_dump().values()) / 7, 2)
+                    "rating": previous.get("rating"),
+                    "qualityScore": round(sum(payload.scores.model_dump().values()) / 7, 2)
                     if payload.scores
-                    else previous.get("rating"),
+                    else previous.get("qualityScore"),
                     "versions": [
                         *previous.get("versions", []),
                         {

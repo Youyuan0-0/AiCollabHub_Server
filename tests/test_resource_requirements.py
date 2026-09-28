@@ -14,7 +14,7 @@ from app.modules.common.review_schemas import ReviewQualityScores
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(Engine, "connect", Mock(side_effect=AssertionError("禁止数据库访问")))
-    with TestClient(create_app(Settings(_env_file=None))) as client:
+    with TestClient(create_app(Settings(_env_file=None, toolchain_models_mode="mock"))) as client:
         yield client
 
 
@@ -64,7 +64,16 @@ def test_model_contract_review_report_version_and_permissions(client):
     )
     assert incomplete.status_code == 422
     response = client.post(
-        "/api/v1/model-publications", json={"data": model_data(), "submit": True}
+        "/api/v1/model-publications",
+        json={
+            "data": model_data(
+                taskType="文本生成",
+                inputModalities=["文本"],
+                outputModalities=["文本"],
+                modelStatus="稳定",
+            ),
+            "submit": True,
+        },
     )
     assert response.status_code == 201, response.text
     record = response.json()
@@ -78,7 +87,18 @@ def test_model_contract_review_report_version_and_permissions(client):
     assert result["reviews"][0]["reportFiles"][0]["id"] == report_id
     path = f"/api/v1/models/{record['resourceId']}"
     assert client.get(path).status_code == 200
-    assert client.get(path).json()["isFavorite"] is False
+    detail = client.get(path).json()
+    assert detail["isFavorite"] is False
+    assert detail["qualityScore"] == 4
+    assert detail["rating"] is None
+    catalog = client.get("/api/v1/models", params={"q": "回归模型"}).json()
+    listed = next(item for item in catalog["items"] if item["id"] == record["resourceId"])
+    assert listed["badge"] == "稳定"
+    assert listed["facets"]["nlpCapability"] == ["文本生成"]
+    assert listed["facets"]["speechCapability"] == []
+    assert listed["facets"]["modality"] == ["文本"]
+    assert {item["label"] for item in listed["metadata"]} >= {"模型架构", "参数规模"}
+    assert {"label": "质量评分", "value": "4.0"} in listed["metrics"]
     assert client.put(path + "/favorite", json={"favorite": True}).json()["favoriteCount"] == 1
     assert client.put(path + "/favorite", json={"favorite": True}).json()["favoriteCount"] == 1
     assert client.get("/api/v1/profile/favorites?kind=model").json()["total"] == 1
@@ -128,7 +148,12 @@ def test_knowledge_requirements_permissions_and_persistent_state(client):
     assert client.get("/api/v1/profile/publications?kind=knowledge").json()["items"] == []
     select_user(client, "demo-publisher")
     approved = client.post(
-        admin + "/review", json={"revision": base["revision"], "decision": "approved"}
+        admin + "/review",
+        json={
+            "revision": base["revision"],
+            "decision": "approved",
+            "scores": scores(),
+        },
     )
     assert approved.status_code == 200, approved.text
     base = client.put(

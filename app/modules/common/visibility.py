@@ -22,7 +22,11 @@ def visibility_directory(request: Request, actor: Actor) -> dict[str, list[dict]
                     .order_by(users.c.display_name, users.c.id)
                 )
             ]
-        return {"members": members}
+        directory = visible_directory(request, actor)
+        if actor.role != "admin":
+            allowed = {item["id"] for item in directory["members"]}
+            members = [item for item in members if item["id"] in allowed]
+        return {**directory, "members": members}
     if configured_directory(request) is not None:
         return visible_directory(request, actor)
     if request.app.state.settings.auth_mode != "disabled":
@@ -55,7 +59,7 @@ def validate_visibility_targets(request: Request, actor: Actor, payload: ScopeTa
     if directory is None:
         return
     if payload.scope not in directory:
-        raise HTTPException(422, "仅支持全部用户或指定用户可见")
+        raise HTTPException(422, "当前身份目录未提供该开放范围")
     allowed_ids = {item["id"] for item in directory[payload.scope]}
     if set(payload.targets) - allowed_ids:
         raise HTTPException(422, "开放范围包含不存在或当前管理员无权选择的对象")

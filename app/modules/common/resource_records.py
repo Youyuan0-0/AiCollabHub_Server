@@ -87,6 +87,7 @@ class ResourceRecords:
             "createdBy": author["id"],
             "createdByName": author["name"],
             "data": data,
+            "versionNotes": row["version_notes"] or "",
             "status": row["review_status"] or "draft",
             "revision": row["revision"],
             "submissionNo": row["submission_no"],
@@ -174,7 +175,10 @@ class ResourceRecords:
         values = {
             "data": data,
             "version": data.get("version") or None,
-            "version_notes": data.get("versionNotes") or None,
+            "version_notes": (
+                record.get("versionNotes") if self.kind == "tool" else data.get("versionNotes")
+            )
+            or None,
             "updated_at": now,
             "base_version_id": identifier(record["baseVersionId"])
             if record.get("baseVersionId")

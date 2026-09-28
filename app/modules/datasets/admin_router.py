@@ -11,6 +11,7 @@ from app.modules.datasets.admin_schemas import (
     DatasetAdminQuery,
     DatasetAuditQuery,
     DatasetListing,
+    DatasetMetadata,
     DatasetReviewQuery,
     DatasetVisibility,
     PublishDataset,
@@ -67,6 +68,14 @@ def visibility(dataset_id: str, payload: DatasetVisibility, request: Request) ->
     require_dataset_admin(actor)
     validate_visibility_targets(request, actor, payload)
     return DatasetAdminService(dataset_workspace(request)).visibility(dataset_id, payload, actor)
+
+
+@router.put("/datasets/{dataset_id}/metadata", response_model=None)
+def metadata(dataset_id: str, payload: DatasetMetadata, request: Request) -> dict:
+    """保存数据血缘、存储位置和 API 地址；资料归属与修订均由服务端校验。"""
+    return DatasetAdminService(dataset_workspace(request)).metadata(
+        dataset_id, payload, current_actor(request, is_admin=True)
+    )
 
 
 @router.get("/dataset-publications", response_model=None)

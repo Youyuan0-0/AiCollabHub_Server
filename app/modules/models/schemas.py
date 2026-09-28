@@ -61,7 +61,8 @@ class ModelInput(StrictPayload):
     english_name: str = Field(default="", max_length=200)
     version: str = Field(default="v1.0", max_length=80)
     summary: str = Field(default="", max_length=2000)
-    model_status: Literal["NEW", "合集", "推荐", "稳定", "弃用"] = "NEW"
+    # “推荐”只兼容早期已发布快照；新表单按任务表使用“推进”。
+    model_status: Literal["NEW", "合集", "推进", "推荐", "稳定", "弃用"] = "NEW"
     tags: list[str] = Field(default_factory=list, max_length=30)
     task_type: str = ""
     architecture: str = ""

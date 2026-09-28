@@ -21,6 +21,18 @@ def count_value(value: str | int | None, *, binary: bool = False) -> int | None:
     return int(amount) if amount == int(amount) and 0 < amount < 2**63 else None
 
 
+def review_quality_score(scores: dict | None) -> float | None:
+    """按审核维度计算五分制质量分；缺少有效评分时不推测结果。"""
+    if not scores:
+        return None
+    values = [
+        float(value)
+        for value in scores.values()
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
+    ]
+    return round(sum(values) / len(values), 2) if values else None
+
+
 class ResourceCatalog:
     """资源事务内的目录读写，互动统计只从共用明细汇总。"""
 
@@ -80,7 +92,7 @@ class ResourceCatalog:
             values.update(
                 category=resource.get("category", ""),
                 source_type="third_party"
-                if source in {"third_party", "第三方", "第三方工具"}
+                if source in {"third_party", "第三方", "第三方工具", "第三方接入", "开源集成"}
                 else "self_developed",
                 development_team=resource.get("developmentTeam") or resource.get("team"),
                 license=resource.get("license") or None,
@@ -111,6 +123,28 @@ class ResourceCatalog:
             .order_by(versions.c.published_at.desc(), versions.c.id)
         ).mappings():
             self._catalog_versions[row[self.prefix + "_id"]].append(row)
+        publication_ids = {
+            version["publication_id"]
+            for history in self._catalog_versions.values()
+            for version in history
+        }
+        self._catalog_quality_scores = {key: None for key in publication_ids}
+        if publication_ids:
+            reviews = self.table("resource_reviews")
+            for row in self.db.execute(
+                select(reviews.c.publication_id, reviews.c.quality_scores)
+                .where(
+                    reviews.c.resource_type == self.kind,
+                    reviews.c.publication_id.in_(publication_ids),
+                    reviews.c.decision == "approved",
+                    reviews.c.quality_scores.is_not(None),
+                )
+                .order_by(reviews.c.created_at.desc(), reviews.c.id)
+            ).mappings():
+                if self._catalog_quality_scores[row["publication_id"]] is None:
+                    self._catalog_quality_scores[row["publication_id"]] = review_quality_score(
+                        row["quality_scores"]
+                    )
         users = self.table("users")
         for row in self.db.execute(
             select(users).where(
@@ -180,7 +214,9 @@ class ResourceCatalog:
         ).mappings():
             value = self._catalog_visibility[str(row["resource_id"])]
             value.update(scope=row["scope"], revision=row["revision"])
-            if row["iam_subject"]:
+            if row["scope"] in {"organizations", "projects"}:
+                value["targets"] = list(row["directory_targets"])
+            elif row["iam_subject"]:
                 value["targets"].append(row["iam_subject"])
 
     def get_resource(self, resource_id: str) -> dict | None:
@@ -259,7 +295,11 @@ class ResourceCatalog:
                 resource[key] = context[key]
         resource["visibility"] = self.get_visibility(str(row["id"]))
         resource.update(self.resource_metrics(row["id"]))
-        if self.kind == "dataset":
+        if self.kind == "model":
+            resource["qualityScore"] = self.publication_quality_score(current["publication_id"])
+            resource.setdefault("category", row.get("category") or "")
+            resource.setdefault("facets", {})
+        elif self.kind == "dataset":
             from app.modules.datasets.publishing import sample_preview
 
             resource["preview"] = sample_preview(resource.get("sampleData", ""))
@@ -272,10 +312,34 @@ class ResourceCatalog:
                 "dataFormat": resource.get("dataFormat", []),
             }
             resource["qualityScore"] = None
+            resource.update(
+                dataLineage=row["data_lineage"] or "",
+                storageLocation=row["storage_location"] or "",
+                apiEndpoint=row["api_endpoint"] or "",
+            )
         else:
             resource.setdefault("category", row.get("category") or "")
             resource.setdefault("facets", {})
         return resource
+
+    def publication_quality_score(self, publication_id: UUID) -> float | None:
+        """读取当前发布版本的审核质量分，兼容尚未保存派生分值的历史版本。"""
+        cached = getattr(self, "_catalog_quality_scores", {})
+        if publication_id in cached:
+            return cached[publication_id]
+        reviews = self.table("resource_reviews")
+        scores = self.db.scalar(
+            select(reviews.c.quality_scores)
+            .where(
+                reviews.c.resource_type == self.kind,
+                reviews.c.publication_id == publication_id,
+                reviews.c.decision == "approved",
+                reviews.c.quality_scores.is_not(None),
+            )
+            .order_by(reviews.c.created_at.desc(), reviews.c.id)
+            .limit(1)
+        )
+        return review_quality_score(scores)
 
     def resource_metrics(self, resource_id: UUID) -> dict:
         """只统计平台已记录的有效行为，不把审核质量分当作用户评分。"""

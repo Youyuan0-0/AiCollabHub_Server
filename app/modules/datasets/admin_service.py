@@ -12,6 +12,7 @@ from app.modules.datasets.admin_schemas import (
     DatasetAdminQuery,
     DatasetAuditQuery,
     DatasetListing,
+    DatasetMetadata,
     DatasetReviewQuery,
     DatasetVisibility,
     ReviewDataset,
@@ -115,6 +116,18 @@ class DatasetAdminService:
             payload.revision or None,
         )
         return {key: value[key] for key in ("scope", "targets", "revision")}
+
+    def metadata(self, dataset_id: str, payload: DatasetMetadata, actor: Actor) -> dict:
+        """保存已发布数据集的交付元数据，不改写已审核的版本资料。"""
+        require_dataset_admin(actor)
+        resource = self.workspace.resource(dataset_id, include_unlisted=True)
+        if not can_manage(actor, resource):
+            raise HTTPException(403, "只能维护有管理权限的数据集元数据")
+        return self.workspace.repository.save_metadata(
+            dataset_id,
+            payload.model_dump(by_alias=True, exclude={"revision"}),
+            payload.revision,
+        )
 
     def publications(self, actor: Actor) -> list[dict]:
         """返回管理范围内的申请；组织缺失不能获得单位管理权限。"""

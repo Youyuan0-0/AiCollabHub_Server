@@ -98,6 +98,9 @@ class DatasetWorkspace:
                     ]
                 published[resource["id"]] = resource
         resources.extend(published.values())
+        if not self.repository.database:
+            for item in resources:
+                item.update(self.repository.get("metadata:" + item["id"]) or {})
         # 批量读取配置，数据库模式不为每张卡片单独查询；目标标识不返回给普通用户。
         scopes = (
             {item["id"]: item["visibility"] for item in resources}
