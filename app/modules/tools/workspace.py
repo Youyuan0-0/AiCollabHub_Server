@@ -1,6 +1,7 @@
 """工具业务流程；通过统一仓储事务保存发布、审核和管理操作。"""
 
 import json
+from collections import defaultdict
 from copy import deepcopy
 from hashlib import sha256
 from time import perf_counter
@@ -98,13 +99,22 @@ class ToolWorkspace:
             raise HTTPException(404, "工具不存在或当前不可访问")
         return resource
 
-    def _summary(self, session: ResourceSession, resource: dict, actor: Actor) -> dict:
-        interactions = [
-            item for item in session.entries("interactions") if item["toolId"] == resource["id"]
-        ]
+    def _summary(
+        self,
+        session: ResourceSession,
+        resource: dict,
+        actor: Actor,
+        *,
+        interactions: list[dict] | None = None,
+        runs: list[dict] | None = None,
+    ) -> dict:
+        """合并单个工具的互动与调用统计；列表传入已分组资料，避免逐项读取。"""
+        if interactions is None:
+            interactions = session.interaction_entries(resource_id=resource["id"])
         ratings = [item["rating"] for item in interactions if item.get("rating")]
         mine = next((item for item in interactions if item["actorId"] == actor.id), {})
-        runs = [item for item in session.entries("runs") if item["toolId"] == resource["id"]]
+        if runs is None:
+            runs = [item for item in session.entries("runs") if item["toolId"] == resource["id"]]
         successful = sum(item["success"] for item in runs)
         return {
             **resource,
@@ -150,8 +160,19 @@ class ToolWorkspace:
         if admin:
             require_admin(actor)
         with self.repository.transaction(is_readonly=True) as session:
+            interactions, runs = defaultdict(list), defaultdict(list)
+            for item in session.interaction_entries():
+                interactions[item["toolId"]].append(item)
+            for item in session.entries("runs"):
+                runs[item["toolId"]].append(item)
             records = [
-                self._summary(session, item, actor)
+                self._summary(
+                    session,
+                    item,
+                    actor,
+                    interactions=interactions[item["id"]],
+                    runs=runs[item["id"]],
+                )
                 for item in session.list_resources()
                 if (
                     can_manage(actor, item)
@@ -222,9 +243,9 @@ class ToolWorkspace:
                 for item in session.list_publications()
                 if (can_manage(actor, item) if admin else item["createdBy"] == actor.id)
             ]
+            states = session.resource_states(list({item["toolId"] for item in records}))
             for item in records:
-                resource = session.get_resource(item["toolId"])
-                item["listingStatus"] = resource["listingStatus"] if resource else None
+                item["listingStatus"] = states.get(item["toolId"], {}).get("listingStatus")
             return sorted(records, key=lambda item: item["updatedAt"], reverse=True)
 
     def publication(self, record_id: str, actor: Actor, admin: bool = False) -> dict:
@@ -525,7 +546,7 @@ class ToolWorkspace:
                     "comment": item.get("comment") or "",
                     "updatedAt": item.get("ratingUpdatedAt", item.get("updatedAt", "")),
                 }
-                for item in session.entries("interactions")
+                for item in session.interaction_entries(resource_id=tool_id)
                 if item["toolId"] == tool_id
                 and type(item.get("rating")) is int
                 and 1 <= item["rating"] <= 5

@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request
 
 from app.modules.applications.application_service import application_service
-from app.modules.applications.discovery import analyze, related
 from app.modules.applications.precheck import ApplicationPrecheck, precheck
 from app.modules.applications.publication_schemas import SaveApplicationPublication
 from app.modules.common.catalog import query_resources
@@ -37,9 +36,7 @@ def check_application(payload: ApplicationPrecheck, request: Request) -> dict:
 def application_discovery(application_id: str, request: Request) -> dict:
     """基于有权访问的应用生成分类依据、关联图和相关推荐。"""
     service, actor = application_service(request), current_actor(request)
-    source = service.resource(application_id, actor)
-    # 先过滤访问权限，再分析推荐候选，避免推荐泄露不可见资源。
-    return {**analyze(source), "related": related(source, service.resources(actor))}
+    return service.discovery(application_id, actor)
 
 
 # 返回表单可选择的关联资源，供前端 ApplicationDependencies 组件展示。

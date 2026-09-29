@@ -135,22 +135,29 @@ class ResourceActivity(ResourceFiles):
             .first()
         )
         if row is None:
-            return {"scope": "all", "targets": [], "revision": 1}
-        if row["scope"] in {"organizations", "projects"}:
-            return {
+            value = {"scope": "all", "targets": [], "revision": 1}
+        elif row["scope"] in {"organizations", "projects"}:
+            value = {
                 "scope": row["scope"],
                 "targets": list(row["directory_targets"]),
                 "revision": row["revision"],
             }
-        subjects = list(
-            self.db.scalars(
-                select(users.c.iam_subject)
-                .join(targets, targets.c.user_id == users.c.id)
-                .where(targets.c.policy_id == row["id"])
-                .order_by(users.c.iam_subject)
+        else:
+            subjects = list(
+                self.db.scalars(
+                    select(users.c.iam_subject)
+                    .join(targets, targets.c.user_id == users.c.id)
+                    .where(targets.c.policy_id == row["id"])
+                    .order_by(users.c.iam_subject)
+                )
             )
-        )
-        return {"scope": row["scope"], "targets": subjects, "revision": row["revision"]}
+            value = {"scope": row["scope"], "targets": subjects, "revision": row["revision"]}
+        # 只复用当前只读快照，写事务始终重新读取，避免旧范围影响权限判断。
+        if self.is_readonly:
+            if not hasattr(self, "_catalog_visibility"):
+                self._catalog_visibility = {}
+            self._catalog_visibility[resource_id] = deepcopy(value)
+        return value
 
     def put_visibility(self, resource_id: str, value: dict) -> None:
         """按修订保存范围；本地用户引用和可信目录编号分别存储。"""

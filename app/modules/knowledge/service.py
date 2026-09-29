@@ -75,14 +75,7 @@ class KnowledgeService:
         """先检查可见性，防止通过详情、分段或召回绕过列表权限。"""
         if admin:
             require_admin(actor)
-        record = self.repository.get(base_id)
-        if (
-            record
-            and not admin
-            and not can_edit(actor, record)
-            and hasattr(self.repository, "public_record")
-        ):
-            record = self.repository.public_record(record)
+        record = self.repository.get(base_id, public_for=None if admin else actor)
         allowed = record is not None and (
             can_manage(actor, record)
             if admin
@@ -201,17 +194,7 @@ class KnowledgeService:
         """在关键词过滤和分页前隔离不可见资源，目录不会泄露未授权的总数。"""
         if admin:
             require_admin(actor)
-        source_records = self.repository.list()
-        if not admin and hasattr(self.repository, "public_record"):
-            source_records = [
-                item
-                for original in source_records
-                if (
-                    item := original
-                    if can_edit(actor, original)
-                    else self.repository.public_record(original)
-                )
-            ]
+        source_records = self.repository.list(public_for=None if admin else actor)
         records = [
             record
             for record in source_records
@@ -236,11 +219,7 @@ class KnowledgeService:
 
     def published_resources(self, actor: Actor) -> list[dict]:
         """向应用依赖目录提供已通过创建审批且当前账号可见的本地知识库。"""
-        records = self.repository.list()
-        if hasattr(self.repository, "public_record"):
-            records = [
-                item for record in records if (item := self.repository.public_record(record))
-            ]
+        records = self.repository.list(published_only=True)
         return [
             self.present(record, actor)
             for record in records

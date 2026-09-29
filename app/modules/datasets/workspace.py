@@ -62,6 +62,9 @@ class DatasetWorkspace:
 
     def publication_listings(self, records: list[dict]) -> list[dict]:
         """为申请响应附加实时上下架状态；批量查询，不改写审核记录或暴露管理修订。"""
+        if self.repository.database:
+            # 数据库申请投影已在同一快照取得正式资源状态，无须再读取整个目录。
+            return records
         listings = {item["datasetId"]: item["status"] for item in self.repository.list("listing:")}
         return [
             {
@@ -74,11 +77,15 @@ class DatasetWorkspace:
         ]
 
     def resources(
-        self, actor: Actor | None = None, *, include_unlisted: bool = False
+        self,
+        actor: Actor | None = None,
+        *,
+        include_unlisted: bool = False,
+        resource_id: str | None = None,
     ) -> list[dict]:
         """按身份生成目录；include_unlisted 仅供已鉴权的管理入口读取下架资料。"""
         resources = (
-            self.repository.resources()
+            self.repository.resources([resource_id] if resource_id is not None else None)
             if self.repository.database
             else fixture("datasets", "resources")
         )
@@ -98,6 +105,8 @@ class DatasetWorkspace:
                     ]
                 published[resource["id"]] = resource
         resources.extend(published.values())
+        if resource_id is not None:
+            resources = [item for item in resources if item["id"] == resource_id]
         if not self.repository.database:
             for item in resources:
                 item.update(self.repository.get("metadata:" + item["id"]) or {})
@@ -210,7 +219,9 @@ class DatasetWorkspace:
         item = next(
             (
                 item
-                for item in self.resources(actor, include_unlisted=include_unlisted)
+                for item in self.resources(
+                    actor, include_unlisted=include_unlisted, resource_id=dataset_id
+                )
                 if item["id"] == dataset_id
             ),
             None,
@@ -225,7 +236,7 @@ class DatasetWorkspace:
         return {
             "favoriteIds": [
                 entry["datasetId"]
-                for entry in self.repository.list("activity:")
+                for entry in self.repository.activities(subject=actor.id)
                 if entry["userId"] == actor.id
                 and entry.get("favorite")
                 and entry["datasetId"] in visible_ids
@@ -256,7 +267,7 @@ class DatasetWorkspace:
                 # 旧评分没有独立更新时间，保留空值，不用下载时间冒充评价时间。
                 "updatedAt": entry.get("ratingUpdatedAt", ""),
             }
-            for entry in self.repository.list("activity:")
+            for entry in self.repository.activities(resource_id=dataset_id)
             if entry["datasetId"] == dataset_id
             and type(entry.get("rating")) is int
             and 1 <= entry["rating"] <= 5

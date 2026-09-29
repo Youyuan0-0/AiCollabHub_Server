@@ -100,17 +100,36 @@ class ResourceCatalog:
             )
         return values
 
-    def list_resources(self) -> list[dict]:
-        """只返回已经形成正式版本的资源，不从 Mock 样例补充数据库目录。"""
+    def list_resources(self, resource_ids: list[str] | None = None) -> list[dict]:
+        """批量读取正式资料；指定编号时只加载所需资源，不重建整个目录。"""
         main = self.table(self.main_name)
-        rows = list(
-            self.db.execute(
-                select(main).where(main.c.current_version_id.is_not(None)).order_by(main.c.id)
-            ).mappings()
-        )
+        query = select(main).where(main.c.current_version_id.is_not(None)).order_by(main.c.id)
+        if resource_ids is not None:
+            if not resource_ids:
+                return []
+            query = query.where(main.c.id.in_([identifier(key) for key in resource_ids]))
+        rows = list(self.db.execute(query).mappings())
         if rows and self.is_readonly:
             self.prefetch_catalog(rows)
         return [self.resource_view(dict(row)) for row in rows]
+
+    def resource_states(self, resource_ids: list[str] | None = None) -> dict[str, dict]:
+        """仅查询正式资源的启停状态和修订，不加载版本正文或互动统计。"""
+        main = self.table(self.main_name)
+        query = select(main.c.id, main.c.status, main.c.updated_at).where(
+            main.c.current_version_id.is_not(None)
+        )
+        if resource_ids is not None:
+            if not resource_ids:
+                return {}
+            query = query.where(main.c.id.in_([identifier(key) for key in resource_ids]))
+        return {
+            str(row.id): {
+                "listingStatus": "listed" if row.status == "enabled" else "unlisted",
+                "revision": int(row.updated_at.timestamp() * 1_000_000),
+            }
+            for row in self.db.execute(query)
+        }
 
     def prefetch_catalog(self, rows: list) -> None:
         """在当前只读事务中批量读取版本、作者、统计和可见范围。
@@ -118,7 +137,10 @@ class ResourceCatalog:
         结果仅缓存在当前仓储工作单元，避免目录每增加一条资源就增加一组查询。
         这些数据依赖当前事务快照，不能挪成全局缓存，否则可能继续展示旧权限或统计。
         """
+        if not self.is_readonly:
+            raise ValueError("Catalog prefetch requires a read-only transaction")
         ids = [row["id"] for row in rows]
+        self._catalog_rows = {row["id"]: row for row in rows}
         versions = self.table(self.prefix + "_versions")
         self._catalog_versions = {key: [] for key in ids}
         for row in self.db.execute(
@@ -227,11 +249,13 @@ class ResourceCatalog:
         """查询稳定 UUID 对应的正式资料；未发布申请没有公开主表详情。"""
         self.lock("resource:" + resource_id)
         main = self.table(self.main_name)
-        row = (
-            self.db.execute(select(main).where(main.c.id == identifier(resource_id)))
-            .mappings()
-            .first()
-        )
+        row = getattr(self, "_catalog_rows", {}).get(identifier(resource_id))
+        if row is None:
+            row = (
+                self.db.execute(select(main).where(main.c.id == identifier(resource_id)))
+                .mappings()
+                .first()
+            )
         if row is None or row["current_version_id"] is None:
             return None
         return self.resource_view(dict(row))

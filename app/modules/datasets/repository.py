@@ -38,12 +38,27 @@ class DatasetRepository:
         self._records: dict[str, dict] = {}
         self._lock = RLock()
 
-    def resources(self) -> list[dict]:
-        """读取正式目录，数据库模式不会混入静态演示卡片。"""
+    def resources(self, resource_ids: list[str] | None = None) -> list[dict]:
+        """按需读取正式目录或指定详情，不混入静态演示卡片。"""
         if self.database is None:
             return []
         with self.database.transaction(is_readonly=True) as session:
-            return session.list_resources()
+            return session.list_resources(resource_ids)
+
+    def activities(self, subject: str | None = None, resource_id: str | None = None) -> list[dict]:
+        """将互动查询限定到所需用户或资源，数据库直接按条件筛选。"""
+        if self.database is not None:
+            with self.database.transaction(is_readonly=True) as session:
+                return [
+                    self.activity_view(item)
+                    for item in session.interaction_entries(subject, resource_id)
+                ]
+        return [
+            item
+            for item in self.list("activity:")
+            if (subject is None or item["userId"] == subject)
+            and (resource_id is None or item["datasetId"] == resource_id)
+        ]
 
     def save_metadata(self, dataset_id: str, values: dict, expected: int) -> dict:
         """按资源修订保存交付元数据；数据库与内存模式均拒绝过期写入。"""
@@ -72,9 +87,11 @@ class DatasetRepository:
                     updated_at=utc_now(),
                 )
             )
-            row = session.db.execute(
-                select(table).where(table.c.id == identifier(dataset_id))
-            ).mappings().one()
+            row = (
+                session.db.execute(select(table).where(table.c.id == identifier(dataset_id)))
+                .mappings()
+                .one()
+            )
             return {
                 "dataLineage": row["data_lineage"] or "",
                 "storageLocation": row["storage_location"] or "",
@@ -109,16 +126,18 @@ class DatasetRepository:
                 return session.list_publications()
             if prefix == "activity:":
                 return [self.activity_view(item) for item in session.entries("interactions")]
-            if prefix in {"listing:", "visibility:"}:
+            if prefix == "listing:":
                 return [
                     {
-                        "datasetId": item["id"],
-                        **(
-                            {"status": item["listingStatus"], "revision": item["revision"]}
-                            if prefix == "listing:"
-                            else session.get_visibility(item["id"])
-                        ),
+                        "datasetId": key,
+                        "status": value["listingStatus"],
+                        "revision": value["revision"],
                     }
+                    for key, value in session.resource_states().items()
+                ]
+            if prefix == "visibility:":
+                return [
+                    {"datasetId": item["id"], **session.get_visibility(item["id"])}
                     for item in session.list_resources()
                 ]
             return session.entries(prefix.rstrip(":"))

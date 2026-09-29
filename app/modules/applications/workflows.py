@@ -229,7 +229,7 @@ class ApplicationWorkflows:
                 session.put_entry("interactions", key, value)
                 ratings = [
                     item["rating"]
-                    for item in session.entries("interactions")
+                    for item in session.interaction_entries(resource_id=application_id)
                     if item["applicationId"] == application_id and item["rating"] is not None
                 ]
                 if ratings:
@@ -254,7 +254,7 @@ class ApplicationWorkflows:
                     "comment": item["comment"],
                     "updatedAt": item["updatedAt"],
                 }
-                for item in session.entries("interactions")
+                for item in session.interaction_entries(resource_id=application_id)
                 if item["applicationId"] == application_id and item["rating"] is not None
             ]
 
@@ -266,9 +266,7 @@ class ApplicationWorkflows:
                 for item in session.list_resources()
                 if visible(actor, item, session.get_visibility(item["id"]))
             }
-            interactions = [
-                item for item in session.entries("interactions") if item["actorId"] == actor.id
-            ]
+            interactions = session.interaction_entries(subject=actor.id)
             subscriptions = [
                 {**available[item["applicationId"]], "subscribedAt": item.get("updatedAt")}
                 for item in interactions

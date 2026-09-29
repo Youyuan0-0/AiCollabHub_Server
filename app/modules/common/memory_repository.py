@@ -24,6 +24,23 @@ class MemorySession:
         """按业务键读取活动记录副本，不存在时返回空值。"""
         return deepcopy(self.state["activities"].get(kind, {}).get(key))
 
+    def interaction_entries(
+        self, subject: str | None = None, resource_id: str | None = None
+    ) -> list[dict]:
+        """按同一仓储契约筛选互动副本，不泄露其他用户或资源记录。"""
+        return [
+            item
+            for item in self.entries("interactions")
+            if (subject is None or item.get("actorId", item.get("userId")) == subject)
+            and (
+                resource_id is None
+                or any(
+                    item.get(key) == resource_id
+                    for key in ("resourceId", "applicationId", "datasetId", "toolId")
+                )
+            )
+        ]
+
     def put_entry(self, kind: str, key: str, value: dict) -> None:
         """将活动记录副本保存到当前事务快照。"""
         self.state["activities"].setdefault(kind, {})[key] = deepcopy(value)
@@ -38,9 +55,26 @@ class MemorySession:
         """移除未提交的报告索引。"""
         self.state["activities"].get("review_files", {}).pop(key, None)
 
-    def list_resources(self) -> list[dict]:
-        """读取资源目录的独立副本。"""
-        return deepcopy(list(self.state["resources"].values()))
+    def list_resources(self, resource_ids: list[str] | None = None) -> list[dict]:
+        """读取指定范围的资源目录副本。"""
+        selected = set(resource_ids) if resource_ids is not None else None
+        return deepcopy(
+            [
+                item
+                for key, item in self.state["resources"].items()
+                if selected is None or key in selected
+            ]
+        )
+
+    def resource_states(self, resource_ids: list[str] | None = None) -> dict[str, dict]:
+        """只返回启停状态和修订，与数据库仓储保持相同形状。"""
+        return {
+            item["id"]: {
+                "listingStatus": item.get("listingStatus", "listed"),
+                "revision": item.get("revision", 1),
+            }
+            for item in self.list_resources(resource_ids)
+        }
 
     def get_resource(self, resource_id: str) -> dict | None:
         """按资源编号读取资源副本。"""

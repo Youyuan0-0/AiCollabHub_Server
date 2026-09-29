@@ -3,15 +3,16 @@
 import json
 from copy import deepcopy
 from hashlib import sha256
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import insert, or_, select, update
 
 from app.db.foundation import date_value, identifier, iso, utc_now
 from app.modules.common.database_workspace import DatabaseResourceWorkspace
-from app.modules.common.identity import Actor
+from app.modules.common.identity import Actor, can_edit
 from app.modules.common.resource_database import ResourceDatabase, ResourceDatabaseSession
+from app.modules.knowledge.catalog import KnowledgeCatalogSnapshot
 from app.modules.knowledge.schemas import IndexInput
 
 FORM_FIELDS = (
@@ -53,6 +54,10 @@ class KnowledgeDatabase:
         """公开概览只用当前已发布版本，不能泄露后续申请的待审修改。"""
         with self.resources.transaction(is_readonly=True) as unit:
             resource = unit.get_resource(record["id"])
+        return self._public_record(record, resource)
+
+    @staticmethod
+    def _public_record(record: dict, resource: dict | None) -> dict | None:
         if resource is None or resource["listingStatus"] != "listed":
             return None
         result = deepcopy(record)
@@ -103,6 +108,43 @@ class KnowledgeDatabase:
         resource = unit.get_resource(base_id)
         if publication is None and resource is None:
             return None
+        docs, reviews, files = (
+            unit.table("knowledge_documents"),
+            unit.table("knowledge_document_reviews"),
+            unit.table("files"),
+        )
+        all_docs = list(
+            unit.db.execute(
+                select(docs, files.c.size_bytes)
+                .join(files, files.c.id == docs.c.file_id)
+                .where(docs.c.knowledge_base_id == identifier(base_id))
+                .order_by(docs.c.created_at, docs.c.id)
+            ).mappings()
+        )
+        histories = {
+            doc["id"]: list(
+                unit.db.execute(
+                    select(reviews)
+                    .where(reviews.c.document_id == doc["id"])
+                    .order_by(reviews.c.submission_no)
+                ).mappings()
+            )
+            for doc in all_docs
+        }
+        state = self.resources.runtime.get("index", base_id) if self.resources.runtime else None
+        return self._assemble(unit, base_id, publication, resource, all_docs, histories, state)
+
+    def _assemble(
+        self,
+        unit: ResourceDatabaseSession,
+        base_id: str,
+        publication: dict | None,
+        resource: dict | None,
+        all_docs: list,
+        histories: dict[UUID, list],
+        state: dict | None,
+    ) -> dict:
+        """目录和详情共用投影及修订算法，批量预取不能改变审核与运行态语义。"""
         data = deepcopy(publication["data"] if publication else resource)
         author = publication or resource
         base = {
@@ -168,29 +210,9 @@ class KnowledgeDatabase:
                 base["review"].update(
                     {key: value[key] for key in ("reason", "reviewer", "reviewedAt")}
                 )
-        docs, reviews, files = (
-            unit.table("knowledge_documents"),
-            unit.table("knowledge_document_reviews"),
-            unit.table("files"),
-        )
-        all_docs = list(
-            unit.db.execute(
-                select(docs, files.c.size_bytes)
-                .join(files, files.c.id == docs.c.file_id)
-                .where(docs.c.knowledge_base_id == identifier(base_id))
-                .order_by(docs.c.created_at, docs.c.id)
-            ).mappings()
-        )
         for doc in all_docs:
-            history = list(
-                unit.db.execute(
-                    select(reviews)
-                    .where(reviews.c.document_id == doc["id"])
-                    .order_by(reviews.c.submission_no)
-                ).mappings()
-            )
             current = None
-            for review in history:
+            for review in histories[doc["id"]]:
                 reviewer = unit.foundation.user(unit.db, review["reviewer_id"])
                 value = {
                     "id": str(doc["id"]),
@@ -246,7 +268,6 @@ class KnowledgeDatabase:
                 sort_keys=True,
             ).encode()
         ).hexdigest()
-        state = self.resources.runtime.get("index", base_id) if self.resources.runtime else None
         # 只有运行态对应当前数据库资料时才复用分段；资料或文档审核变化后应显式要求重建。
         # Redis 丢失或过期也走这一分支，不能用旧索引冒充最新审批内容。
         if state and state.get("databaseStamp") == stamp:
@@ -265,10 +286,27 @@ class KnowledgeDatabase:
         )
         return base
 
-    def get(self, base_id: str) -> dict | None:
-        """重建业务视图；外部运行态不参与资源身份和权限判断。"""
+    def get(self, base_id: str, *, public_for: Actor | None = None) -> dict | None:
+        """只加载当前知识库；公开投影与权限校验资料来自同一个数据库快照。"""
         with self.resources.transaction(is_readonly=True) as unit:
-            return self._read(unit, base_id)
+            snapshot = KnowledgeCatalogSnapshot.load(unit, base_id)
+            key = str(identifier(base_id))
+            if key not in snapshot.documents:
+                return None
+            resource = snapshot.resources.get(key)
+            state = self.resources.runtime.get("index", base_id) if self.resources.runtime else None
+            record = self._assemble(
+                unit,
+                base_id,
+                snapshot.publications.get(key),
+                resource,
+                snapshot.documents[key],
+                snapshot.document_reviews,
+                state,
+            )
+            if public_for is not None and not can_edit(public_for, record):
+                return self._public_record(record, resource)
+            return record
 
     def ensure_uploadable(self, base_id: str) -> None:
         """确认审批已生成正式知识库；上传前拒绝待审申请，避免产生孤立原文件。"""
@@ -276,12 +314,33 @@ class KnowledgeDatabase:
             if unit.get_resource(base_id) is None:
                 raise HTTPException(409, "知识库审核通过后才能上传文档")
 
-    def list(self) -> list[dict]:
-        """合并正式资源与当前发布申请，平台 UUID 始终稳定。"""
+    def list(self, *, public_for: Actor | None = None, published_only: bool = False) -> list[dict]:
+        """批量合并正式资源与申请；公开投影和权限资料使用同一数据库快照。
+
+        public_for 指定非编辑者应读取正式版；published_only 强制使用正式版。
+        这里只选择版本，最终的可见范围、筛选和分页仍由服务层校验。
+        """
         with self.resources.transaction(is_readonly=True) as unit:
-            ids = {item["resourceId"] for item in unit.list_publications()}
-            ids.update(item["id"] for item in unit.list_resources())
-            return [self._read(unit, key) for key in sorted(ids)]
+            snapshot = KnowledgeCatalogSnapshot.load(unit)
+            ids = sorted(snapshot.documents)
+            states = self.resources.runtime.get_many("index", ids) if self.resources.runtime else {}
+            result = []
+            for key in ids:
+                resource = snapshot.resources.get(key)
+                record = self._assemble(
+                    unit,
+                    key,
+                    snapshot.publications.get(key),
+                    resource,
+                    snapshot.documents[key],
+                    snapshot.document_reviews,
+                    states.get(key),
+                )
+                if published_only or (public_for is not None and not can_edit(public_for, record)):
+                    record = self._public_record(record, resource)
+                if record is not None:
+                    result.append(record)
+            return result
 
     def save(self, record: dict, expected: int | None) -> dict:
         """按页面的整体修订校验并分表保存，再更新模拟索引运行态。

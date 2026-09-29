@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db.base import Base
+from app.modules.common.identity import Actor
 
 
 class KnowledgeRecord(Base):
@@ -28,16 +29,16 @@ class KnowledgeRepository:
         self._records: dict[str, dict] = {}
         self._lock = RLock()
 
-    def list(self) -> list[dict]:
-        """读取独立快照，调用方无法修改仓储中的原始记录。"""
+    def list(self, *, public_for: Actor | None = None, published_only: bool = False) -> list[dict]:
+        """读取独立快照；模拟仓储没有独立正式版本，公开性仍由服务层校验。"""
         if self.engine is not None:
             with Session(self.engine) as session:
                 return deepcopy(list(session.scalars(select(KnowledgeRecord.data))))
         with self._lock:
             return deepcopy(list(self._records.values()))
 
-    def get(self, identifier: str) -> dict | None:
-        """按编号读取记录，未知编号返回 None。"""
+    def get(self, identifier: str, *, public_for: Actor | None = None) -> dict | None:
+        """按编号读取模拟快照；公开性仍由服务层校验，未知编号返回 None。"""
         if self.engine is not None:
             with Session(self.engine) as session:
                 row = session.get(KnowledgeRecord, identifier)

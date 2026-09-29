@@ -61,7 +61,7 @@ class DatabaseResourceWorkspace:
         with self.repository.transaction(is_readonly=True) as session:
             favorites = {
                 item[session.resource_key]
-                for item in session.entries("interactions")
+                for item in session.interaction_entries(subject=actor.id)
                 if item["actorId"] == actor.id and item["favorite"]
             }
             return [

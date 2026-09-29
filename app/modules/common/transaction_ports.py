@@ -15,6 +15,12 @@ class ResourceSession(Protocol):
         """读取指定业务种类的全部活动记录。"""
         ...
 
+    def interaction_entries(
+        self, subject: str | None = None, resource_id: str | None = None
+    ) -> list[dict]:
+        """按用户或资源限定互动明细，省略条件时读取本模块全部记录。"""
+        ...
+
     def entry(self, kind: str, key: str) -> dict | None:
         """按业务种类和幂等键读取活动记录，不存在时返回空值。"""
         ...
@@ -31,8 +37,12 @@ class ResourceSession(Protocol):
         """在事务中移除未提交的报告索引。"""
         ...
 
-    def list_resources(self) -> list[dict]:
-        """读取已发布的资源目录。"""
+    def list_resources(self, resource_ids: list[str] | None = None) -> list[dict]:
+        """读取已发布的资源目录，可按资源编号缩小范围。"""
+        ...
+
+    def resource_states(self, resource_ids: list[str] | None = None) -> dict[str, dict]:
+        """批量读取正式资源的上下架状态和修订，键为资源编号。"""
         ...
 
     def get_resource(self, resource_id: str) -> dict | None:

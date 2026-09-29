@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from threading import RLock
@@ -186,6 +186,19 @@ class FoundationDatabase:
             "name": row["display_name"] or row["iam_subject"],
         }
         return cache[user_id]
+
+    def prefetch_users(self, session: Session, user_ids: Iterable[UUID]) -> None:
+        """批量补齐当前事务的用户显示资料，不跨请求复用身份信息。"""
+        cache = session.info.setdefault("user_views", {})
+        missing = set(user_ids) - cache.keys()
+        if not missing:
+            return
+        users = self.table("users")
+        for row in session.execute(select(users).where(users.c.id.in_(missing))).mappings():
+            cache[row["id"]] = {
+                "id": row["iam_subject"],
+                "name": row["display_name"] or row["iam_subject"],
+            }
 
     @staticmethod
     def lock(session: Session, key: str) -> None:

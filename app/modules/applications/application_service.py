@@ -13,7 +13,7 @@ from app.modules.applications.configuration import (
     effective_configuration,
     validate_submission,
 )
-from app.modules.applications.discovery import analyze
+from app.modules.applications.discovery import analyze, related
 from app.modules.applications.ports import (
     ApplicationProvider,
     ApplicationRepository,
@@ -159,6 +159,14 @@ class ApplicationService:
                 "canPublishVersion": can_edit(actor, resource),
                 "runtimeConnection": connection,
             }
+
+    def discovery(self, application_id: str, actor: Actor) -> dict:
+        """从一次可见目录快照生成关联分析，避免重复读取源应用及其统计。"""
+        candidates = self.resources(actor)
+        source = next((item for item in candidates if item["id"] == application_id), None)
+        if source is None:
+            raise HTTPException(404, "应用不存在或当前账号不可见")
+        return {**analyze(source), "related": related(source, candidates)}
 
     def publications(
         self,

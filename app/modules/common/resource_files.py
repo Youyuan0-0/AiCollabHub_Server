@@ -15,11 +15,11 @@ class ResourceFiles:
     def file_view(self, file_id: str | UUID, reference: dict | None = None) -> dict | None:
         """返回经过归属校验的服务端元数据，调用方负责生成受控下载响应。"""
         files = self.table("files")
-        row = (
-            self.db.execute(select(files).where(files.c.id == identifier(file_id)))
-            .mappings()
-            .first()
-        )
+        key = identifier(file_id)
+        rows = getattr(self, "_file_rows", {})
+        row = rows.get(key)
+        if key not in rows:
+            row = self.db.execute(select(files).where(files.c.id == key)).mappings().first()
         if row is None or row["status"] != "ready":
             return None
         actor = (
@@ -28,15 +28,18 @@ class ResourceFiles:
             else {"id": "", "name": ""}
         )
         previews = self.table("file_previews")
-        preview = (
-            self.db.execute(
-                select(files)
-                .join(previews, previews.c.preview_file_id == files.c.id)
-                .where(previews.c.source_file_id == row["id"])
+        cached_previews = getattr(self, "_file_previews", {})
+        preview = cached_previews.get(key)
+        if key not in cached_previews:
+            preview = (
+                self.db.execute(
+                    select(files)
+                    .join(previews, previews.c.preview_file_id == files.c.id)
+                    .where(previews.c.source_file_id == row["id"])
+                )
+                .mappings()
+                .first()
             )
-            .mappings()
-            .first()
-        )
         result = {
             "id": str(row["id"]),
             "name": row["file_name"],
@@ -57,16 +60,23 @@ class ResourceFiles:
             review_id = reference["owner_id"] if reference["owner_type"] == "review" else None
             if review_id:
                 reviews = self.table("resource_reviews")
-                publication_id = self.db.scalar(
-                    select(reviews.c.publication_id).where(reviews.c.id == review_id)
+                review = getattr(self, "_review_rows", {}).get(review_id)
+                publication_id = (
+                    review["publication_id"]
+                    if review is not None
+                    else self.db.scalar(
+                        select(reviews.c.publication_id).where(reviews.c.id == review_id)
+                    )
                 )
             else:
                 publication_id = reference["owner_id"]
-            publication = (
-                self.db.execute(select(publications).where(publications.c.id == publication_id))
-                .mappings()
-                .one()
-            )
+            publication = getattr(self, "_publication_rows", {}).get(publication_id)
+            if publication is None:
+                publication = (
+                    self.db.execute(select(publications).where(publications.c.id == publication_id))
+                    .mappings()
+                    .one()
+                )
             context = publication["data"].get("publicationContext", {})
             result.update(
                 publicationId=str(publication_id),
@@ -129,9 +139,9 @@ class ResourceFiles:
     def owner_files(self, owner_type: str, owner_id: UUID, purpose: str) -> list[dict]:
         """列出指定申请、审核或版本拥有的原始文件。"""
         refs = self.table("resource_file_references")
-        return [
-            self.file_view(row["file_id"], dict(row) if purpose == "review_report" else None)
-            for row in self.db.execute(
+        rows = getattr(self, "_owner_file_rows", {}).get((owner_type, owner_id, purpose))
+        if rows is None:
+            rows = self.db.execute(
                 select(refs)
                 .where(
                     refs.c.resource_type == self.kind,
@@ -141,7 +151,57 @@ class ResourceFiles:
                 )
                 .order_by(refs.c.created_at, refs.c.id)
             ).mappings()
+        return [
+            self.file_view(row["file_id"], dict(row) if purpose == "review_report" else None)
+            for row in rows
         ]
+
+    def prefetch_owner_files(self, owner_type: str, owner_ids: list[UUID], purpose: str) -> None:
+        """在只读快照内批量加载文件与预览；空关联同样缓存，避免重复查询。"""
+        if not self.is_readonly:
+            raise ValueError("File prefetch requires a read-only transaction")
+        if not owner_ids:
+            return
+        refs, files, previews = (
+            self.table("resource_file_references"),
+            self.table("files"),
+            self.table("file_previews"),
+        )
+        self._owner_file_rows = getattr(self, "_owner_file_rows", {})
+        for key in owner_ids:
+            self._owner_file_rows[owner_type, key, purpose] = []
+        file_ids = set()
+        for row in self.db.execute(
+            select(refs)
+            .where(
+                refs.c.resource_type == self.kind,
+                refs.c.owner_type == owner_type,
+                refs.c.owner_id.in_(owner_ids),
+                refs.c.purpose == purpose,
+            )
+            .order_by(refs.c.created_at, refs.c.id)
+        ).mappings():
+            self._owner_file_rows[owner_type, row["owner_id"], purpose].append(row)
+            file_ids.add(row["file_id"])
+        if not file_ids:
+            return
+        self._file_rows = getattr(self, "_file_rows", {})
+        self._file_previews = getattr(self, "_file_previews", {})
+        self._file_rows.update(dict.fromkeys(file_ids))
+        self._file_previews.update(dict.fromkeys(file_ids))
+        user_ids = set()
+        for row in self.db.execute(select(files).where(files.c.id.in_(file_ids))).mappings():
+            self._file_rows[row["id"]] = row
+            if row["uploader_id"]:
+                user_ids.add(row["uploader_id"])
+        for row in self.db.execute(
+            select(files, previews.c.source_file_id)
+            .join(previews, previews.c.preview_file_id == files.c.id)
+            .where(previews.c.source_file_id.in_(file_ids))
+        ).mappings():
+            if self._file_previews[row["source_file_id"]] is None:
+                self._file_previews[row["source_file_id"]] = row
+        self.foundation.prefetch_users(self.db, user_ids)
 
     def reference_file(
         self,

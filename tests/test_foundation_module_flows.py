@@ -54,6 +54,9 @@ class Runtime:
     def get(self, kind, key):
         return deepcopy(self.entries.get((kind, key)))
 
+    def get_many(self, kind, keys):
+        return {key: self.get(kind, key) for key in keys}
+
     def put(self, kind, key, value):
         self.entries[kind, key] = deepcopy(value)
 
@@ -184,20 +187,32 @@ def test_knowledge_http_report_scores_and_archive(foundation, connection):
         history = reviewed.json()["reviewHistory"][-1]
         assert history["scores"] == SCORES
         assert history["reportFiles"][0]["id"] == report_id
+        listed = client.get("/api/v1/admin/knowledge-bases").json()["items"][0]
+        detail = client.get(f"/api/v1/admin/knowledge-bases/{record['id']}").json()
+        detail.pop("visibilityDirectory")
+        assert listed == detail
         content = client.get(report_path + f"/{report_id}/content")
         assert content.status_code == 200 and content.content == b"knowledge review report"
 
-    stored = connection.exec_driver_sql(
-        "SELECT id, quality_scores FROM resource_reviews "
-        "WHERE resource_type='knowledge' AND publication_id=%s",
-        (publication_id,),
-    ).mappings().one()
+    stored = (
+        connection.exec_driver_sql(
+            "SELECT id, quality_scores FROM resource_reviews "
+            "WHERE resource_type='knowledge' AND publication_id=%s",
+            (publication_id,),
+        )
+        .mappings()
+        .one()
+    )
     assert stored["quality_scores"] == SCORES
-    archived = connection.exec_driver_sql(
-        "SELECT owner_type, owner_id FROM resource_file_references "
-        "WHERE resource_type='knowledge' AND file_id=%s",
-        (report_id,),
-    ).mappings().one()
+    archived = (
+        connection.exec_driver_sql(
+            "SELECT owner_type, owner_id FROM resource_file_references "
+            "WHERE resource_type='knowledge' AND file_id=%s",
+            (report_id,),
+        )
+        .mappings()
+        .one()
+    )
     assert archived["owner_type"] == "review" and str(archived["owner_id"]) == str(stored["id"])
     flush_constraints(connection)
 
@@ -253,6 +268,7 @@ def test_knowledge_publication_and_document_review(foundation, connection):
     )
     assert changed["review"]["status"] == "pending"
     assert repository.public_record(changed)["name"] == "测试知识库"
+    assert repository.list() == [repository.get(item["id"])]
     reviewed = KnowledgeReviews(service).decide(
         item["id"],
         None,

@@ -27,9 +27,17 @@ class ResourceRecords:
     def list_publications(self, *, warnings: list[str] | None = None) -> list[dict]:
         """读取真实申请，缺失资源资料不会被演示目录补齐。"""
         table = self.table(self.prefix + "_publications")
-        rows = self.db.execute(
-            select(table).order_by(table.c.updated_at.desc(), table.c.id)
-        ).mappings()
+        rows = list(
+            self.db.execute(
+                select(table).order_by(table.c.updated_at.desc(), table.c.id)
+            ).mappings()
+        )
+        if rows and self.is_readonly:
+            self.prefetch_publications(rows)
+            if self.kind == "dataset":
+                self.list_resources(
+                    list({str(row["dataset_id"]) for row in rows if row["published_version_id"]})
+                )
         return [self.publication_view(dict(row)) for row in rows]
 
     def get_publication(self, publication_id: str) -> dict | None:
@@ -43,6 +51,31 @@ class ResourceRecords:
         )
         return self.publication_view(dict(row)) if row else None
 
+    def prefetch_publications(self, rows: list[dict]) -> None:
+        """在只读工作单元内预取申请审核、报告及人员，避免逐申请查询。"""
+        if not self.is_readonly:
+            raise ValueError("Publication prefetch requires a read-only transaction")
+        self._publication_rows = {row["id"]: row for row in rows}
+        self._publication_reviews = {row["id"]: [] for row in rows}
+        self._review_rows = {}
+        if not rows:
+            return
+        reviews = self.table("resource_reviews")
+        user_ids = {row["applicant_id"] for row in rows}
+        for row in self.db.execute(
+            select(reviews)
+            .where(
+                reviews.c.resource_type == self.kind,
+                reviews.c.publication_id.in_(self._publication_rows),
+            )
+            .order_by(reviews.c.submission_no)
+        ).mappings():
+            self._publication_reviews[row["publication_id"]].append(row)
+            self._review_rows[row["id"]] = row
+            user_ids.add(row["reviewer_id"])
+        self.foundation.prefetch_users(self.db, user_ids)
+        self.prefetch_owner_files("review", list(self._review_rows), "review_report")
+
     def publication_view(self, row: dict) -> dict:
         """将数据库状态和审核历史转换为既有页面可使用的申请资料。"""
         data = deepcopy(row["data"])
@@ -51,11 +84,14 @@ class ResourceRecords:
         resource_id = row[self.prefix + "_id"] or context.get("plannedResourceId")
         table = self.table("resource_reviews")
         reviews = []
-        for entry in self.db.execute(
-            select(table)
-            .where(table.c.resource_type == self.kind, table.c.publication_id == row["id"])
-            .order_by(table.c.submission_no)
-        ).mappings():
+        entries = getattr(self, "_publication_reviews", {}).get(row["id"])
+        if entries is None:
+            entries = self.db.execute(
+                select(table)
+                .where(table.c.resource_type == self.kind, table.c.publication_id == row["id"])
+                .order_by(table.c.submission_no)
+            ).mappings()
+        for entry in entries:
             actor = self.foundation.user(self.db, entry["reviewer_id"])
             submitted = deepcopy(entry["submission_snapshot"]["data"])
             submitted.pop("publicationContext", None)
