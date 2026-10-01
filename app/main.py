@@ -26,8 +26,9 @@ from app.modules.applications.demo_store import (
     create_demo_application_service,
 )
 from app.modules.common.auth.cas import MockCasClient
-from app.modules.common.auth.iam import CasClient, IamIngressVerifier
-from app.modules.common.auth.router import config_router
+from app.modules.common.auth.iam import CasClient
+from app.modules.common.auth.iam_cas import IamCasClient
+from app.modules.common.auth.router import config_router, single_logout_router
 from app.modules.common.auth.router import router as auth_router
 from app.modules.common.auth.service import require_business_identity
 from app.modules.common.identity import DemoIdentityProvider, SessionIdentityProvider
@@ -62,21 +63,18 @@ def create_app(
     chat_provider: ChatProvider | None = None,
     attachment_store: AttachmentStore | None = None,
     cas_client: CasClient | None = None,
-    iam_verifier: IamIngressVerifier | None = None,
     applications_factory: Callable[[], ApplicationService] | None = None,
 ) -> FastAPI:
     """装配独立的 FastAPI 实例，并在 lifespan 中管理外部资源。
 
     settings 决定环境、认证和存储模式；各 factory/provider 参数供测试或接入层
     替换具体实现。未注入的问答提供器默认回显问题，不代表已连接真实模型。
-    正式 IAM 模式必须同时提供经过验证的 CAS 客户端和通知验签器。
+    正式 IAM 模式默认装配集团 CAS 客户端，身份推送按配置限制连接来源。
 
     调用工厂只完成应用配置；连接池创建、现有表结构读取和后台任务启动发生在
     lifespan 阶段。数据库迁移须独立执行，启动过程不会补表或导入样例数据。
     """
     settings = settings if settings is not None else Settings()
-    if settings.auth_mode == "iam" and (cas_client is None or iam_verifier is None):
-        raise ValueError("IAM mode requires a verified CAS client and notification verifier")
     if settings.auth_mode == "iam" and isinstance(cas_client, MockCasClient):
         raise ValueError("Mock CAS client cannot be used in IAM mode")
     toolchain_configuration = ToolchainConfigurationStore(settings)
@@ -130,10 +128,15 @@ def create_app(
                     )
                     service.workflows.provider = service.provider
                 application.state.cas_client = cas_client
-                application.state.iam_verifier = iam_verifier
-                if settings.auth_mode == "mock" and cas_client is None:
-                    application.state.cas_client = MockCasClient(settings)
-                    cleanup.callback(application.state.cas_client.close)
+                if cas_client is None and settings.auth_mode in {"mock", "iam"}:
+                    application.state.cas_client = (
+                        MockCasClient(settings)
+                        if settings.auth_mode == "mock"
+                        else IamCasClient(settings)
+                    )
+                    cleanup.push_async_callback(
+                        run_in_threadpool, application.state.cas_client.close
+                    )
                 feedback_stopping = asyncio.Event()
                 feedback_maintenance = asyncio.create_task(
                     maintain_feedback(resources, settings, feedback_stopping)
@@ -327,8 +330,10 @@ def create_app(
     if settings.auth_mode != "disabled":
         application.include_router(auth_router, prefix="/api/v1")
     if settings.auth_mode == "mock":
+        application.include_router(single_logout_router, prefix="/api/v1")
+    if settings.auth_mode == "mock" and settings.auth_identity_sync_enabled:
         application.include_router(identity_sync_router, prefix="/api/v1")
-    if settings.auth_mode == "iam":
+    if settings.auth_mode == "iam" and settings.auth_identity_sync_enabled:
         application.include_router(iam_sync_router, prefix="/api/v1")
     if settings.auth_mode != "disabled":
         application.state.application_identity = SessionIdentityProvider()

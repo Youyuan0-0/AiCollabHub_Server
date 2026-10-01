@@ -49,6 +49,7 @@ def postgres_auth():
     settings = Settings(
         app_env="test",
         auth_mode="mock",
+        auth_identity_sync_enabled=True,
         auth_public_origin="http://testserver",
         auth_mock_iam_url="http://iam.test",
         auth_mock_secret=SECRET,

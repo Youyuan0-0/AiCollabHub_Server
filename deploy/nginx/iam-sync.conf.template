@@ -1,0 +1,11 @@
+    # 仅启用身份同步时暴露；由后端检查连接来源和 appId。
+    server {
+        listen @@LISTEN_HOST@@:@@IAM_SYNC_PORT@@;
+        server_name localhost;
+        location = /api/v1/auth/iam/identity-sync {
+            limit_except POST { deny all; }
+            client_max_body_size 256k;
+            include platform-proxy.conf;
+        }
+        location / { return 404; }
+    }

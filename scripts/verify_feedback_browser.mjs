@@ -26,7 +26,7 @@ async function login(context, path, administrator) {
       errors.push(`feedback HTTP ${response.status()}: ${await response.text()}`)
   })
   await page.goto(base + path)
-  await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
   await page.getByLabel(administrator ? '模拟管理员A' : '模拟用户A', { exact: true }).check()
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(base + path)

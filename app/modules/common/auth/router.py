@@ -23,15 +23,15 @@ from app.modules.common.auth.models import (
     ActorType,
     AuthSession,
     OperationAction,
-    UserRole,
     UserStatus,
 )
+from app.modules.common.auth.provisioning import provision_login_user
 from app.modules.common.auth.security import csrf_token, digest, safe_return_path
-from app.modules.common.identity_sync.access import lock_identity
 
 Scope = Literal["user", "admin"]
 router = APIRouter(prefix="/auth", tags=["authentication"])
 config_router = APIRouter(prefix="/auth", tags=["authentication"])
+single_logout_router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 @config_router.get("/config")
@@ -59,6 +59,14 @@ def clear_login_cookie(response: Response, scope: str) -> None:
     response.delete_cookie(service.login_cookie(scope), path="/api", httponly=True, samesite="lax")
 
 
+def frontend_url(request: Request, path: str) -> str:
+    """独立端口回调返回配置的网站来源，避免停留在仅代理认证的 8086 端口。"""
+    settings = request.app.state.settings
+    if settings.auth_callback_origin:
+        return str(settings.auth_public_origin).rstrip("/") + path
+    return path
+
+
 def login_failure(
     request: Request, db: Session, scope: str, error: str, return_path: str
 ) -> RedirectResponse:
@@ -66,9 +74,8 @@ def login_failure(
     db.rollback()
     service.system_event(request, "login", error)
     target = "/admin/login" if scope == "admin" else "/login"
-    response = RedirectResponse(
-        target + "?" + urlencode({"error": error, "redirect": return_path}), status_code=303
-    )
+    target += "?" + urlencode({"error": error, "redirect": return_path})
+    response = RedirectResponse(frontend_url(request, target), status_code=303)
     clear_login_cookie(response, scope)
     return response
 
@@ -96,7 +103,7 @@ def login(
                 raise
         else:
             # 已登录时直接返回原页面；切换账号仍通过 renew=true 显式进入 IAM。
-            return RedirectResponse(target, 303)
+            return RedirectResponse(frontend_url(request, target), 303)
     state, browser = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     callback_origin = settings.auth_callback_origin or settings.auth_public_origin
     callback = str(callback_origin).rstrip("/") + "/api/v1/auth/callback?"
@@ -144,29 +151,10 @@ def callback(
     except IAMUnavailable:
         return login_failure(request, db, scope, "iam_unavailable", target)
     prepare_write(db, settings)
-    identity = lock_identity(db, principal.subject)
-    # 正式 IAM 必须先收到可信身份推送，不能靠一次验票激活未知身份。
-    if (
-        settings.auth_mode == "mock"
-        and identity.status == UserStatus.PENDING
-        and identity.user_sync_time is None
-    ):
-        identity.status = UserStatus.ACTIVE
-        identity.updated_at = service.now()
-    if (
-        settings.auth_mode == "mock"
-        and identity.role_sync_time is None
-        and principal.subject in settings.auth_mock_admin_subjects
-    ):
-        if identity.role != UserRole.ADMIN:
-            identity.role, identity.updated_at = UserRole.ADMIN, service.now()
-    if identity.user_sync_time is None and not identity.display_name:
-        identity.display_name = principal.display_name
-        identity.updated_at = service.now()
+    identity = provision_login_user(db, principal, settings)
     if identity.status != UserStatus.ACTIVE:
         return login_failure(request, db, scope, "account_unavailable", target)
-    if scope == "admin" and not service.can_access_admin(identity):
-        return login_failure(request, db, scope, "admin_not_allowed", target)
+    is_admin_denied = scope == "admin" and not service.can_access_admin(identity)
     raw_token = secrets.token_urlsafe(32)
     try:
         with db.begin_nested():
@@ -189,10 +177,14 @@ def callback(
         user_id=identity.id,
         target_id=value.id,
         request_id=request.state.request_id,
-        data={"scope": scope},
+        data={"entryScope": scope} if is_admin_denied else {"scope": scope},
     )
     commit_write(db)
-    response = RedirectResponse(target, 303)
+    if is_admin_denied:
+        # 身份认证成功仍建立普通用户会话，便于返回用户端和首次本地授权。
+        service.system_event(request, "login", "admin_not_allowed")
+        target = "/admin/login?" + urlencode({"error": "admin_not_allowed", "redirect": target})
+    response = RedirectResponse(frontend_url(request, target), 303)
     set_cookie(response, request, service.cookie_name(), raw_token, settings.auth_session_ttl)
     for name in service.LEGACY_SESSION_COOKIES:
         response.delete_cookie(name, path="/api", httponly=True, samesite="lax")
@@ -227,9 +219,12 @@ def current_session(request: Request, db: SessionDependency, scope: Scope = "use
 
 @router.post("/logout", response_model=None)
 def logout(
-    request: Request, db: SessionDependency, scope: Scope = "user", global_logout: bool = True
+    request: Request,
+    db: SessionDependency,
+    scope: Scope = "user",
+    global_logout: bool = True,
 ) -> JSONResponse:
-    """校验 CSRF 后撤销本浏览器两端会话，返回本地或统一注销地址。"""
+    """撤销两端共享会话并默认退出 IAM，避免自动登录立即恢复原账号。"""
     settings = request.app.state.settings
     raw = service.session_tokens(request).get(service.cookie_name(), "")
     value = service.session_by_token(db, raw)
@@ -264,9 +259,9 @@ def logout(
     return response
 
 
-@router.post("/single-logout", response_model=None)
+@single_logout_router.post("/single-logout", response_model=None)
 async def single_logout(request: Request) -> dict:
-    """校验统一注销通知来源与报文，并撤销对应票据的会话。"""
+    """仅供模拟 IAM 验证统一注销通知，正式集团暂不提供此能力。"""
     settings = request.app.state.settings
     if settings.auth_mode == "mock" and not hmac.compare_digest(
         request.headers.get("x-mock-iam-key", "").encode(),
@@ -282,10 +277,6 @@ async def single_logout(request: Request) -> dict:
         body.extend(chunk)
         if len(body) > 16384:
             raise HTTPException(413, "notification_too_large")
-    if settings.auth_mode == "iam":
-        await run_in_threadpool(
-            request.app.state.iam_verifier.verify, "logout", bytes(body), request.headers
-        )
     try:
         form = parse_qs(body.decode("utf-8"), strict_parsing=True, max_num_fields=2)
         if set(form) != {"logoutRequest"} or len(form["logoutRequest"]) != 1:

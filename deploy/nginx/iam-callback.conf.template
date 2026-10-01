@@ -1,0 +1,10 @@
+    # 浏览器通过 8086 接收 CAS 回调；集团暂不提供单点登出通知。
+    server {
+        listen @@LISTEN_HOST@@:@@IAM_CALLBACK_PORT@@;
+        server_name localhost;
+        location = /api/v1/auth/callback {
+            limit_except GET { deny all; }
+            include platform-proxy.conf;
+        }
+        location / { return 404; }
+    }

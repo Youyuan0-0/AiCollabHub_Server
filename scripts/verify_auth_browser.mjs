@@ -80,10 +80,6 @@ try {
       await page.screenshot({ path: resolve(output, `${name}-${label}.png`), fullPage: true })
     }
     await page.goto(baseURL + '/applications?q=AI')
-    await expect(page.getByRole('heading', { name: '登录平台' })).toBeVisible()
-    expect(new URL(page.url()).searchParams.get('redirect')).toBe('/applications?q=AI')
-    await checkLayout('user-login')
-    await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
     await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
     await expect(page.getByRole('radio')).toHaveCount(mockAccounts.length)
     for (const account of mockAccounts) {
@@ -133,12 +129,12 @@ try {
     await verifyWorkerSessions(401)
     await userPage.bringToFront()
     await userPage.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await expect(userPage.getByRole('heading', { name: '登录平台' })).toBeVisible()
+    await expect(userPage.getByRole('heading', { name: '已退出登录' })).toBeVisible()
     await userPage.close()
 
     // 反向验证：直接在管理端登录，再通过实际入口打开用户端。
     await page.goto(baseURL + '/admin/services')
-    await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
     await page.getByLabel('模拟管理员A', { exact: true }).check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/admin/services')
@@ -161,13 +157,12 @@ try {
     await expect(page.getByText('已退出登录', { exact: true })).toBeVisible()
     await adminPage.bringToFront()
     await adminPage.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await expect(adminPage.getByRole('heading', { name: '管理工作台', exact: true })).toBeVisible()
+    await expect(adminPage.getByRole('heading', { name: '已退出登录', exact: true })).toBeVisible()
     await adminPage.close()
 
     await page.goto(baseURL + '/applications')
-    await expect(page.getByRole('heading', { name: '登录平台' })).toBeVisible()
     // 普通用户无法通过直接访问管理路由绕过测试准入规则。
-    await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
     await page.getByLabel('模拟用户A', { exact: true }).check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(baseURL + '/applications')
@@ -254,7 +249,7 @@ try {
         for (const scope of ['user', 'admin']) {
           expect((await context.request.get(baseURL + '/api/v1/auth/session?scope=' + scope)).status()).toBe(401)
         }
-        await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+        await page.getByRole('button', { name: '重试认证', exact: true }).click()
         await page.waitForURL(baseURL + '/models')
         await expect(page.getByRole('button', { name: '管理工作台', exact: true })).toBeVisible()
         await refresh(deniedPage)
@@ -280,7 +275,7 @@ try {
       const page = await context.newPage()
       const target = account.isAdmin ? '/admin/services' : '/applications'
       await page.goto(baseURL + target)
-      await page.getByRole('button', { name: '统一身份登录', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '模拟统一认证' })).toBeVisible()
       await page.getByLabel(account.displayName, { exact: true }).check()
       await page.getByRole('button', { name: '登录', exact: true }).click()
       await page.waitForURL(baseURL + target)

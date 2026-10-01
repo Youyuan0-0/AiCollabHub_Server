@@ -32,5 +32,5 @@ def lock_identity(db: Session, subject: str) -> User:
 
 
 def can_access_admin(user: User) -> bool:
-    """以本地已同步状态和角色校验权限，不再从演示名单实时回退授权。"""
+    """以本地用户状态和角色校验权限，不从演示名单实时回退授权。"""
     return user.status == UserStatus.ACTIVE and user.role == UserRole.ADMIN

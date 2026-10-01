@@ -31,6 +31,7 @@ def auth(tmp_path):
     settings = Settings(
         app_env="test",
         auth_mode="mock",
+        auth_identity_sync_enabled=True,
         auth_public_origin="http://testserver",
         auth_mock_iam_url="http://iam.test",
         auth_mock_secret=SECRET,
@@ -291,7 +292,8 @@ def test_admin_access_is_explicit_and_session_scope_cannot_be_forged(auth):
     a, b, iam, _ = auth
     response = login(a, iam, scope="admin")
     assert "admin_not_allowed" in response.headers["location"]
-    assert a.get("/api/v1/admin/feedback").status_code == 401
+    assert a.get("/api/v1/admin/feedback").status_code == 403
+    assert a.get("/api/v1/auth/session").json()["user"]["id"] == "mock-user"
     login(a, iam)
     assert a.get("/api/v1/admin/feedback").status_code == 403
     assert a.get("/api/v1/auth/session?scope=admin").json()["detail"] == "admin_not_allowed"
@@ -610,15 +612,29 @@ def test_redis_failure_prevents_new_login_but_keeps_existing_session(auth, monke
     assert a.get("/api/v1/auth/login?return_to=/models").headers["location"] == "/models"
 
 
-def test_failed_login_is_only_in_system_logs(auth, caplog):
+def test_admin_denial_is_logged_without_discarding_valid_user_login(auth, caplog):
     a, _, iam, engine = auth
     with caplog.at_level("INFO", logger=service.__name__):
         response = login(a, iam, scope="admin")
     assert "admin_not_allowed" in response.headers["location"]
     assert "admin_not_allowed" in caplog.text
     with Session(engine) as db:
-        assert db.scalar(select(OperationLog)) is None
-        assert db.scalar(select(AuthSession)) is None
+        operation = db.scalar(select(OperationLog))
+        assert operation.action == "login"
+        assert operation.data == {"entryScope": "admin"}
+        assert db.scalar(select(AuthSession)) is not None
+
+
+def test_mock_admin_bootstrap_does_not_override_later_local_revocation(auth):
+    """Mock 名单仅负责首次建号，已有账号的本地撤权不会在重新登录时被覆盖。"""
+    a, _, iam, engine = auth
+    login(a, iam, subject="mock-admin")
+    with Session(engine) as db:
+        user = db.scalar(select(User).where(User.iam_subject == "mock-admin"))
+        user.role = UserRole.USER
+        db.commit()
+    login(a, iam, subject="mock-admin")
+    assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is False
 
 
 def test_redis_state_consumption_is_atomic(auth):

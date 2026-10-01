@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir --constraint requirements-dev.lock . \
 COPY alembic.ini alembic.datasets.ini ./
 COPY migrations/ ./migrations/
 COPY config/ ./config/
-COPY scripts/verify_services.py ./scripts/verify_services.py
+COPY scripts/verify_services.py scripts/set_user_role.py ./scripts/
 # 发布包可能在 umask=077 的目录解压，显式保证非 root 进程可读运行文件。
 RUN chmod -R a+rX /app
 USER app

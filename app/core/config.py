@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
+from pydantic import AnyHttpUrl, Field, IPvAnyNetwork, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -136,8 +136,9 @@ class Settings(BaseSettings):
     conversation_attachment_dir: Path = (
         Path(__file__).resolve().parents[2] / ".runtime" / "attachments"
     )
-    # 正式模式必须由已验证的外部协议实现注入，不自动使用模拟客户端。
+    # 正式模式自动装配集团 CAS 客户端，与模拟认证分别配置。
     auth_mode: Literal["disabled", "mock", "iam"] = "disabled"
+    auth_identity_sync_enabled: bool = False
     auth_public_origin: AnyHttpUrl = "http://127.0.0.1:18880"
     auth_callback_origin: AnyHttpUrl | None = None
     auth_mock_iam_url: AnyHttpUrl = "http://127.0.0.1:18002"
@@ -146,8 +147,11 @@ class Settings(BaseSettings):
     auth_mock_iam_internal_url: AnyHttpUrl | None = None
     auth_mock_secret: SecretStr | None = None
     auth_iam_origin: AnyHttpUrl | None = None
-    auth_iam_app_id: str | None = None
-    auth_iam_admin_role_code: str | None = None
+    auth_iam_app_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    auth_iam_admin_role_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    auth_iam_timeout: float = Field(default=5, gt=0, le=30)
+    # 集团不提供推送签名，仅接受可信代理还原的连接来源；空列表拒绝全部推送。
+    auth_iam_sync_allowed_networks: list[IPvAnyNetwork] = Field(default_factory=list)
     auth_session_secret: SecretStr | None = None
     auth_cookie_secure: bool = False
     auth_session_ttl: int = Field(default=28800, ge=60, le=86400)
@@ -249,14 +253,19 @@ class Settings(BaseSettings):
                 not self.auth_iam_origin
                 or not self.auth_callback_origin
                 or not self.auth_iam_app_id
-                or not self.auth_iam_admin_role_code
                 or not self.auth_session_secret
                 or len(self.auth_session_secret.get_secret_value()) < 32
             ):
                 raise ValueError(
                     "IAM authentication requires IAM origin, callback origin, app ID, "
-                    "admin role and session secret"
+                    "and session secret"
                 )
+            if (
+                self.auth_mode == "iam"
+                and self.auth_identity_sync_enabled
+                and not self.auth_iam_admin_role_code
+            ):
+                raise ValueError("IAM identity sync requires AUTH_IAM_ADMIN_ROLE_CODE")
             if (
                 self.auth_mode == "iam"
                 and self.app_env == "production"

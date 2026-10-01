@@ -1,13 +1,12 @@
-"""集团 IAM 协议边界；未确认签名规则前不得提供默认放行实现。"""
+"""集团与模拟 CAS 共用的客户端契约。"""
 
-from collections.abc import Mapping
-from typing import Literal, Protocol
+from typing import Protocol
 
 from app.modules.common.auth.cas import Principal
 
 
 class CasClient(Protocol):
-    """CAS 客户端负责集团规定的验票签名和可信响应校验。"""
+    """CAS 客户端负责服务端验票、响应校验及登录和退出地址生成。"""
 
     def login_url(self, service: str, renew: bool = False) -> str:
         """浏览器登录地址必须携带预先绑定的原始回调地址。"""
@@ -23,17 +22,4 @@ class CasClient(Protocol):
 
     def close(self) -> None:
         """释放客户端连接。"""
-        ...
-
-
-class IamIngressVerifier(Protocol):
-    """在处理通知前认证原始请求；appId 和转发头不能单独证明来源。"""
-
-    def verify(
-        self,
-        purpose: Literal["logout", "sync"],
-        body: bytes,
-        headers: Mapping[str, str],
-    ) -> None:
-        """按甲方认可的规则验证签名或来源，失败时必须拒绝。"""
         ...

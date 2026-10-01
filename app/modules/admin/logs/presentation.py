@@ -7,6 +7,7 @@ from app.modules.admin.logs.schemas import SOURCE_LABELS
 from app.modules.common.system_logs import SystemLog
 
 EVENT_SUMMARIES = {
+    "auth_local_role_changed": "运维命令修改平台用户角色",
     "auth_login_failed": "登录校验失败",
     "auth_csrf_failed": "请求安全校验未通过",
     "identity_sync_applied": "身份同步请求已处理",

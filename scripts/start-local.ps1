@@ -3,7 +3,10 @@
     [ValidateRange(1, 65535)][int]$ApiPort = 18000,
     [ValidateRange(1, 32)][int]$Workers = 2,
     [ValidateRange(1, 65535)][int]$GatewayPort = 18880,
-    [ValidateRange(0, 65535)][int]$MockIamPort = 0
+    [ValidateRange(0, 65535)][int]$MockIamPort = 0,
+    [ValidateSet('127.0.0.1', '0.0.0.0')][string]$ListenHost = '127.0.0.1',
+    [ValidateRange(0, 65535)][int]$IamCallbackPort = 0,
+    [ValidateRange(0, 65535)][int]$IamSyncPort = 0
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -13,6 +16,12 @@ $gateway = Join-Path $gatewayRoot 'nginx.exe'
 if (!(Test-Path -LiteralPath $gateway)) { throw 'Nginx executable was not found' }
 $ports = @($ApiPort, $GatewayPort)
 if ($MockIamPort -gt 0) { $ports += $MockIamPort }
+if ($IamSyncPort -gt 0 -and $IamCallbackPort -eq 0) { throw 'IAM sync also requires the callback port' }
+if ($IamCallbackPort -gt 0) {
+    if ($MockIamPort -gt 0) { throw 'Mock IAM and real IAM ingress cannot be started together' }
+    $ports += $IamCallbackPort
+}
+if ($IamSyncPort -gt 0) { $ports += $IamSyncPort }
 if (($ports | Select-Object -Unique).Count -ne $ports.Count) { throw 'All ports must differ' }
 if (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in $ports }) {
     throw 'A requested port is occupied. Stop the recorded services or choose unused ports.'
@@ -25,12 +34,27 @@ $previousDirectory = $env:APPLICATIONS_IDENTITY_DIRECTORY
 Push-Location $projectRoot
 try {
     # 本地 Mock 登录配套明确标注的测试目录；已配置目录和正式身份模式不受影响。
-    $useMockDirectory = & $python -c "from app.core.config import Settings; s=Settings(); print(int(s.auth_mode == 'mock' and not s.applications_identity_directory))"
+    $authenticationJson = & $python -c "import json; from app.core.config import Settings; s=Settings(); print(json.dumps({'mode': s.auth_mode, 'syncEnabled': s.auth_identity_sync_enabled, 'useMockDirectory': s.auth_mode == 'mock' and not s.applications_identity_directory}))"
     if ($LASTEXITCODE -ne 0) { throw 'Identity configuration validation failed' }
-    if ($MockIamPort -gt 0 -and $useMockDirectory -eq '1') {
+    $authentication = $authenticationJson | ConvertFrom-Json
+    if (($authentication.mode -eq 'iam') -ne ($IamCallbackPort -gt 0)) {
+        throw 'AUTH_MODE=iam requires the callback port; other modes must not expose it'
+    }
+    if (($authentication.mode -eq 'iam' -and $authentication.syncEnabled) -ne ($IamSyncPort -gt 0)) {
+        throw 'The IAM sync port must only be configured when real identity sync is enabled'
+    }
+    if ($MockIamPort -gt 0 -and $authentication.mode -ne 'mock') {
+        throw 'Mock IAM requires AUTH_MODE=mock'
+    }
+    if ($MockIamPort -gt 0 -and $authentication.useMockDirectory) {
         $env:APPLICATIONS_IDENTITY_DIRECTORY = Join-Path $projectRoot 'deploy/mock-identity-directory.json'
     }
-    & $python -m scripts.render_nginx --nginx-root $gatewayRoot --api-port $ApiPort --port $GatewayPort
+    $gatewayArguments = @('-m', 'scripts.render_nginx', '--nginx-root', $gatewayRoot, '--api-port', $ApiPort, '--port', $GatewayPort, '--listen-host', $ListenHost)
+    if ($IamCallbackPort -gt 0) {
+        $gatewayArguments += @('--iam-callback-port', $IamCallbackPort)
+    }
+    if ($IamSyncPort -gt 0) { $gatewayArguments += @('--iam-sync-port', $IamSyncPort) }
+    & $python @gatewayArguments
     if ($LASTEXITCODE -ne 0) { throw 'Gateway configuration generation failed' }
     Push-Location $gatewayRoot
     try { & $gateway -t; if ($LASTEXITCODE -ne 0) { throw 'Nginx configuration validation failed' } }
@@ -45,7 +69,7 @@ try {
     # 一套 API 共用一个监听端口；Uvicorn 管理 worker，每个进程独立创建连接池。
     $roles += [PSCustomObject]@{
         name='api'
-        arguments=@('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',$ApiPort,'--workers',$Workers,'--no-access-log')
+        arguments=@('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',$ApiPort,'--workers',$Workers,'--proxy-headers','--forwarded-allow-ips','127.0.0.1','--no-access-log')
     }
     foreach ($role in $roles) {
         $process = Start-Process -FilePath $python -ArgumentList $role.arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime ($role.name + '.out.log')) -RedirectStandardError (Join-Path $runtime ($role.name + '.err.log')) -PassThru

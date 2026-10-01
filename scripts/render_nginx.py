@@ -25,8 +25,8 @@ def main() -> None:
     ):
         parser.error("Nginx workers must be auto or an integer between 1 and 256")
     ingress_ports = (args.iam_callback_port, args.iam_sync_port)
-    if (ingress_ports[0] is None) != (ingress_ports[1] is None):
-        parser.error("IAM callback and sync ports must be configured together")
+    if args.iam_sync_port is not None and args.iam_callback_port is None:
+        parser.error("IAM sync requires the callback port; SSO alone only needs callback")
     ports = [args.port, args.api_port, *(port for port in ingress_ports if port is not None)]
     if not all(1 <= port <= 65535 for port in ports):
         parser.error("Ports must be between 1 and 65535")
@@ -40,14 +40,17 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     template = (root / "deploy/nginx/nginx.conf.template").read_text(encoding="utf-8")
     ingress = ""
-    if args.iam_callback_port is not None:
-        ingress = (root / "deploy/nginx/iam-ingress.conf.template").read_text(encoding="utf-8")
+    for name, port in (("callback", args.iam_callback_port), ("sync", args.iam_sync_port)):
+        if port is None:
+            continue
+        server = (root / f"deploy/nginx/iam-{name}.conf.template").read_text(encoding="utf-8")
         for key, value in {
             "LISTEN_HOST": args.listen_host,
             "IAM_CALLBACK_PORT": args.iam_callback_port,
             "IAM_SYNC_PORT": args.iam_sync_port,
         }.items():
-            ingress = ingress.replace(f"@@{key}@@", str(value))
+            server = server.replace(f"@@{key}@@", str(value))
+        ingress += server + "\n"
     template = template.replace("@@IAM_INGRESS_SERVERS@@", ingress)
     for key, value in {
         "USER_DIST": args.user_dist.resolve().as_posix(),
