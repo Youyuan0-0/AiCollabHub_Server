@@ -3,12 +3,13 @@
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator
 
 from app.modules.common.interaction_schemas import FavoriteInput as FavoriteDataset
 from app.modules.common.interaction_schemas import RatingInput as RateDataset
 from app.modules.common.schema_validation import parse_schema
 from app.modules.common.schemas import Payload
+from app.modules.datasets.classification import classification_label
 
 Label = Annotated[str, Field(min_length=1, max_length=100)]
 # 排行榜仅接受平台实际维护的两个累计指标，不允许客户端指定任意排序字段。
@@ -35,6 +36,7 @@ class DatasetInput(Payload):
     language: list[Label] = Field(default_factory=list, max_length=20)
     data_format: list[Label] = Field(default_factory=list, max_length=20)
     data_level: Literal["", "核心数据", "重要数据", "一般数据"] = ""
+    security_level: Literal["public", "internal"] = "internal"
     time_coverage: str = Field(default="", max_length=300)
     spatial_coverage: str = Field(default="", max_length=300)
     update_frequency: str = Field(default="", max_length=100)
@@ -45,11 +47,30 @@ class DatasetInput(Payload):
 
     @field_validator("tags", "tasks", "data_application", "data_shape", "language", "data_format")
     @classmethod
-    def unique_labels(cls, values: list[str]) -> list[str]:
+    def unique_labels(cls, values: list[str], info: ValidationInfo) -> list[str]:
         """去除重复标签和首尾空白，拒绝空白标签以避免不可见的筛选项。"""
         if any(not value.strip() for value in values):
             raise ValueError("标签不能只包含空白")
-        return list(dict.fromkeys(value.strip() for value in values))
+        field = {"data_application": "dataApplication", "data_shape": "dataShape"}.get(
+            info.field_name, ""
+        )
+        return list(dict.fromkeys(classification_label(field, value.strip()) for value in values))
+
+    @field_validator("ai_purpose")
+    @classmethod
+    def normalize_purpose(cls, value: str) -> str:
+        """兼容历史用途名称，微调归入后训练，知识库历史用途不强制改写。"""
+        return classification_label("aiPurpose", value)
+
+    @field_validator("security_level", mode="before")
+    @classmethod
+    def normalize_security(cls, value: object) -> object:
+        """密级只接收公开和内部，兼容中文输入但拒绝涉密级别。"""
+        return (
+            {"公开": "public", "内部": "internal"}.get(value, value)
+            if isinstance(value, str)
+            else value
+        )
 
 
 class SaveDataset(Payload):

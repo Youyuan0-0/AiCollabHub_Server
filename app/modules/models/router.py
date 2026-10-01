@@ -42,6 +42,8 @@ def resources(request: Request, query: Annotated[CatalogQuery, Query()]) -> dict
                 item.get("summary", ""),
                 item.get("owner", ""),
                 item.get("parameters", ""),
+                item.get("taskType", ""),
+                item.get("framework", ""),
                 *item.get("tags", []),
                 *item.get("submodels", []),
             ]
