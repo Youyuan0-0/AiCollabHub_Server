@@ -16,6 +16,8 @@
 | 主动退出 IAM | 前缀 + `/logout` |
 | 后续身份同步角色编码 | `platform_admin`（本期不使用） |
 
+2026-10-01 已确认平台内网 IP 为 `20.1.4.240`，域名为 `fdj-smartweb.aecc.cn`，网站访问端口为 HTTP 80。正式访问统一使用域名，内网 DNS 需将其解析到上述 IP；不要交替使用 IP 和域名发起登录，否则浏览器无法复用同一主机的 Cookie。HTTPS 是否启用仍待正式对接确认。
+
 登录链接只在显式重新认证时带 `renew=true`，普通登录省略此参数。验票发送 `ticket`、原始 `service`、`format=json`，兼容文档 XML 响应；仅使用 `attributes.workNo` 关联用户，不从顶层 `user` 或验票中的角色推断权限。HTTP 异常、超时、超大响应、缺少用户编号及非法报文都会拒绝建立会话，一次性票据不自动重试。
 
 浏览器沿 IAM 重定向经 8086 返回本平台。8086 是入站 Nginx 监听，无需再运行一套 FastAPI。部署时登记以下确切路径：
@@ -23,21 +25,43 @@
 | 方向 | 地址示意 | 用途 |
 | --- | --- | --- |
 | 平台/浏览器 → IAM | `http://hfidaas-sso.aecc.cn/authn-api/v5/cas/796872537136820224/...` | 登录跳转、服务端验票、主动退出 IAM |
-| 浏览器 → 平台 8086 | `http://<平台主机>:8086/api/v1/auth/callback` | 返回带 ticket 的 CAS 登录回调 |
+| 浏览器 → 平台 8086 | `http://fdj-smartweb.aecc.cn:8086/api/v1/auth/callback` | 返回带 ticket 的 CAS 登录回调 |
+
+当前登记和部署使用以下地址：
+
+| 用途 | 地址 |
+| --- | --- |
+| 用户端 | `http://fdj-smartweb.aecc.cn/` |
+| 管理端 | `http://fdj-smartweb.aecc.cn/admin/` |
+| CAS service 回调基址 | `http://fdj-smartweb.aecc.cn:8086/api/v1/auth/callback` |
+
+报备端口中的“单点登录服务访问平台 8086”需要补充用户终端来源：CAS 登录由 IAM 返回重定向，实际向 8086 发请求的是用户浏览器，只允许 IAM 服务器 IP 无法完成回调。用户终端还需能访问 IAM HTTP 80 登录页面，后端也需能访问 IAM HTTP 80 验票接口。本期未接收 IAM 单点登出通知。
+
+单服务器正式部署的端口保持原报备分工：
+
+| 端口 | 当前用途与访问范围 |
+| --- | --- |
+| 80 | 用户端、管理端统一网站入口，允许授权用户终端访问 |
+| 443 | 仅在后续启用 HTTPS 时配置 |
+| 8086 | CAS 浏览器回调入口，允许授权用户终端访问；仅代理回调精确路径 |
+| 8085 | 本期不启用身份同步，不监听；后续启用时仅允许实际 IAM 推送来源 |
+| 5432、6379、9000 | PostgreSQL、Redis、MinIO API，仅本机后端访问 |
+| 9001 | MinIO 控制台，仅本机运维访问 |
+| 18000 | 后端 API，仅本机 Nginx 转发，不对外开放 |
 
 前端站点和 8086 回调必须使用**同一主机名和协议**（端口可以不同），浏览器才能携带绑定的临时登录 Cookie，并在回调后复用共享会话。IAM 登记的 `service` 要允许当前 `/callback?state=...&scope=...` 参数，验证票据时原样传回。回调成功和失败均跳回 `AUTH_PUBLIC_ORIGIN`，不在 8086 加载前端页面。8086 只代理回调精确路径，其余路径 404；网站端口不转发 `/api/v1/auth/iam/`。示例生成参数：
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.render_nginx --nginx-root <Nginx根目录> --user-dist <用户端dist> --admin-dist <管理端dist> --listen-host 0.0.0.0 --iam-callback-port 8086
+.\.venv\Scripts\python.exe -m scripts.render_nginx --nginx-root <Nginx根目录> --user-dist <用户端dist> --admin-dist <管理端dist> --listen-host 0.0.0.0 --port 80 --api-port 18000 --iam-callback-port 8086
 ```
 
-内网部署时在现有 `.env` 中设置以下参数；平台地址由部署人员补齐，不填写开发公网 IP：
+内网部署时在现有 `.env` 中设置以下参数：
 
 ```dotenv
 AUTH_MODE=iam
 AUTH_IDENTITY_SYNC_ENABLED=false
-AUTH_PUBLIC_ORIGIN=http://<平台内网主机>:<网站端口>
-AUTH_CALLBACK_ORIGIN=http://<同一平台内网主机>:8086
+AUTH_PUBLIC_ORIGIN=http://fdj-smartweb.aecc.cn
+AUTH_CALLBACK_ORIGIN=http://fdj-smartweb.aecc.cn:8086
 AUTH_IAM_ORIGIN=http://hfidaas-sso.aecc.cn
 AUTH_IAM_APP_ID=796872537136820224
 AUTH_IAM_TIMEOUT=5
@@ -49,7 +73,7 @@ AUTH_COOKIE_SECURE=false
 
 使用同机 Nginx 时，后端只绑定 `127.0.0.1`，Uvicorn 配置 `--proxy-headers --forwarded-allow-ips 127.0.0.1`，由可信代理还原实际连接来源；不要使用 `--forwarded-allow-ips '*'`。
 
-Windows 启动脚本使用 `-ListenHost 0.0.0.0 -IamCallbackPort 8086`，不传 `-IamSyncPort`，与 `-MockIamPort` 互斥。生成配置后执行 `nginx -t`，8086 需允许用户浏览器访问。`deploy/cloud/compose.yaml` 仍是模拟 IAM 开发环境配置，真实部署使用这里的独立入口和可信代理配置，不能直接沿用其模拟 IAM 依赖。
+Windows 启动脚本使用 `-ListenHost 0.0.0.0 -GatewayPort 80 -ApiPort 18000 -IamCallbackPort 8086`，不传 `-IamSyncPort`，与 `-MockIamPort` 互斥。生成配置后执行 `nginx -t`，8086 需允许用户浏览器访问。`deploy/cloud/compose.yaml` 仍是模拟 IAM 开发环境配置，真实部署使用这里的独立入口和可信代理配置，不能直接沿用其模拟 IAM 依赖。
 
 ## 首次登录与管理员设置
 
