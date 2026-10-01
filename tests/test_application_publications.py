@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from minio import Minio
 from redis import Redis
 from sqlalchemy import Engine
+from test_knowledge import knowledge_scores
 
 from app.core.config import Settings
 from app.main import create_app
@@ -28,7 +29,12 @@ def client(monkeypatch):
         ).json()
         path = f"/api/v1/admin/knowledge-bases/{base['id']}"
         approved = client.post(
-            path + "/review", json={"revision": base["revision"], "decision": "approved"}
+            path + "/review",
+            json={
+                "revision": base["revision"],
+                "decision": "approved",
+                "scores": knowledge_scores(),
+            },
         )
         assert approved.status_code == 200, approved.text
         shared = client.put(

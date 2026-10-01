@@ -19,7 +19,7 @@ from app.core.system_logging import SystemLogWriter, capture_system_logs
 from app.db.base import Base
 from app.db.session import SessionDependency, create_db_engine
 from app.main import create_app
-from app.modules.common.auth.models import OperationLog, User
+from app.modules.common.auth.models import OperationAction, OperationLog, User
 from app.modules.common.system_logs import SystemLog
 
 logger = logging.getLogger("app.modules.common.logging_test")
@@ -54,11 +54,20 @@ def test_critical_events_use_error_level_without_losing_evidence(log_engine):
         assert records[-1].event == "critical_probe"
 
 
-def test_auth_failures_and_sync_conflicts_are_persisted_after_rollback(auth):
+def test_admin_denial_and_sync_conflicts_are_persisted(auth):
     a, _, iam, engine = auth
     denied = login(a, iam, scope="admin")
+    assert "admin_not_allowed" in denied.headers["location"]
     with Session(engine) as session:
-        assert session.scalar(select(OperationLog)) is None
+        operation = session.scalar(
+            select(OperationLog).where(
+                OperationLog.request_id == UUID(denied.headers["X-Request-ID"])
+            )
+        )
+        assert operation.action == OperationAction.LOGIN
+        assert operation.data == {"entryScope": "admin"}
+    assert a.get("/api/v1/auth/session?scope=user").status_code == 200
+    assert a.get("/api/v1/auth/session?scope=admin").status_code == 403
     applied = push(a, batch("logging-user", "active", 100))
     conflict = push(a, batch("logging-user", "disabled", 100))
     assert applied.status_code == 200 and conflict.status_code == 409
