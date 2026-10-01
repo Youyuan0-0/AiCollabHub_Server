@@ -1,6 +1,7 @@
 import hmac
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import unquote
 from uuid import UUID
 
 from fastapi import HTTPException, Request
@@ -108,6 +109,10 @@ def authenticated_session(db: Session, request: Request, scope: str) -> tuple[Au
         raise HTTPException(401, "account_unavailable")
     if value.revoked_at is not None or value.expires_at <= now():
         raise HTTPException(401, "authentication_required")
+    expected_user = request.headers.get("x-expected-user")
+    if expected_user is not None and unquote(expected_user) != value.user.iam_subject:
+        # 只增加约束，不授予身份；阻止 iframe 在 Cookie 换人后继续以另一账号操作。
+        raise HTTPException(409, "identity_mismatch")
     if scope == "admin" and not can_access_admin(value.user):
         raise HTTPException(403, "admin_not_allowed")
     return value, raw
