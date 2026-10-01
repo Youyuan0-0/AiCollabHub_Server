@@ -232,6 +232,7 @@ def test_exact_tables_and_chinese_comments(connection):
         "announcements",
         "knowledge_documents",
         "knowledge_document_reviews",
+        "toolchain_catalog_snapshots",
     }
     for _, name, prefix in MODULES:
         expected.update({name, f"{prefix}_publications", f"{prefix}_versions"})
@@ -286,7 +287,7 @@ def test_needs_changes_migration_roundtrip_and_history_guard(connection):
     with rejected(connection):
         command.downgrade(config, "20260921_04_knowledge_external")
     assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == (
-        "20260922_01_review_needs_changes"
+        "20261001_01_toolchain_catalog"
     )
 
 

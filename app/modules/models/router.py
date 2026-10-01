@@ -13,7 +13,7 @@ from app.modules.common.downloads import complete_download
 from app.modules.common.identity import Actor, current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery, Payload
-from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.configuration import module_entry_url, module_settings
 from app.modules.common.toolchain.contracts import authorize
 from app.modules.models.schemas import SaveModel, validate_model
 from app.modules.models.workspace import model_workspace, public_model
@@ -133,12 +133,13 @@ def download(identifier: str, request: Request) -> dict:
 def defaults(request: Request) -> dict:
     """带出可信单位、联系人及模型工具链独立接入状态。"""
     actor = current_actor(request)
-    settings = module_settings(request.app.state.settings, "models")
+    settings = module_settings(request.app.state.settings, "models", "aliyun")
     return {
         **publication_defaults(request, actor),
         "toolchainMode": settings.toolchain_mode,
+        "toolchainProvider": settings.toolchain_provider,
         "toolchainAvailable": settings.toolchain_mode != "disabled",
-        "toolchainUrl": str(request.app.state.settings.toolchain_model_entry_url or ""),
+        "toolchainUrl": module_entry_url(request.app.state.settings, "models", "aliyun"),
     }
 
 
@@ -185,7 +186,7 @@ def save_model(payload: SaveModel, request: Request, identifier: str | None = No
 def model_toolchain_actor(request: Request) -> Actor:
     """按模型库独立连接配置检查发布身份及供应方账号授权。"""
     actor = current_actor(request)
-    authorize(module_settings(request.app.state.settings, "models"), actor)
+    authorize(module_settings(request.app.state.settings, "models", "aliyun"), actor)
     return actor
 
 
@@ -205,10 +206,10 @@ def update(identifier: str, payload: SaveModel, request: Request) -> dict:
 def toolchain(request: Request) -> dict:
     """读取已启用的模型成果；真实服务失败时不回退模拟目录。"""
     model_toolchain_actor(request)
-    settings = module_settings(request.app.state.settings, "models")
+    settings = module_settings(request.app.state.settings, "models", "aliyun")
     return {
         "mode": settings.toolchain_mode,
-        "entryUrl": str(request.app.state.settings.toolchain_model_entry_url or ""),
+        "entryUrl": module_entry_url(request.app.state.settings, "models", "aliyun"),
         "items": request.app.state.model_provider.list_models(),
     }
 

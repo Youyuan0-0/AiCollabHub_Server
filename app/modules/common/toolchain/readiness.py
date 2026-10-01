@@ -6,7 +6,9 @@ from app.core.config import Settings
 from app.modules.common.toolchain.configuration_schemas import ConfigurationDocument
 
 
-def configuration_readiness(document: ConfigurationDocument, baseline: Settings) -> dict:
+def configuration_readiness(
+    document: ConfigurationDocument, baseline: Settings, provider: str = "aliyun"
+) -> dict:
     """列出各模块的实际调用和缺项，只返回说明，不返回密钥或发起外部写入。"""
     config = document.configuration
     credentials = document.credentials
@@ -15,12 +17,30 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
         return {"code": code, "label": label, "status": status, "detail": detail}
 
     def connection(module: str, label: str, detail: str) -> dict:
-        current = getattr(config, module).connection
+        current = (
+            config.huawei[module].connection
+            if provider == "huawei"
+            else getattr(config, module).connection
+        )
         if current.mode != "live":
             return item(
                 module + "-connection", label, "missing", "当前为模拟接口或未启用真实接口。"
             )
         missing = []
+        if current.provider == "huawei":
+            for value, name in (
+                (current.url, "服务地址"),
+                (current.allowed_subjects, "授权账号"),
+                (credentials.get(module + "ApiKey"), "API Key"),
+            ):
+                if not value:
+                    missing.append(name)
+            return item(
+                module + "-connection",
+                label,
+                "missing" if missing else "configured",
+                "缺少：" + "、".join(missing) if missing else "华为 API Key 查询连接已配置。",
+            )
         for value, name in (
             (current.url, "服务地址"),
             (
@@ -49,6 +69,32 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
             if getattr(config, module).entry_url
             else "请填写供应方交付的工作台页面地址。",
         )
+
+    if provider == "huawei":
+        return {
+            module: {
+                "configurationComplete": current.mode == "live",
+                "checks": [
+                    connection(module, "外部资源目录查询", ""),
+                    item(
+                        module + "-polling",
+                        "目录定期查询",
+                        "configured",
+                        f"每 {current.poll_interval} 秒查询一次。"
+                        if current.polling_enabled
+                        else "定期查询已关闭，可手动刷新。",
+                    ),
+                    item(
+                        module + "-scope",
+                        "当前接入范围",
+                        "platform",
+                        "智能体和数据集可导入平台草稿；模型提供者和知识库支持外部目录查询。",
+                    ),
+                ],
+            }
+            for module, entry in config.huawei.items()
+            for current in (entry.connection,)
+        }
 
     applications = [
         workbench("applications"),
@@ -260,6 +306,13 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
             "模型目录接口不提供推理结果；运行服务和训练任务状态须分别对接。",
         ),
     ]
+    rows_by_module = {
+        "applications": applications,
+        "datasets": datasets,
+        "knowledge": knowledge,
+        "tools": tools,
+        "models": models,
+    }
     return {
         module: {
             "configurationComplete": all(
@@ -267,11 +320,5 @@ def configuration_readiness(document: ConfigurationDocument, baseline: Settings)
             ),
             "checks": rows,
         }
-        for module, rows in (
-            ("applications", applications),
-            ("datasets", datasets),
-            ("knowledge", knowledge),
-            ("tools", tools),
-            ("models", models),
-        )
+        for module, rows in rows_by_module.items()
     }

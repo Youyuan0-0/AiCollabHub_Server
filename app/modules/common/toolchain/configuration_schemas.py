@@ -10,10 +10,11 @@ from app.modules.common.toolchain.network import http_options
 from app.modules.common.toolchain.parameters import CHUNK_PARAMETERS, parameter_references
 
 MODULE_NAMES = ("applications", "datasets", "knowledge", "tools", "models")
+CatalogModule = Literal["applications", "datasets", "knowledge", "models"]
 CREDENTIAL_NAMES = tuple(
     f"{module}{suffix}"
     for module in MODULE_NAMES
-    for suffix in ("AccessKeyId", "AccessKeySecret", "AppKey")
+    for suffix in ("AccessKeyId", "AccessKeySecret", "AppKey", "ApiKey")
 ) + ("appKey", "marketAdminToken", "knowledgeStorageAccessKey", "knowledgeStorageSecretKey")
 
 
@@ -61,14 +62,17 @@ class NetworkConfiguration(StrictPayload):
 
 
 class PopConfiguration(NetworkConfiguration):
-    """各模块复用同一字段结构，各自保存独立的 POP 连接取值。"""
+    """各模块独立选择供应方；旧配置默认沿用阿里 POP 连接。"""
 
+    provider: Literal["aliyun", "huawei"] = "aliyun"
     mode: Literal["disabled", "mock", "live"] = "disabled"
     url: AnyHttpUrl | None = None
     workspace: str = Field(default="", max_length=200)
     region: str = Field(default="", max_length=100)
     timeout: float = Field(default=30, gt=0, le=120)
     allowed_subjects: list[str] = Field(default_factory=list, max_length=500)
+    polling_enabled: bool = True
+    poll_interval: int = Field(default=300, ge=30, le=86400)
 
     @field_validator("url")
     @classmethod
@@ -345,6 +349,21 @@ class ModelConnection(DatasetConnection):
     """AI Studio 模型仓库及版本使用独立 POP 连接。"""
 
 
+class HuaweiConnection(DatasetConnection):
+    """华为查询连接和工作台独立保存，不覆盖阿里运行或管理配置。"""
+
+    connection: PopConfiguration = Field(
+        default_factory=lambda: PopConfiguration(provider="huawei")
+    )
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> Self:
+        """固定连接所属供应方，避免将阿里凭据送入华为客户端。"""
+        if self.connection.provider != "huawei":
+            raise ValueError("华为连接的供应方必须为 huawei")
+        return self
+
+
 class ToolchainConfiguration(StrictPayload):
     """按模块保存接入配置，保留各自支持的连接能力。"""
 
@@ -353,6 +372,27 @@ class ToolchainConfiguration(StrictPayload):
     knowledge: KnowledgeConnection = Field(default_factory=KnowledgeConnection)
     tools: ToolConnection = Field(default_factory=ToolConnection)
     models: ModelConnection = Field(default_factory=ModelConnection)
+    huawei: dict[CatalogModule, HuaweiConnection] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def separate_provider_connections(self) -> Self:
+        """兼容此前单供应方文件；旧华为配置迁入独立连接，读取不改写磁盘。"""
+        for module in ("applications", "datasets", "knowledge", "models"):
+            current = getattr(self, module)
+            if current.connection.provider == "huawei":
+                if module in self.huawei and self.huawei[module].connection.mode != "disabled":
+                    raise ValueError("同一模块不能同时提供两份华为连接")
+                self.huawei[module] = HuaweiConnection(
+                    connection=current.connection,
+                    entry_url=getattr(current, "entry_url", None),
+                )
+                current.connection = PopConfiguration()
+                if hasattr(current, "entry_url"):
+                    current.entry_url = None
+            self.huawei.setdefault(module, HuaweiConnection())
+        if self.tools.connection.provider != "aliyun":
+            raise ValueError("当前华为文档未提供 AI 工具接口")
+        return self
 
 
 class SaveToolchainConfiguration(StrictPayload):
@@ -425,6 +465,19 @@ class ConfigurationDocument(StrictPayload):
             ("models", "模型库"),
         ):
             connection = getattr(self.configuration, module).connection
+            huawei = self.configuration.huawei.get(module)
+            if (
+                huawei
+                and huawei.connection.mode == "live"
+                and not all(
+                    (
+                        huawei.connection.url,
+                        huawei.connection.allowed_subjects,
+                        self.credentials.get(module + "ApiKey"),
+                    )
+                )
+            ):
+                raise ValueError(label + "的华为接口需要服务地址、API Key 和授权账号标识")
             location = connection.workspace if module != "models" else connection.region
             if connection.mode == "live" and not all(
                 (
@@ -456,7 +509,8 @@ class ConfigurationDocument(StrictPayload):
         ):
             raise ValueError("知识库专用存储需要地址、AccessKey 和 SecretKey")
         if (
-            self.configuration.knowledge.ownership == "organization"
+            self.configuration.knowledge.connection.provider == "aliyun"
+            and self.configuration.knowledge.ownership == "organization"
             and not self.configuration.knowledge.tenant_bindings
         ):
             raise ValueError("组织知识库需要填写平台组织与 tenantId 的对应关系")

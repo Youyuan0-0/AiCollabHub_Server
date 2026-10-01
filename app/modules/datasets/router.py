@@ -10,7 +10,7 @@ from app.modules.common.downloads import complete_download
 from app.modules.common.identity import current_actor
 from app.modules.common.identity_directory import publication_defaults
 from app.modules.common.schemas import CatalogQuery
-from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.configuration import module_entry_url, module_settings
 from app.modules.datasets.schemas import (
     DatasetRankingMetric,
     FavoriteDataset,
@@ -154,10 +154,17 @@ def defaults(request: Request) -> dict:
     return {
         **publication_defaults(request, current_actor(request)),
         "storage": "database" if request.app.state.foundation is not None else "memory",
-        "toolchainAvailable": module_settings(request.app.state.settings, "datasets").toolchain_mode
+        "toolchainAvailable": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_mode
         != "disabled",
-        "toolchainMode": module_settings(request.app.state.settings, "datasets").toolchain_mode,
-        "toolchainUrl": str(request.app.state.settings.toolchain_dataset_entry_url or ""),
+        "toolchainMode": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_mode,
+        "toolchainProvider": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_provider,
+        "toolchainUrl": module_entry_url(request.app.state.settings, "datasets", "aliyun"),
     }
 
 

@@ -116,6 +116,14 @@ def create_app(
                 # 工具链复用已装配的业务仓储；启动失败和正常退出都先关闭客户端再释放连接池。
                 toolchain_clients = configure_toolchains(application)
                 cleanup.callback(toolchain_clients.close)
+                catalogs = application.state.toolchain_catalogs
+                catalog_maintenance = asyncio.create_task(catalogs.maintain())
+
+                async def stop_catalogs() -> None:
+                    catalogs.stop()
+                    await catalog_maintenance
+
+                cleanup.push_async_callback(stop_catalogs)
                 if (
                     settings.app_env != "production"
                     and settings.applications_runtime == "agent_dev"
@@ -124,7 +132,7 @@ def create_app(
 
                     service = application.state.application_service
                     service.provider = AgentDevProvider(
-                        service.provider, module_settings(settings, "applications")
+                        service.provider, module_settings(settings, "applications", "aliyun")
                     )
                     service.workflows.provider = service.provider
                 application.state.cas_client = cas_client

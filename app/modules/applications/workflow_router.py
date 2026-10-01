@@ -23,7 +23,7 @@ from app.modules.applications.workflow_schemas import (
 from app.modules.common.downloads import complete_download
 from app.modules.common.identity import ACTORS, DIRECTORY, Actor, current_actor, require_admin
 from app.modules.common.identity_directory import visible_directory
-from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.configuration import module_entry_url, module_settings
 from app.modules.common.toolchain.contracts import authorize
 
 router = APIRouter(tags=["application workflows (development)"])
@@ -98,9 +98,9 @@ def presentation(request: Request) -> dict:
     """读取应用目录公开的展示策略。"""
     result = application_service(request).workflows.policy()
     settings = request.app.state.settings
-    result["toolchainMode"] = module_settings(settings, "applications").toolchain_mode
-    if settings.toolchain_application_entry_url:
-        result["toolchainUrl"] = str(settings.toolchain_application_entry_url)
+    result["toolchainMode"] = module_settings(settings, "applications", "aliyun").toolchain_mode
+    result["toolchainProvider"] = "aliyun"
+    result["toolchainUrl"] = module_entry_url(settings, "applications", "aliyun")
     return result
 
 
@@ -174,7 +174,7 @@ def read_notification(notification_id: str, request: Request) -> dict:
 def toolchain_actor(request: Request) -> Actor:
     """统一校验场景工具链配置及发布者授权，禁用时不回退到旧演示供应方。"""
     actor = current_actor(request)
-    authorize(module_settings(request.app.state.settings, "applications"), actor)
+    authorize(module_settings(request.app.state.settings, "applications", "aliyun"), actor)
     return actor
 
 
@@ -197,7 +197,8 @@ def syncs(request: Request) -> list[dict]:
 @router.post("/application-toolchain/syncs", response_model=None)
 def sync(payload: SyncInput, request: Request) -> dict:
     """导入工具链资源的指定版本并记录同步结果。"""
-    return application_service(request).workflows.sync(toolchain_actor(request), payload)
+    actor = toolchain_actor(request)
+    return application_service(request).workflows.sync(actor, payload)
 
 
 @router.get("/admin/application-policy", response_model=None)
