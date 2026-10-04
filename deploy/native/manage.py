@@ -10,6 +10,8 @@ import tarfile
 from datetime import datetime
 from pathlib import Path
 
+from native_config import effective_environment
+
 ROOT = Path("/opt/aicollabhub")
 CONFIG = Path("/etc/aicollabhub")
 SERVICES = ["aih-" + name for name in ("postgres", "redis", "minio", "iam", "api", "web")]
@@ -52,6 +54,14 @@ def backup(config: dict, *, keep_stopped: bool = False) -> Path:
             )
             for name in ("current", "manage.sh", "manage.py", "check.py"):
                 archive.add(ROOT / name, arcname="opt/aicollabhub/" + name, recursive=False)
+            if (ROOT / "native_config.py").exists():
+                archive.add(ROOT / "native_config.py", arcname="opt/aicollabhub/native_config.py")
+            if (ROOT / "loadtest.sh").exists():
+                archive.add(ROOT / "loadtest.sh", arcname="opt/aicollabhub/loadtest.sh")
+            if (ROOT / "diagnose.sh").exists():
+                archive.add(ROOT / "diagnose.sh", arcname="opt/aicollabhub/diagnose.sh")
+            if (ROOT / "diagnostics").exists():
+                archive.add(ROOT / "diagnostics", arcname="opt/aicollabhub/diagnostics")
             logrotate = Path("/etc/logrotate.d/aih-native")
             if logrotate.exists():
                 archive.add(logrotate, arcname=str(logrotate).lstrip("/"))
@@ -77,16 +87,45 @@ def backup(config: dict, *, keep_stopped: bool = False) -> Path:
 def main() -> None:
     """使用明确子命令操作本套服务，不影响系统已有的其他服务。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["start", "stop", "restart", "status", "check", "backup"])
+    parser.add_argument(
+        "action", choices=["start", "stop", "restart", "status", "check", "backup", "set-role"]
+    )
+    parser.add_argument("--work-no", help="已登录用户的真实 IAM workNo")
+    parser.add_argument("--role", choices=["user", "admin"])
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise RuntimeError("请使用 sudo /opt/aicollabhub/manage.sh " + args.action)
     os.umask(0o077)
     config = json.loads((CONFIG / "site.json").read_text())
+    app_env = effective_environment(CONFIG)
+    active_services = (
+        SERVICES
+        if app_env["AUTH_MODE"] == "mock"
+        else [item for item in SERVICES if item != "aih-iam"]
+    )
+    if args.action == "set-role":
+        if not args.work_no or not args.role:
+            parser.error("set-role 需同时填写 --work-no 和 --role")
+        os.environ.update(app_env)
+        os.chdir(ROOT / "current/backend")
+        os.execv(
+            sys.executable,
+            [
+                sys.executable,
+                "-m",
+                "scripts.set_user_role",
+                "--work-no",
+                args.work_no,
+                "--role",
+                args.role,
+            ],
+        )
     if args.action == "check":
         os.execv(sys.executable, [sys.executable, str(ROOT / "check.py")])
     if args.action == "status":
-        subprocess.run(["systemctl", "--no-pager", "--full", "status", *SERVICES], check=True)
+        subprocess.run(
+            ["systemctl", "--no-pager", "--full", "status", *active_services], check=True
+        )
         return
     with Path("/run/lock/aih-native-install.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -95,9 +134,9 @@ def main() -> None:
         elif args.action in ("stop", "restart"):
             subprocess.run(["systemctl", "stop", *reversed(SERVICES)], check=True)
             if args.action == "restart":
-                subprocess.run(["systemctl", "start", *SERVICES], check=True)
+                subprocess.run(["systemctl", "start", *active_services], check=True)
         else:
-            subprocess.run(["systemctl", "start", *SERVICES], check=True)
+            subprocess.run(["systemctl", "start", *active_services], check=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "AUTH_MODE": "iam",
+  "AUTH_IDENTITY_SYNC_ENABLED": "false",
+  "AUTH_PUBLIC_ORIGIN": "http://fdj-smartweb.aecc.cn",
+  "AUTH_CALLBACK_ORIGIN": "http://fdj-smartweb.aecc.cn:8086",
+  "AUTH_IAM_ORIGIN": "http://hfidaas-sso.aecc.cn",
+  "AUTH_IAM_APP_ID": "796872537136820224",
+  "AUTH_IAM_TIMEOUT": "5",
+  "AUTH_SESSION_SECRET": "",
+  "AUTH_COOKIE_SECURE": "false",
+  "AUTH_IAM_ADMIN_ROLE_CODE": "platform_admin",
+  "AUTH_IAM_SYNC_ALLOWED_NETWORKS": "[]",
+  "AUTH_IAM_SYNC_PORT": "8085"
+}

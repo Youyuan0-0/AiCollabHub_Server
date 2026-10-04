@@ -1,0 +1,6 @@
+{
+  "public_origin": "https://fdj-smartweb.aecc.cn",
+  "web_port": 80,
+  "web_extra_ports": [8086],
+  "tls_termination": "gateway"
+}

@@ -283,10 +283,14 @@ def test_needs_changes_migration_roundtrip_and_history_guard(connection):
     publication_id = pending(connection, MODULES[0], owner)
     review(connection, MODULES[0], publication_id, owner, "needs_changes", comment="补充说明")
     flush_constraints(connection)
+    # 后续迁移会推进 head；失败的降级必须保留尝试前的实际版本。
+    revision_before_downgrade = connection.exec_driver_sql(
+        "SELECT version_num FROM alembic_version"
+    ).scalar_one()
     with rejected(connection):
         command.downgrade(config, "20260921_04_knowledge_external")
     assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == (
-        "20260922_01_review_needs_changes"
+        revision_before_downgrade
     )
 
 

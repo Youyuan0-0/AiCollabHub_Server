@@ -1,102 +1,124 @@
 # 麒麟 V10 SP3 原生离线安装与更新
 
-本次使用 ZIP 交付，解压后直接得到安装文件。包含 Python 3.13.15、PostgreSQL 17.11、Redis 7.4.11、MinIO RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772、Nginx 1.30.5、全部 Python 运行依赖，以及最新服务端、用户端和管理端。目标机不需要 Docker、Node.js、编译器，也无需联网下载依赖。
+当前交付版本为 `20261004-native-r10`，包含首页票据兼容和离线认证诊断工具，不含压测工具；操作说明和验收记录独立交付，不放入 ZIP。复用已验证的 Python 3.13.15、PostgreSQL 17.11、Redis 7.4.11、MinIO 和 Nginx 1.30.5，包含三端代码及全部 Linux Python 依赖。服务器不需要 Docker、Node.js、编译器或外网下载。
 
-适用基线：麒麟高级服务器 V10 SP3 2403、x86_64、glibc 2.28 及以上、systemd。其他 CPU 架构、麒麟补丁版本或安全加固策略需另行验证；脚本不会关闭 SELinux 或替换系统 Python/glibc。
+适用麒麟高级服务器 V10 SP3 2403、x86_64、glibc >= 2.28、systemd。源码提交、工作区状态、运行时和升级来源记录在 `manifest.json`。仍为 `rehearsal/test` 联调环境，模型执行仍为 simulation；真实 IAM 不代表全部业务供应方已接入。
 
-## 测试库与正式库
+## 本次修复
 
-本包明确用于测试与部署演练：`profile=rehearsal`、`database_environment=test`，后端使用 `APP_ENV=test`，认证为模拟 IAM，模型执行为 simulation。
+- R10 在原生 Nginx 的 `/`、`/admin`、`/admin/` 收到带 `ticket` 的 GET 请求时，经 `/api/v1/auth/home-callback` 转交原回调。正常首页和其他业务路径保持原有处理；无需先加载前端 JavaScript。
+- 兼容入口仅转交唯一且格式有效的 `ticket`、`state`、`scope`，保留原有浏览器绑定、原始 service 验票及权限检查；参数异常显示明确错误，诊断报告增加“首页票据转交”步骤。以下 R8/R9 修复继续包含在包内。
+- 两端不再依赖 `AbortSignal.timeout/any/throwIfAborted/reason`，保留超时、取消和响应读取超时。构建语法以 Chrome/Edge 90 为基线，同时修复生产业务中的 `randomUUID`、数组 `at`、`structuredClone` 直接调用。
+- 平台会话检查失败与 IAM 验票失败分别提示，不再把浏览器异常统一显示为 IAM 服务不可用。
+- 支持网关终止 HTTPS、平台 HTTP 80/8086 同时提供完整网站，升级不会把这种拓扑的 8086 恢复成仅回调入口。
+- 升级以 systemd 实际读取的 `app.env` 中 AUTH 字段为准，优先于历史 `app-env.json`，保留已有会话密钥；显式 `--auth-config` 优先级最高。不执行配置中的 shell 内容。
+- 增加脱敏认证阶段日志和 Nginx 上游请求编号，不记录 ticket、Cookie、service 查询串或个人身份字段。
 
-- 全新安装：默认创建本机测试库 `aicollabhub_test`；可在模板的 `postgres_db` 中填写其他专属测试库名。
-- 更新旧环境：复用安装时保存的库名。R1 的本地测试库虽然叫 `aicollabhub`，更新也会保留这个名字、现有数据和凭据，不会换成空库。
-- 本包不连接开发机 `.env` 中的云端 15434 测试库，也不包含云端数据库备份、连接密码或本地 `.env`。
-- 后续改正式环境，需要独立完成正式库、真实 IAM、模型服务和业务验收；不能只把 `test` 字符串改成 `production`。本包会拒绝正式环境配置。
+本次无新增数据库迁移。R3 至 R10 的目标结构均为 `20260924_01_field_alignment`，保留库名、业务数据和凭据。R2 沿用包内已有迁移。唯一迁移入口是 `alembic -n resource_foundation upgrade head`；禁止删表、stamp 或运行旧迁移链。
 
-## 导入 ZIP
+## 现场拓扑
 
-先将 ZIP 和同名 `.sha256` 文件一起通过甲方允许的介质导入服务器。例如放到当前用户的 `~/packages` 目录，在麒麟终端执行：
+浏览器访问 `https://fdj-smartweb.aecc.cn`，统一身份认证网关终止 HTTPS，再以 HTTP 转发到 `20.1.4.240:8086`。平台 Nginx 的 80 和 8086 都提供用户端、管理端、静态资源和同源 API；后端仅监听 `127.0.0.1:18000`。
+
+对外登录回调为 `https://fdj-smartweb.aecc.cn/api/v1/auth/callback`。8086 是内部转发端口，不写进浏览器回调 URL。代码生成的 `service` 还包含 `state`、`scope` 参数，登录和验票必须使用原始同一个值。
+
+IAM 地址基于 `http://hfidaas-sso.aecc.cn/authn-api/v5/cas/796872537136820224`：`/login`、`/p3/serviceValidate`、`/logout`。本期身份同步关闭，8085 不监听。管理员由本地运维命令设置。
+
+## 现场 R6/R7/R8/R9 升级到 R10
+
+R6（`20261001-native-r6`）和 R7（`20261001-native-r7-no-loadtest`）已分别使用原始交付包建立旧版环境，完成直接升级到 R10 的隔离麒麟验收；无需先安装中间版本。测试覆盖实际 `app.env` 与旧 JSON 不一致、手工开放 8086、HTTPS 网关、数据和已有会话保留。记录见独立交付的 `R6、R7直接升级验收.md`；现场仍先执行下述预检。
+
+将 ZIP 导入服务器，例如 `~/packages`，不要覆盖旧包目录。校验清单 `SHA256SUMS` 已包含在 ZIP 内，覆盖全部 343 个包内文件，无需另外传送 `.sha256` 文件；解压后先校验，全部通过再升级：
 
 ```bash
 cd ~/packages
-sha256sum --check AiCollabHub-KylinV10SP3-x86_64-20260922-native-r2.zip.sha256
-unzip AiCollabHub-KylinV10SP3-x86_64-20260922-native-r2.zip -d ~/aih-packages
-cd ~/aih-packages/AiCollabHub-KylinV10SP3-x86_64-20260922-native-r2
+unzip AiCollabHub-KylinV10SP3-x86_64-20261004-native-r10.zip -d ~/aih-packages
+cd ~/aih-packages/AiCollabHub-KylinV10SP3-x86_64-20261004-native-r10
+sha256sum --check --strict SHA256SUMS
 ```
 
-`cd` 切换目录；`sha256sum` 检查传输是否损坏；`unzip` 解压，不会安装软件。以后发布编号以实际文件名为准。不要把新包解压覆盖到旧包目录。
+该命令应显示各文件 `OK` 并成功退出；出现文件缺失、校验失败或解压错误时，先重新传送完整升级包，不继续升级。
 
-如果没有 `unzip`，且系统有 Python 3，可替换解压命令为 `python3 -m zipfile -e 文件名.zip ~/aih-packages`。也可先在 Windows 解压，再完整导入解压后的目录；安装不依赖系统 Python。仍需刻光盘时，将解压后的全部文件刻录为数据光盘，再只读挂载使用。ZIP 本身不是启动镜像。
-
-## 更新已经安装的环境
-
-R2 支持从 `20260922-native-r1` 更新，或对已完成的 R2 重复更新。首先进入上面的解压目录，执行：
+没有 unzip 时可用 `python3 -m zipfile -e 文件.zip 目录`，或在 Windows 解压后完整导入。针对上述现场网关拓扑，进入新包目录后执行：
 
 ```bash
-sudo bash ./update.sh --check
-sudo bash ./update.sh
+sudo bash ./update.sh --network-config ./gateway.example.json --auth-config ./auth.gateway.example.json --check
+sudo bash ./update.sh --network-config ./gateway.example.json --auth-config ./auth.gateway.example.json
 sudo /opt/aicollabhub/manage.sh check
 ```
 
-第一条检查文件校验和、麒麟版本、原部署配置、原测试库及迁移版本，不停止服务。第二条读取 `/etc/aicollabhub/site.json`，自动备份后更新。第三条复核结果。更新不需要重新复制配置模板，否则可能误改旧库名。
+第一条仅预检，不停止服务；通过后执行第二条。安装器自动暂停服务、备份数据库/文件/缓存/凭据/配置/旧版本指针，更新后检查服务。备份位于数据目录同级的 `aicollabhub-backups`。
 
-更新过程：检查兼容性 → 暂停六个服务 → 备份数据库、文件、缓存、凭据和部署配置 → 离线部署新代码 → 迁移现有数据库 → 启动服务 → 验证网站与读写。网站会短暂停机。备份保存在数据目录同级的 `aicollabhub-backups`，例如 `/data/aicollabhub-backups`，同时输出 `.sha256`。
+网络模板只修改外部地址、网站监听端口和 TLS 位置，不能改库名、数据目录或内部服务端口。认证模板只明确启用 IAM、关闭同步、对齐 HTTPS 地址与 Secure Cookie；已保存的 IAM 地址、AppID、密钥继续复用。
 
-本次新增的数据库迁移为 `20260922_01_review_needs_changes`，在资源审核中增加“退回修改”结果；保留原有拒绝记录。使用的唯一迁移入口为 `alembic -n resource_foundation upgrade head`。不要运行旧链 `alembic upgrade head`，不要删除表或通过 stamp 跳过迁移。
+无需网关调整的环境可执行 `sudo bash ./update.sh --check` 和 `sudo bash ./update.sh`。旧模拟模式默认切换 IAM；只有独立演练环境通过 `--auth-config` 显式指定 mock。不要把演练地址、证书、账号配置导入现场。
 
-Python、PostgreSQL、Redis、MinIO、Nginx 版本未变，更新复用已安装运行时；每个代码版本有独立 Python 环境和前端目录。旧代码版本、库名、数据、密码保留。更新时不允许更改地址、端口、数据库名或数据目录，也不支持跨运行时版本、未知来源版本或降级。
+已完成的 R10 可重复升级，后续不带覆盖参数也会使用保存后的网关配置。支持的旧版以 manifest 的 `upgrade_from` 为准，不接受未知来源、降级或跨运行时更新。
 
-## 全新安装
+## 验收和排查
 
-只有尚未安装本套服务的机器才复制模板：
+`manage.sh check` 检查服务、43 张业务表、迁移版本、权限、Redis/MinIO 读写、网站静态资源、会话接口匿名 401 和登录入口 303。网关模式直连本机 80/8086 并携带正确 Host，不通过外部 IAM 网关验收，也不消耗 ticket。检查通过仅表示平台本机入口就绪。
 
-```bash
-sudo cp ./site.example.json /root/aih-site.json
-sudo vi /root/aih-site.json
-sudo bash ./install.sh --config /root/aih-site.json --check
-sudo bash ./install.sh --config /root/aih-site.json
+新增详细诊断入口 `sudo /opt/aicollabhub/diagnose.sh check`。真实登录取证使用 `start` / `finish` 和 `/diagnostics/auth.html` 浏览器自检页。具体步骤见独立的 `认证诊断使用说明.md`，该文档不在 ZIP 内。
+
+真实 IAM 仍需内网浏览器验收，网络面板开启“保留日志”：
+
+1. 新会话访问统一域名，应请求 `/api/v1/auth/config`、`/api/v1/auth/session`，未登录时由 `/api/v1/auth/login` 跳转 IAM。
+2. 登录后返回完整 `/api/v1/auth/callback?state=...&scope=...&ticket=...`；平台后端用原 service 验票，读取有效 `attributes.workNo` 后建立用户和会话。
+3. 回调返回 303 和 `ach_session` Cookie，转到不带 ticket 的业务地址，随后会话接口返回 200，页面显示用户。
+4. 已有会话时登录入口可直接 303 回业务页，不再次验票。普通用户管理端准入被拒绝，管理员正常进入。退出后本地会话失效；IAM 全局退出仍需现场确认。
+
+首页 `/?ticket=...` 不能单独证明认证成功。R10 兼容的是返回路径变成首页，但仍保留本平台登录请求的 `ticket`、`state`、`scope`，且票据仍绑定原 service 的情况。转交流程如下：
+
+```text
+/?ticket=...&state=...&scope=user
+  -> 303 /api/v1/auth/home-callback?...（浏览器进入 /api 后携带绑定 Cookie）
+  -> 303 /api/v1/auth/callback?...（沿用原验票流程）
+  -> 303 原业务地址（移除登录参数）
 ```
 
-`cp` 复制配置模板；`vi` 编辑现场地址；带 `--check` 的命令只预检；最后一条完成安装。
-
-需要确认的配置：
-
-- `public_origin`：客户端实际访问地址，例如 `http://10.10.20.30`。
-- `data_dir`：默认 `/data/aicollabhub`，放在甲方安排的数据磁盘；末级目录保留 `aicollabhub`。至少 10 GiB 空闲，另留备份空间；程序分区至少 3 GiB 空闲。
-- `web_port`：默认 80；非 80 时同步修改 `public_origin`，例如 `http://10.10.20.30:8080`。两个网站共用入口，用户端 `/`、管理端 `/admin/`。
-- `postgres_db`：默认 `aicollabhub_test`。其他内部服务端口保持默认或改为空闲端口；它们仅监听本机。
-- `api_workers`：默认 2，可选 1—4；数据库最多 60 个连接，其中超级用户预留 3 个。
-- `open_firewall`：默认 true，仅在 firewalld 运行时放行网站端口。其他网络访问控制还需放行客户端到该端口。
-- HTTPS：填写 `https://实际域名`、`web_port=443`，并将已导入服务器的证书和私钥绝对路径填入 `tls_certificate`、`tls_private_key`。
-- `profile`、`database_environment`：保持 `rehearsal`、`test`。密码由首次安装随机生成；重装和更新复用原密码。
-
-安装脚本拒绝接管未知数据目录和已有服务，不自动删除数据。同版本、同配置的 `install.sh` 可重新执行，但不同版本必须走 `update.sh`。
-
-## 管理与存储位置
+不会把首页 URL 当成新的 service，也不接受 URL 传入的 service 或返回地址。若网关在平台发起登录之前自行签发首页票据、丢失 state/scope，或实际签发的 service 已改变，本兼容不能建立会话；需保留原登录上下文、修正 IAM/网关配置并重新登录。Secure Cookie 仍要求浏览器使用统一 HTTPS 域名。单纯转交成功不等于验票或会话成功。
 
 ```bash
-sudo /opt/aicollabhub/manage.sh status
-sudo /opt/aicollabhub/manage.sh check
-sudo /opt/aicollabhub/manage.sh restart
-sudo /opt/aicollabhub/manage.sh backup
+sudo journalctl -u aih-api --since "10 minutes ago" --no-pager
+sudo tail -n 80 /data/aicollabhub/web/access.log
 ```
 
-`status` 显示六个服务；`check` 检查精确迁移版本、业务表、账号权限、Redis/MinIO 读写、网站静态资源和 API；`restart` 重启本套服务；`backup` 停机备份后恢复原来运行的服务。另支持 `start`、`stop`。
+后端关键字：`login/redirect_to_iam`、`login/session_reused`、`home_callback/forwarded`、`home_callback/rejected`、`callback/received`、`cas_validate/started`、`cas_validate/success`、`callback/session_created`。验票失败区分 `timeout`、`network_error`、`http_status`、`invalid_response`、`missing_work_no` 等，不打印原始报文。
 
-服务名：`aih-postgres`、`aih-redis`、`aih-minio`、`aih-iam`、`aih-api`、`aih-web`。查看 API 日志可用 `sudo journalctl -u aih-api -n 100 --no-pager`，用于排查最近 100 条后端日志。
+Nginx 的 `api_request_id` 对应响应 `X-Request-ID` 和后端 `request_id`，`upstream_status`/`upstream_time` 区分代理与后端。首页 HTML 的 200 不代表验票成功。不要转发原始 ticket、Cookie 或完整配置文件。
 
-程序：`/opt/aicollabhub`；当前版本指针：`/opt/aicollabhub/current`；配置：`/etc/aicollabhub/site.json`；凭据：`/etc/aicollabhub/credentials.json`（仅 root 可读）；安装日志：`/var/log/aih-native-install.log`；验收结果：`/etc/aicollabhub/last-check.json`。备份包含凭据，应按数据库备份保管，不得放入交付 ZIP。
+## 配置和管理员
 
-## 更新失败与恢复
+`/etc/aicollabhub/site.json` 保存部署网络参数；`app.env` 是服务实际配置，`app-env.json` 是副本。升级读取生效 AUTH 字段，成功后同步两份文件。手工修改后需重启 API，监听端口调整则需重新生成并检查 Nginx。
 
-如果更新失败，脚本停止服务，保留旧代码和更新前备份，在 `/etc/aicollabhub/install-state.json` 记录 `upgrade_failed` 与 `backup` 路径。排查前不要手动启动新旧混合服务，也不要只切换前端或代码指针来代替数据库恢复。
+网关模式的 `AUTH_PUBLIC_ORIGIN` 与 `AUTH_CALLBACK_ORIGIN` 使用同一个 HTTPS 外部 origin，`AUTH_COOKIE_SECURE=true`，平台无需安装网关证书。平台直接终止 HTTPS 则设 `tls_termination=local` 并提供对应 web_port、证书及私钥。
 
-同机恢复时，应先验证备份 SHA256，确认备份内记录的原版本及原数据目录，确认 `/opt/aicollabhub/releases/原版本` 仍在。停止六个服务后，将失败后的业务数据目录和 `/etc/aicollabhub` 分别移动到独立保留目录，再将备份按原绝对路径恢复。不要直接把数据库文件覆盖合并到现有目录，因为新文件会残留。备份同时包含旧 `current` 指针、管理脚本、配置与 systemd 服务定义；使用 GNU tar 的 `--unlink-first --same-owner` 恢复并执行 `systemctl daemon-reload`，再启动和检查。实际恢复会覆盖运行状态，需核对具体路径后操作。
+用户首次真实登录后，按验票返回的 workNo 授权或撤权：
 
-运行时没有变化，因此备份不重复保存运行时和旧代码；必须保留旧版本目录及同版本安装包。跨机器恢复还需要重新创建服务账号、匹配文件属主、安装对应运行时；本流程不等于跨机器自动恢复工具。
+```bash
+sudo /opt/aicollabhub/manage.sh set-role --work-no 10001 --role admin
+sudo /opt/aicollabhub/manage.sh set-role --work-no 10001 --role user
+```
 
-## 版本与再次打包
+替换实际编号，不存在的用户会报错。启用身份同步后角色由 IAM 管理，本地命令拒绝操作。`AUTH_SESSION_SECRET` 不放入升级模板，升级不轮换；首次安装自动生成。
 
-`manifest.json` 记录三端提交、软件版本、数据库用途、精确迁移版本和受支持升级来源。`SHA256SUMS` 校验每个文件；`sources`、`notices` 保留基础软件源码、来源和许可记录。
+## 新安装及管理
 
-维护脚本位于仓库 `deploy/native`，准备机打包入口为 `scripts/package_native_release.py`。该入口验证旧包完整性，重新打包受版本控制的代码和迁移，重建后端 wheel，复用与依赖声明一致的 Linux wheelhouse，生成 ZIP 和摘要。构建前需在准备机装好 hatchling，及两个前端的构建依赖；这些工具不需要装到甲方服务器。若项目依赖声明变化，必须先在同版本麒麟构建机更新离线 wheelhouse；脚本会拒绝继续复用不匹配依赖。
+新机器复制 `site.example.json` 到 root 专属配置，填写网站、专属测试库及数据目录，执行 `sudo bash ./install.sh --config /root/aih-site.json --check` 和去掉 `--check` 的命令。网关模式可追加上述网络和认证参数。现有机器不要复制模板覆盖旧库名。
+
+默认数据库 `aicollabhub_test`，旧库名保持不变；程序 `/opt/aicollabhub`、数据 `/data/aicollabhub`。数据分区至少 10 GiB 空闲并预留备份空间，程序分区至少 3 GiB。数据目录祖先需允许服务账号遍历。PostgreSQL/Redis/MinIO 仅监听回环地址，API 默认 2 workers，数据库 60 个连接（预留 3 个）。不关闭 SELinux 或替换系统 Python。
+
+管理命令 `sudo /opt/aicollabhub/manage.sh status|check|start|stop|restart|backup`。IAM 模式使用五个服务，模拟 IAM 停止并取消自启。凭据 `/etc/aicollabhub/credentials.json` 仅 root 可读。安装日志 `/var/log/aih-native-install.log`，检查结果 `/etc/aicollabhub/last-check.json`。
+
+## 失败恢复
+
+预检失败不停机；备份失败不部署新代码并恢复原运行服务。部署失败会停止服务，在 `install-state.json` 记录 `upgrade_failed` 和备份路径，保留旧版本。
+
+恢复前核验备份 SHA256、原数据目录和旧代码目录。停服务，将失败后的数据、配置和 `/opt/aicollabhub/diagnostics` 分别移到各自分区的独立保留目录，再恢复备份；不要覆盖合并数据库目录。保留诊断目录也避免 GNU tar 恢复时因原目录非空而报错。备份含旧 current 指针、管理脚本、systemd 定义和配置。按原路径用 GNU tar `--unlink-first --same-owner` 恢复，确认命令成功后执行 `systemctl daemon-reload` 并启动检查。不得只切代码忽略数据状态。
+
+备份不重复保存运行时和旧代码，需保留原目录和旧安装包。含凭据备份不得放入交付 ZIP；跨机恢复需匹配服务账号、运行时及属主。
+
+## 再次打包
+
+准备机运行 `scripts/package_native_release.py --reuse-bundle ... --output ... --release-id ... --without-loadtest`。它校验原包、重建三端及后端 wheel、复用 Linux wheelhouse、生成 ZIP 和摘要。依赖声明变化时拒绝复用。`sources`、`notices` 保留运行时源码及许可，构建工具不带到现场。

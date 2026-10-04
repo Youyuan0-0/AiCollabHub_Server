@@ -1,0 +1,7 @@
+{
+  "AUTH_MODE": "iam",
+  "AUTH_IDENTITY_SYNC_ENABLED": "false",
+  "AUTH_PUBLIC_ORIGIN": "https://fdj-smartweb.aecc.cn",
+  "AUTH_CALLBACK_ORIGIN": "https://fdj-smartweb.aecc.cn",
+  "AUTH_COOKIE_SECURE": "true"
+}

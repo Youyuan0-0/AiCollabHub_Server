@@ -27,11 +27,17 @@ SCRIPTS = (
     "provision.py",
     "manage.py",
     "check.py",
+    "diagnose.sh",
     "nginx.conf.template",
     "proxy.conf",
     "site.example.json",
-    "README.md",
+    "auth.example.json",
+    "auth.gateway.example.json",
+    "gateway.example.json",
+    "native_config.py",
 )
+VEGETA_VERSION = "12.13.0"
+VEGETA_ARCHIVE_SHA256 = "e8759ce45c14e18374bdccd3ba6068197bc3a9f9b7e484db3837f701b9d12e61"
 
 
 def sha256(path: Path) -> str:
@@ -79,18 +85,26 @@ def source_state(repository: Path) -> dict:
 
 
 def copy_backend(target: Path) -> None:
-    """仅打包受版本控制的应用和迁移文件，排除本地 .env、凭据及测试数据。"""
+    """仅打包应用和迁移文件；操作文档独立交付，保留 wheel 构建所需的简短简介。"""
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in names:
+        if name.endswith(".md"):
+            continue
         if name.startswith(("app/", "migrations/resource_foundation/")) or name in {
             "pyproject.toml",
-            "README.md",
             "alembic.ini",
             "scripts/verify_services.py",
+            "scripts/set_user_role.py",
+            "scripts/__init__.py",
         }:
             destination = target / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
+    (target / "README.md").write_text(
+        "# AiCollabHub Server\n\nAiCollabHub backend runtime package.\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def build_frontend(repository: Path, *, admin: bool) -> None:
@@ -106,6 +120,44 @@ def build_frontend(repository: Path, *, admin: bool) -> None:
     if not npm:
         raise RuntimeError("准备机缺少 npm，无法构建前端")
     subprocess.run([npm, "run", "build"], cwd=repository, env=env, check=True)
+
+
+def copy_loadtest(bundle: Path, archive_path: Path) -> dict:
+    """校验并随包提供官方静态 Linux 工具、许可及已受版本管理的压测脚本。"""
+    if sha256(archive_path) != VEGETA_ARCHIVE_SHA256:
+        raise RuntimeError("Vegeta 官方 Linux amd64 包 SHA256 不符，停止打包")
+    target = bundle / "loadtest"
+    target.mkdir()
+    for name in ("loadtest.py", "monitor.py"):
+        (target / name).write_text(
+            (DEPLOY / "loadtest" / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+            newline="\n",
+        )
+    with tarfile.open(archive_path) as archive:
+        member = archive.getmember("vegeta")
+        if not member.isfile():
+            raise RuntimeError("Vegeta 压缩包缺少普通二进制文件")
+        with archive.extractfile(member) as source, (target / "vegeta").open("wb") as output:
+            shutil.copyfileobj(source, output)
+    (target / "vegeta").chmod(0o755)
+    for source, name in (
+        ("LICENSE-vegeta", "LICENSE"),
+        ("vegeta_12.13.0_checksums.txt", "upstream-checksums.txt"),
+    ):
+        shutil.copyfile(archive_path.parent / source, target / name)
+    metadata = {
+        "version": VEGETA_VERSION,
+        "platform": "linux/amd64",
+        "source": "https://github.com/tsenart/vegeta/releases/tag/v12.13.0",
+        "archive_sha256": VEGETA_ARCHIVE_SHA256,
+        "binary_sha256": sha256(target / "vegeta"),
+        "license": "MIT",
+    }
+    (target / "version.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+    return metadata
 
 
 def build(args: argparse.Namespace) -> Path:
@@ -138,12 +190,33 @@ def build(args: argparse.Namespace) -> Path:
         shutil.copyfile(base / name, bundle / name)
     for name in ("wheelhouse", "sources", "notices"):
         shutil.copytree(base / name, bundle / name)
+    # 新增的浏览器兼容库随静态文件分发，保留其版权及许可文本。
+    core_js = repositories["user"] / "node_modules/core-js"
+    core_js_version = json.loads((core_js / "package.json").read_text())["version"]
+    shutil.copyfile(
+        core_js / "LICENSE", bundle / "notices" / f"core-js-{core_js_version}-LICENSE.txt"
+    )
     for path in (bundle / "wheelhouse").glob("aicollabhub_server-*.whl"):
         path.unlink()
     for name in SCRIPTS:
         # 跨 Windows / Linux 打包时确保 shell 脚本和校验表使用 LF。
         (bundle / name).write_text(
             (DEPLOY / name).read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
+        )
+    shutil.copytree(
+        DEPLOY / "diagnostics",
+        bundle / "diagnostics",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copyfile(DEPLOY / "native_config.py", bundle / "diagnostics/native_config.py")
+    loadtest = None
+    if not args.without_loadtest:
+        loadtest = copy_loadtest(bundle, args.vegeta_archive.resolve())
+    for name in ("iam-callback.conf.template", "iam-sync.conf.template"):
+        (bundle / name).write_text(
+            (ROOT / "deploy/nginx" / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+            newline="\n",
         )
     for name in ("user", "admin"):
         shutil.copytree(repositories[name] / "dist", bundle / "frontend" / name)
@@ -186,15 +259,34 @@ def build(args: argparse.Namespace) -> Path:
         "built_at": datetime.now(UTC).isoformat(),
         "sources": sources,
         "database_environment": "test",
+        "authentication": "Default group IAM; switch old mock; preserve IAM settings",
+        "loadtest": (
+            {"vegeta": loadtest, "entrypoint": "/opt/aicollabhub/loadtest.sh"} if loadtest else None
+        ),
+        "instructions_included": False,
+        "diagnostics": {
+            "entrypoint": "/opt/aicollabhub/diagnose.sh",
+            "browser": "/diagnostics/auth.html",
+            "schema": "aih-diagnostics-v1",
+        },
         "schema_head": head,
         "schema_chain": "resource_foundation",
-        "upgrade_from": {old_manifest["release_id"]: {"schema_head": previous_head}},
+        "upgrade_from": {
+            **{
+                release: value
+                for release, value in old_manifest.get("upgrade_from", {}).items()
+                if value["schema_head"] in revisions
+            },
+            old_manifest["release_id"]: {"schema_head": previous_head},
+        },
         "runtime_sha256": sha256(bundle / "runtime.tar.gz"),
         "database_policy": "Fresh: aicollabhub_test; upgrade: preserve installed database and data",
         "frontend_configuration": {
             "api_mode": "http",
             "api_base": "/api/v1",
             "admin_base": "/admin/",
+            "browser_target": ["chrome90", "edge90"],
+            "array_at_polyfill": "core-js " + core_js_version,
         },
         "wheels": sorted(path.name for path in (bundle / "wheelhouse").glob("*.whl")),
     }
@@ -226,7 +318,8 @@ def build(args: argparse.Namespace) -> Path:
         newline="\n",
     )
     shutil.copyfile(bundle / "manifest.json", output / "manifest.json")
-    shutil.copyfile(bundle / "README.md", output / "部署与更新说明.md")
+    shutil.copyfile(DEPLOY / "README.md", output / "部署与更新说明.md")
+    shutil.copyfile(DEPLOY / "DIAGNOSTICS.md", output / "认证诊断使用说明.md")
     return archive_path
 
 
@@ -236,12 +329,16 @@ def main() -> None:
     parser.add_argument("--reuse-bundle", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
+    parser.add_argument("--vegeta-archive", type=Path)
+    parser.add_argument("--without-loadtest", action="store_true", help="不包含压测工具和脚本")
     parser.add_argument("--user-repo", type=Path, default=ROOT.parent / "AiCollabHub_User")
     parser.add_argument("--admin-repo", type=Path, default=ROOT.parent / "AiCollabHub_Admin")
     parser.add_argument(
         "--frontend-built", action="store_true", help="本次已手动构建两端时复用 dist"
     )
     args = parser.parse_args()
+    if not args.without_loadtest and args.vegeta_archive is None:
+        parser.error("包含压测工具时必须提供 --vegeta-archive；无需压测请使用 --without-loadtest")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.release_id):
         raise ValueError("release_id 只能包含字母、数字、短横线、下划线和点")
     print(build(args))

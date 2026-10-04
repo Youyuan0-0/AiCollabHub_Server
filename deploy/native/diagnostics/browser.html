@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>人工智能协同平台 - 认证诊断</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #242b35; background: #f6f7f9; font: 15px/1.6 Arial, sans-serif; }
+    header { border-bottom: 1px solid #d8dee7; background: #fff; padding: 18px 24px; }
+    h1 { margin: 0; font-size: 22px; }
+    main { max-width: 1160px; margin: 24px auto; padding: 0 20px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+    button, select { font: inherit; padding: 8px 14px; border: 1px solid #bcc7d7; border-radius: 4px; background: #fff; color: #26344b; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    .primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+    #status { min-height: 28px; color: #475569; }
+    .scroll { overflow: auto; background: #fff; }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #e1e5eb; vertical-align: top; }
+    th { white-space: nowrap; background: #edf1f7; }
+    th:first-child, td:first-child { width: 190px; white-space: nowrap; }
+    th:nth-child(2) { width: 115px; }
+    th:nth-child(3) { width: 65px; }
+    th:nth-child(4) { width: 80px; }
+    td { overflow-wrap: anywhere; word-break: break-word; }
+    .error { color: #b91c1c; }
+    #download { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+    a { color: #205ec4; }
+  </style>
+</head>
+<body>
+  <header><h1>人工智能协同平台 · 认证诊断</h1></header>
+  <main>
+    <div id="status" role="status">正在读取浏览器能力……</div>
+    <div class="toolbar">
+      <select id="scope" aria-label="认证入口"><option value="user">用户端</option><option value="admin">管理端</option></select>
+      <button id="check" class="primary">运行自检</button>
+      <button id="login">发起登录</button>
+      <label><input id="renew" type="checkbox" checked>重新认证</label>
+      <button id="logout">退出登录验证</button>
+      <button id="export">导出诊断</button>
+      <button id="clear">清空本页记录</button>
+      <a id="business" href="/">打开业务页面</a>
+    </div>
+    <div class="scroll"><table><thead><tr><th>时间</th><th>事件</th><th>状态</th><th>耗时</th><th>证据</th></tr></thead><tbody id="events"></tbody></table></div>
+    <pre id="download" hidden></pre>
+  </main>
+  <script>
+  (function () {
+    'use strict';
+    // 保持 ES5 语法及 XHR 基础检查，使业务模块无法加载时仍可采集证据。
+    var schema = 'aih-browser-diagnostics-v1';
+    var storageKey = schema;
+    var report = { schema: schema, userAgent: navigator.userAgent, events: [] };
+    var csrf = '';
+    var busy = false;
+    var storageOK = true;
+    var eventLabels = { browser_capabilities: '浏览器能力', page_opened: '打开自检页', xhr: 'XHR 请求', fetch: 'fetch 请求', login_requested: '发起登录', local_logout_check: '本地退出检查', iam_logout_navigation: '转到 IAM 退出', script_error: '脚本异常', promise_error: '异步异常', records_cleared: '清空记录' };
+    var fieldLabels = { path: '路径', requestId: '请求编号', errorType: '错误类型', responseKind: '正文类型', reason: '原因', scope: '入口', moduleScripts: '模块脚本', abortController: 'AbortController', abortSignalTimeout: 'AbortSignal.timeout', fetch: 'fetch', storage: '会话存储', canAccessAdmin: '管理员权限' };
+    var scope = location.pathname.indexOf('/admin/') === 0 ? 'admin' : 'user';
+    var selector = document.getElementById('scope');
+    selector.value = scope;
+    try {
+      var previous = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+      if (previous && previous.schema === schema && previous.events instanceof Array) report.events = previous.events.slice(-300);
+    } catch (ignore) { storageOK = false; }
+
+    function timestamp() { return new Date().toISOString(); }
+    function save() {
+      try { sessionStorage.setItem(storageKey, JSON.stringify(report)); } catch (ignore) { storageOK = false; }
+    }
+    function cell(row, text) {
+      var element = document.createElement('td');
+      element.textContent = String(text === undefined ? '' : text);
+      row.appendChild(element);
+    }
+    function render() {
+      var tbody = document.getElementById('events');
+      tbody.textContent = '';
+      report.events.slice(-80).forEach(function (event) {
+        var row = document.createElement('tr');
+        if (event.errorType || event.status >= 500) row.className = 'error';
+        cell(row, event.time.replace('T', ' ')); cell(row, eventLabels[event.event] || event.event); cell(row, event.status);
+        cell(row, event.elapsedMs === undefined ? '' : event.elapsedMs + ' ms');
+        var evidence = [];
+        ['path', 'requestId', 'errorType', 'responseKind', 'reason', 'scope', 'moduleScripts', 'abortController', 'abortSignalTimeout', 'fetch', 'storage', 'canAccessAdmin'].forEach(function (key) {
+          if (event[key] !== undefined) evidence.push((fieldLabels[key] || key) + ': ' + event[key]);
+        });
+        cell(row, evidence.join(' | ')); tbody.appendChild(row);
+      });
+    }
+    function record(event) { event.time = timestamp(); report.events.push(event); report.events = report.events.slice(-400); save(); render(); }
+    function setBusy(value) {
+      busy = value;
+      ['check', 'login', 'logout', 'scope'].forEach(function (id) { document.getElementById(id).disabled = value; });
+    }
+    function message(value) { document.getElementById('status').textContent = value; }
+    function pathOnly(url) { return url.split('?')[0]; }
+    function describe(body, contentType, status) {
+      if (contentType.indexOf('json') >= 0) {
+        try { return { kind: 'json', value: JSON.parse(body) }; } catch (ignore) { return { kind: 'invalid_json' }; }
+      }
+      return { kind: contentType.indexOf('html') >= 0 ? 'html_instead_of_api' : 'unexpected_content_type' };
+    }
+    function xhr(method, path, done, token) {
+      var started = Date.now();
+      var request = new XMLHttpRequest();
+      var finished = false;
+      function complete(errorType) {
+        if (finished) return;
+        finished = true;
+        var status = request.status || 0;
+        var parsed = describe(request.responseText || '', request.getResponseHeader('Content-Type') || '', status);
+        var event = { event: 'xhr', method: method, path: pathOnly(path), scope: scope, status: status, elapsedMs: Date.now() - started, requestId: request.getResponseHeader('X-Request-ID') || '', responseKind: parsed.kind };
+        if (errorType) event.errorType = errorType;
+        if (status === 200 && path.indexOf('/auth/session') >= 0 && (!parsed.value || !parsed.value.user || typeof parsed.value.csrfToken !== 'string' || typeof parsed.value.expiresAt !== 'string')) event.errorType = 'invalid_session_response';
+        if (parsed.value && typeof parsed.value.detail === 'string' && /^[a-z_]{1,60}$/.test(parsed.value.detail)) event.reason = parsed.value.detail;
+        if (parsed.value && parsed.value.user) event.canAccessAdmin = parsed.value.user.canAccessAdmin === true;
+        record(event); done(status, parsed.value || {}, errorType);
+      }
+      try {
+        request.open(method, path, true); request.timeout = 10000;
+        request.setRequestHeader('Cache-Control', 'no-cache');
+        if (token) request.setRequestHeader('X-CSRF-Token', token);
+        request.onload = function () { complete(''); };
+        request.onerror = function () { complete('network_error'); };
+        request.ontimeout = function () { complete('timeout'); };
+        request.onabort = function () { complete('request_aborted'); };
+        request.send(null);
+      } catch (error) { complete(error.name || 'request_error'); }
+    }
+    function fetchProbe(done) {
+      if (typeof window.fetch !== 'function') { record({ event: 'fetch', reason: 'unsupported' }); done(); return; }
+      var started = Date.now();
+      var controller = typeof window.AbortController === 'function' ? new AbortController() : null;
+      var finished = false;
+      var timer = setTimeout(function () { finish({ errorType: 'timeout' }); if (controller) controller.abort(); }, 10000);
+      function finish(fields) {
+        if (finished) return;
+        finished = true; clearTimeout(timer);
+        fields.event = 'fetch'; fields.path = '/api/v1/auth/config'; fields.elapsedMs = Date.now() - started;
+        record(fields); done();
+      }
+      var options = { credentials: 'same-origin', cache: 'no-store' };
+      if (controller) options.signal = controller.signal;
+      try {
+        window.fetch('/api/v1/auth/config', options).then(function (response) {
+          return response.text().then(function (body) { finish({ status: response.status, requestId: response.headers.get('X-Request-ID') || '', responseKind: describe(body, response.headers.get('Content-Type') || '', response.status).kind }); });
+        }).catch(function (error) { finish({ errorType: error.name || 'fetch_error' }); });
+      } catch (error) { finish({ errorType: error.name || 'fetch_error' }); }
+    }
+    function check() {
+      if (busy) return;
+      setBusy(true); message('正在检查认证配置、XHR、fetch 与当前会话……');
+      xhr('GET', '/api/v1/auth/config', function () {
+        fetchProbe(function () {
+          xhr('GET', '/api/v1/auth/session?scope=' + scope, function (status, body) {
+            csrf = status === 200 && typeof body.csrfToken === 'string' ? body.csrfToken : '';
+            setBusy(false);
+            var validSession = status === 200 && body.user && typeof body.csrfToken === 'string' && typeof body.expiresAt === 'string';
+            message(validSession ? '当前平台会话有效。可打开业务页面核对实际显示。' : status === 401 && body.detail === 'authentication_required' ? '当前未登录。匿名会话返回 401 是正常结果，可点击发起登录。' : status === 403 && body.detail === 'admin_not_allowed' ? '当前账号没有该入口的权限。' : status === 200 ? '会话接口返回 200，但正文不符合会话结构，核对网关转发与正文类型。' : '会话检查未成功，查看表格中的错误类型和请求编号。');
+          });
+        });
+      });
+    }
+    selector.onchange = function () {
+      scope = selector.value;
+      document.getElementById('business').href = scope === 'admin' ? '/admin/' : '/';
+      csrf = '';
+    };
+    document.getElementById('check').onclick = check;
+    document.getElementById('login').onclick = function () {
+      var returnPath = scope === 'admin' ? '/admin/diagnostics/auth.html' : '/diagnostics/auth.html';
+      var renew = document.getElementById('renew').checked;
+      record({ event: 'login_requested', path: '/api/v1/auth/login', scope: scope, reason: renew ? 'renew_requested' : 'existing_session_may_be_reused' });
+      location.assign('/api/v1/auth/login?scope=' + scope + '&return_to=' + encodeURIComponent(returnPath) + '&renew=' + String(renew));
+    };
+    document.getElementById('logout').onclick = function () {
+      if (!window.confirm('将退出当前平台账号并跳转 IAM 退出地址。继续测试？')) return;
+      setBusy(true);
+      xhr('GET', '/api/v1/auth/session?scope=user', function (status, body) {
+        if (status !== 200 || typeof body.csrfToken !== 'string') { setBusy(false); message('没有可退出的有效会话。'); return; }
+        xhr('POST', '/api/v1/auth/logout?scope=' + scope, function (exitStatus, value) {
+          if (exitStatus !== 200 || typeof value.redirectUrl !== 'string') { setBusy(false); message('退出请求失败。'); return; }
+          xhr('GET', '/api/v1/auth/session?scope=user', function (sessionStatus) {
+            record({ event: 'local_logout_check', status: sessionStatus, reason: sessionStatus === 401 ? 'local_session_revoked' : 'session_still_active' });
+            // 跳转只使用同源后端返回的地址，不导出包含 service 的原始 URL。
+            record({ event: 'iam_logout_navigation', reason: 'iam_global_logout_not_verified' });
+            location.assign(value.redirectUrl);
+          });
+        }, body.csrfToken);
+      });
+    };
+    document.getElementById('export').onclick = function () {
+      var text = JSON.stringify(report, null, 2);
+      var block = document.getElementById('download'); block.hidden = false; block.textContent = text;
+      try {
+        var blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+        var link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'aih-browser-diagnostics.json';
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+      } catch (ignore) { message('自动下载不可用，完整诊断 JSON 已显示在下方。'); }
+    };
+    document.getElementById('clear').onclick = function () { report.events = []; record({ event: 'records_cleared' }); };
+    window.addEventListener('error', function (event) { record({ event: 'script_error', errorType: event.error && event.error.name ? event.error.name : 'resource_or_script_error' }); });
+    if ('onunhandledrejection' in window) window.addEventListener('unhandledrejection', function (event) { record({ event: 'promise_error', errorType: event.reason && event.reason.name ? event.reason.name : 'promise_rejection' }); });
+    record({ event: 'browser_capabilities', scope: scope, moduleScripts: 'noModule' in document.createElement('script'), abortController: typeof window.AbortController, abortSignalTimeout: typeof window.AbortSignal === 'undefined' ? 'undefined' : typeof window.AbortSignal.timeout, fetch: typeof window.fetch, storage: storageOK });
+    record({ event: 'page_opened', path: location.pathname, reason: /[?&]ticket=/.test(location.search) ? 'ticket_on_diagnostic_page_not_consumed' : 'ready' });
+    selector.onchange();
+    check();
+  }());
+  </script>
+</body>
+</html>

@@ -67,6 +67,7 @@ Desktop.ini
 !/deploy/README.md
 !/deploy/authentication.md
 !/deploy/native/README.md
+!/deploy/native/DIAGNOSTICS.md
 !/app/modules/applications/README.md
 !/app/modules/datasets/README.md
 !/app/modules/tools/README.md
