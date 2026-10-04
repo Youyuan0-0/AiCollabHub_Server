@@ -114,6 +114,129 @@ def notification(ticket):
     }
 
 
+def test_diagnostic_flow_links_callback_and_session_without_credentials(auth, caplog):
+    """新旧 worker 的日志通过状态摘要和会话 UUID 关联，不记录可重放的凭据。"""
+    import logging
+
+    a, b, iam, _ = auth
+    with caplog.at_level(logging.INFO, logger="app.modules.common.auth.service"):
+        target = begin(a, iam)
+        parameters = parse_qs(urlsplit(target).query)
+        assert a.get(target).status_code == 303
+        assert a.get("/api/v1/auth/session").status_code == 200
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.modules.common.auth.service"
+    ]
+    text = "\n".join(messages)
+    assert parameters["ticket"][0] not in text
+    assert parameters["state"][0] not in text
+    assert a.cookies.get("ach_session") not in text
+    flow = digest(parameters["state"][0])[:24]
+    assert sum("flow_id=" + flow in message for message in messages) >= 5
+    created = next(message for message in messages if "result=session_created" in message)
+    reference = re.search(r"session_ref=([a-f0-9]+)", created)[1]
+    assert any(
+        "stage=session result=accepted" in message and reference in message for message in messages
+    )
+
+
+@pytest.mark.parametrize(
+    ("scope", "subject", "can_access_admin"),
+    [("user", "mock-user", False), ("admin", "mock-admin", True), ("admin", "mock-user", False)],
+)
+def test_home_callback_reuses_original_validation_and_permissions(
+    auth, scope, subject, can_access_admin
+):
+    """转交只接受三项登录参数，原始 service 和最终返回路径仍由服务器保存的记录决定。"""
+    a, _, iam, _ = auth
+    target = begin(a, iam, scope=scope, subject=subject)
+    fields = {key: values[0] for key, values in parse_qs(urlsplit(target).query).items()}
+    transfer = a.get(
+        "/api/v1/auth/home-callback",
+        params={**fields, "service": "https://other.test/", "return_to": "https://other.test/"},
+    )
+    assert transfer.status_code == 303
+    assert transfer.headers["cache-control"] == "no-store"
+    assert transfer.headers["referrer-policy"] == "no-referrer"
+    forwarded = urlsplit(transfer.headers["location"])
+    assert forwarded.path == "/api/v1/auth/callback"
+    assert parse_qs(forwarded.query) == parse_qs(urlsplit(target).query)
+    assert a.get("/api/v1/auth/session").status_code == 401
+    completed = a.get(transfer.headers["location"])
+    assert completed.status_code == 303
+    if scope == "admin" and not can_access_admin:
+        assert "admin_not_allowed" in completed.headers["location"]
+    else:
+        assert completed.headers["location"] == (
+            "/admin/feedback" if scope == "admin" else "/datasets"
+        )
+    assert fields["ticket"] not in completed.headers["location"]
+    assert fields["state"] not in completed.headers["location"]
+    assert a.get("/api/v1/auth/session").json()["user"]["canAccessAdmin"] is can_access_admin
+    assert a.get("/api/v1/auth/session?scope=admin").status_code == (
+        200 if can_access_admin else 403
+    )
+    assert "login_request_expired" in a.get(transfer.headers["location"]).headers["location"]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",
+        "ticket=ST-test",
+        "ticket=&state=" + "a" * 43 + "&scope=user",
+        "ticket=ST-test&state=short&scope=user",
+        "ticket=ST-test&state=" + "a" * 201 + "&scope=user",
+        "ticket=" + "a" * 1025 + "&state=" + "b" * 43 + "&scope=user",
+        "ticket=ST-test&state=" + "a" * 43 + "&scope=other",
+        "ticket=ST-test&state=" + "a" * 43 + "&scope=user&scope=admin",
+        "ticket=ST-first&ticket=ST-second&state=" + "a" * 43 + "&scope=user",
+        "ticket=ST-test&state=" + "a" * 43 + "&state=" + "b" * 43 + "&scope=user",
+        "ticket=ST-test%0D%0ALocation%3Aevil&state=" + "a" * 43 + "&scope=user",
+    ],
+)
+def test_home_callback_invalid_parameters_do_not_replace_existing_session(auth, query):
+    """错误首页参数仅显示重新登录提示，不清除已有会话或进入验票。"""
+    a, _, iam, engine = auth
+    login(a, iam)
+    original = a.cookies.get("ach_session")
+    transfer = a.get("/api/v1/auth/home-callback?" + query)
+    assert transfer.status_code == 303
+    assert transfer.headers["location"] == "/login?error=invalid_callback_parameters&redirect=%2F"
+    assert "set-cookie" not in transfer.headers
+    assert a.cookies.get("ach_session") == original
+    assert a.get("/api/v1/auth/session").status_code == 200
+    with Session(engine) as db:
+        assert len(db.scalars(select(AuthSession)).all()) == 1
+
+
+def test_home_callback_does_not_bypass_browser_binding(auth):
+    a, b, iam, _ = auth
+    target = begin(a, iam)
+    query = urlsplit(target).query
+    foreign = b.get("/api/v1/auth/home-callback?" + query)
+    assert "login_request_expired" in b.get(foreign.headers["location"]).headers["location"]
+    assert b.get("/api/v1/auth/session").status_code == 401
+    original = a.get("/api/v1/auth/home-callback?" + query)
+    assert a.get(original.headers["location"]).headers["location"] == "/datasets"
+
+
+def test_home_callback_preserves_encoded_ticket_and_admin_error_scope(auth):
+    a, _, _, _ = auth
+    fields = {"ticket": "ST-a+b/c=d?x#fragment", "state": "a" * 43, "scope": "admin"}
+    response = a.get("/api/v1/auth/home-callback", params=fields)
+    assert parse_qs(urlsplit(response.headers["location"]).query) == {
+        key: [value] for key, value in fields.items()
+    }
+    rejected = a.get("/api/v1/auth/home-callback?ticket=ST-test&scope=admin")
+    assert (
+        rejected.headers["location"]
+        == "/admin/login?error=invalid_callback_parameters&redirect=%2Fadmin%2F"
+    )
+
+
 @pytest.mark.parametrize(
     ("subject", "display_name", "is_admin"),
     [

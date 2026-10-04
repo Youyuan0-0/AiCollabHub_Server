@@ -201,6 +201,31 @@ def test_validation_timeout_is_not_retried_and_error_does_not_expose_ticket():
         client.close()
 
 
+@pytest.mark.parametrize(
+    "response,reason",
+    [
+        (httpx.Response(503), "http_status"),
+        (httpx.Response(200, json=success(workNo=None)), "missing_work_no"),
+        (httpx.Response(200, text="not JSON"), "invalid_response"),
+    ],
+)
+def test_validation_log_identifies_stage_without_identity_or_ticket(caplog, response, reason):
+    caplog.set_level("INFO", logger="app.modules.common.auth.iam_cas")
+    with pytest.raises(IAMUnavailable):
+        validate_response(response)
+    logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.modules.common.auth.iam_cas"
+    )
+    assert "stage=cas_validate result=started" in logs
+    assert "reason=" + reason in logs
+    assert "duration_ms=" in logs
+    assert "ST-local-test" not in logs
+    assert "employee-001" not in logs
+    assert SERVICE not in logs
+
+
 @pytest.mark.parametrize("app_id", ["../other", "bad?query", "with space", "x" * 129])
 def test_app_id_cannot_change_endpoint_path(app_id):
     with pytest.raises(ValidationError):

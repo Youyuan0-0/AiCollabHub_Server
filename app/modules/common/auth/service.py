@@ -71,6 +71,24 @@ def write_operation(
     )
 
 
+def authentication_event(request: Request, stage: str, result: str, **fields: str | int) -> None:
+    """记录认证处理阶段，仅含固定状态和请求编号，不记录用户资料或认证凭据。"""
+    logger.info(
+        "auth stage=%s result=%s request_id=%s flow_id=%s probe=%s %s",
+        stage,
+        result,
+        request.state.request_id,
+        getattr(request.state, "auth_flow_id", "-"),
+        int(request.headers.get("x-aih-diagnostic-probe") == "1"),
+        " ".join(f"{key}={value}" for key, value in fields.items()),
+        extra={
+            "source": "auth",
+            "event": "auth_flow",
+            "details": {"stage": stage, "result": result, **fields},
+        },
+    )
+
+
 def system_event(request: Request, action: str, result: str) -> None:
     """记录请求级认证诊断，不输出票据、Cookie 或供应方原始报文。"""
     logger.warning(
@@ -84,6 +102,7 @@ def system_event(request: Request, action: str, result: str) -> None:
             "details": {"action": action, "result": result},
         },
     )
+    authentication_event(request, action, "failed", reason=result)
 
 
 def session_by_token(db: Session, raw: str) -> AuthSession | None:

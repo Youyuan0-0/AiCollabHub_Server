@@ -17,7 +17,10 @@ class TicketRejected(Exception):
 class IAMUnavailable(Exception):
     """统一认证服务不可达或响应无法验证。"""
 
-    pass
+    def __init__(self, reason: str = "invalid_response") -> None:
+        """只保留内部固定原因码，不能传入供应方原始异常或响应。"""
+        self.reason = reason
+        super().__init__(reason)
 
 
 @dataclass(frozen=True)

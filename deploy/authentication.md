@@ -2,7 +2,11 @@
 
 认证模块位于 `app/modules/common/auth/`。本期只接单点登录：未登录自动跳转 IAM，验票成功按 `workNo` 查找或创建本地用户，管理员通过服务器运维命令指定。`AUTH_IDENTITY_SYNC_ENABLED=false` 为默认配置，不挂载正式或模拟身份推送接口，不需要开放 8085。已有身份同步实现保留为后续显式启用的能力。本次不新增表，也不批量修改已有用户角色。正式适配尚未在航发网环境完成真实联调。
 
-## 集团 IAM 接入（默认不启用）
+## 集团 IAM 接入
+
+原生离线包的现场网关拓扑与下文早期直连方案不同：浏览器使用 `https://fdj-smartweb.aecc.cn`，统一网关终止 HTTPS 后转发到平台 HTTP 8086。原生包的 80/8086 均提供完整网站，`AUTH_PUBLIC_ORIGIN` 和 `AUTH_CALLBACK_ORIGIN` 都使用外部 HTTPS origin，`AUTH_COOKIE_SECURE=true`。部署以 `deploy/native/README.md` 为准；下文独立回调端口及 Windows 生成命令只适用于对应直连部署。
+
+原生离线包自 `20261001-native-r5` 起默认启用集团 IAM，安装及升级自动生成并保存独立会话密钥，原模拟部署也会切换。现有正式 IAM 配置和密钥继续复用。开发启动及云端模拟环境仍需按各自配置选择认证模式。
 
 2026-09-30 已确认：IAM 使用 HTTP 80，验票无应用层签名；CAS `attributes.workNo` 是集团用户稳定编号。本期 IAM 负责身份认证，平台 `users.role` 负责管理权限。单点登出通知暂不接入，平台主动退出使用 IAM `/logout`。`platform_admin` 是将来接入身份同步时的角色编码，本期不需要 IAM 配置或推送该角色。
 
@@ -16,7 +20,7 @@
 | 主动退出 IAM | 前缀 + `/logout` |
 | 后续身份同步角色编码 | `platform_admin`（本期不使用） |
 
-2026-10-01 已确认平台内网 IP 为 `20.1.4.240`，域名为 `fdj-smartweb.aecc.cn`，网站访问端口为 HTTP 80。正式访问统一使用域名，内网 DNS 需将其解析到上述 IP；不要交替使用 IP 和域名发起登录，否则浏览器无法复用同一主机的 Cookie。HTTPS 是否启用仍待正式对接确认。
+早期直连方案的平台 IP 为 `20.1.4.240`，域名为 `fdj-smartweb.aecc.cn`，网站使用 HTTP 80。当前现场采用上述 HTTPS 网关方案，域名解析到网关，平台 IP 是网关上游。两种方案均应统一使用同一域名，不要交替使用 IP 和域名发起登录，否则浏览器无法复用同一主机的 Cookie。
 
 登录链接只在显式重新认证时带 `renew=true`，普通登录省略此参数。验票发送 `ticket`、原始 `service`、`format=json`，兼容文档 XML 响应；仅使用 `attributes.workNo` 关联用户，不从顶层 `user` 或验票中的角色推断权限。HTTP 异常、超时、超大响应、缺少用户编号及非法报文都会拒绝建立会话，一次性票据不自动重试。
 
@@ -27,7 +31,7 @@
 | 平台/浏览器 → IAM | `http://hfidaas-sso.aecc.cn/authn-api/v5/cas/796872537136820224/...` | 登录跳转、服务端验票、主动退出 IAM |
 | 浏览器 → 平台 8086 | `http://fdj-smartweb.aecc.cn:8086/api/v1/auth/callback` | 返回带 ticket 的 CAS 登录回调 |
 
-当前登记和部署使用以下地址：
+早期直连部署使用以下地址，不能用于覆盖当前网关部署配置：
 
 | 用途 | 地址 |
 | --- | --- |
@@ -74,6 +78,14 @@ AUTH_COOKIE_SECURE=false
 使用同机 Nginx 时，后端只绑定 `127.0.0.1`，Uvicorn 配置 `--proxy-headers --forwarded-allow-ips 127.0.0.1`，由可信代理还原实际连接来源；不要使用 `--forwarded-allow-ips '*'`。
 
 Windows 启动脚本使用 `-ListenHost 0.0.0.0 -GatewayPort 80 -ApiPort 18000 -IamCallbackPort 8086`，不传 `-IamSyncPort`，与 `-MockIamPort` 互斥。生成配置后执行 `nginx -t`，8086 需允许用户浏览器访问。`deploy/cloud/compose.yaml` 仍是模拟 IAM 开发环境配置，真实部署使用这里的独立入口和可信代理配置，不能直接沿用其模拟 IAM 依赖。
+
+## 原生 R10 首页票据兼容
+
+原生 Nginx 仅在 GET `/`、`/admin`、`/admin/` 含有 `ticket` 参数时，303 转到 `/api/v1/auth/home-callback`。该入口验证 `ticket`、`state`、`scope` 各出现一次且格式有效，再 303 转到既有 `/api/v1/auth/callback`。使用浏览器跳转而非内部重写，是为了进入 `/api` 后能携带 Path 为 `/api` 的临时绑定 Cookie。
+
+兼容入口不验票、不访问数据库、不消费登录状态，也不接受外部传入的 `service` 或返回地址。原回调继续从 Redis 读取最初保存的 service 和业务返回地址，验证浏览器绑定、验票并建立会话。普通页面、退出、角色管理和原回调规则保持不变。参数异常显示 `invalid_callback_parameters`，不清除已有有效会话。
+
+此方案只兼容“返回路径误落首页但完整登录上下文和票据 service 未变”。缺少 state/scope、Cookie 不匹配、已使用的票据及 service 改写仍会失败；网关自行发起的无平台上下文票据不能直接登录。`home_callback/forwarded` 只证明转交，不证明 IAM 已验票。日志和诊断报告沿同一个状态摘要追踪后续步骤，不输出原始票据。
 
 ## 首次登录与管理员设置
 
@@ -173,6 +185,7 @@ A 账号沿用原有标识，历史记录归属保持不变。新增账号首次
 | --- | --- |
 | `/api/v1/auth/config` | 返回认证开关 |
 | `/api/v1/auth/login`、`/callback` | 发起登录、校验上下文及票据 |
+| `/api/v1/auth/home-callback` | 原生首页票据转交；沿用原回调校验，不独立创建会话 |
 | `/api/v1/auth/session` | 查询会话、CSRF 值及管理端准入 |
 | `/api/v1/auth/logout` | 默认同时撤销平台会话并主动退出 IAM |
 | `/api/v1/auth/single-logout` | 仅模拟 IAM 的单点登出通知 |

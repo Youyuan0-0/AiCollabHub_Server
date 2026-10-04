@@ -1,6 +1,8 @@
 """按集团确认的无签名 CAS 协议验票，始终以 workNo 关联本地用户。"""
 
 import json
+import logging
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -8,14 +10,18 @@ from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
 
 from app.core.config import Settings
+from app.core.system_logging import active_request_id
 from app.modules.common.auth.cas import IAMUnavailable, Principal, TicketRejected
 
 CAS_NAMESPACE = "{http://www.yale.edu/tp/cas}"
 MAX_RESPONSE_BYTES = 65536
+logger = logging.getLogger(__name__)
 
 
 def _principal(work_no: object, display_name: object) -> Principal:
     """只接受明确的集团用户编号，不使用登录名或角色字段推断用户身份。"""
+    if work_no is None or work_no == "":
+        raise IAMUnavailable("missing_work_no")
     if (
         not isinstance(work_no, str)
         or not work_no
@@ -23,7 +29,7 @@ def _principal(work_no: object, display_name: object) -> Principal:
         or len(work_no) > 200
         or any(ord(char) < 32 or ord(char) == 127 for char in work_no)
     ):
-        raise IAMUnavailable()
+        raise IAMUnavailable("invalid_work_no")
     if display_name is None or display_name == "":
         display_name = work_no
     if (
@@ -32,7 +38,7 @@ def _principal(work_no: object, display_name: object) -> Principal:
         or len(display_name) > 100
         or any(ord(char) < 32 or ord(char) == 127 for char in display_name)
     ):
-        raise IAMUnavailable()
+        raise IAMUnavailable("invalid_display_name")
     return Principal(work_no, display_name)
 
 
@@ -112,24 +118,44 @@ class IamCasClient:
 
     def validate(self, ticket: str, service: str) -> Principal:
         """用原始 service 验证票据，限制响应体大小后读取 workNo 和姓名。"""
+        started = time.monotonic()
+        result, reason, status = "failed", "invalid_response", None
+        request_id = active_request_id.get()
+        logger.info("auth stage=cas_validate result=started request_id=%s", request_id)
         try:
             with self.client.stream(
                 "GET",
                 self.base + "/p3/serviceValidate",
                 params={"ticket": ticket, "service": service, "format": "json"},
             ) as response:
+                status = response.status_code
                 response.raise_for_status()
                 body = bytearray()
                 for chunk in response.iter_bytes(chunk_size=8192):
                     body.extend(chunk)
                     if len(body) > MAX_RESPONSE_BYTES:
-                        raise IAMUnavailable()
+                        raise IAMUnavailable("response_too_large")
             content = bytes(body)
             if content.removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"<"):
-                return _xml_principal(content)
-            return _json_principal(content)
+                principal = _xml_principal(content)
+            else:
+                principal = _json_principal(content)
+            result, reason = "success", "validated"
+            return principal
+        except TicketRejected:
+            result, reason = "rejected", "invalid_ticket"
+            raise
+        except IAMUnavailable as error:
+            reason = error.reason
+            raise
+        except httpx.HTTPError as error:
+            reason = "network_error"
+            if isinstance(error, httpx.TimeoutException):
+                reason = "timeout"
+            elif isinstance(error, httpx.HTTPStatusError):
+                reason = "http_status"
+            raise IAMUnavailable(reason) from None
         except (
-            httpx.HTTPError,
             ValueError,
             TypeError,
             ElementTree.ParseError,
@@ -137,6 +163,28 @@ class IamCasClient:
         ):
             # 外部异常通常包含带 ticket 的请求 URL，不向日志或调用方传播原文。
             raise IAMUnavailable() from None
+        finally:
+            duration_ms = round((time.monotonic() - started) * 1000)
+            logger.log(
+                logging.INFO if result == "success" else logging.WARNING,
+                "auth stage=cas_validate result=%s reason=%s status=%s "
+                "duration_ms=%s request_id=%s",
+                result,
+                reason,
+                status,
+                duration_ms,
+                request_id,
+                extra={
+                    "source": "auth",
+                    "event": "auth_cas_validation",
+                    "details": {
+                        "result": result,
+                        "reason": reason,
+                        "httpStatus": status,
+                        "durationMs": duration_ms,
+                    },
+                },
+            )
 
     def close(self) -> None:
         """释放验票使用的 HTTP 连接池。"""

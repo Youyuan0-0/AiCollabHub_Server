@@ -58,7 +58,10 @@ def test_auth_failures_and_sync_conflicts_are_persisted_after_rollback(auth):
     a, _, iam, engine = auth
     denied = login(a, iam, scope="admin")
     with Session(engine) as session:
-        assert session.scalar(select(OperationLog)) is None
+        # 普通用户仍可建立共享会话；被拒绝的是管理端准入，成功登录保留操作记录。
+        operation = session.scalar(select(OperationLog))
+        assert operation is not None and operation.action == "login"
+        assert operation.data == {"entryScope": "admin"}
     applied = push(a, batch("logging-user", "active", 100))
     conflict = push(a, batch("logging-user", "disabled", 100))
     assert applied.status_code == 200 and conflict.status_code == 409
@@ -67,7 +70,12 @@ def test_auth_failures_and_sync_conflicts_are_persisted_after_rollback(auth):
     with Session(engine) as session:
         records = session.scalars(select(SystemLog)).all()
         by_request = {record.request_id: record for record in records}
-        login_log = by_request[UUID(denied.headers["X-Request-ID"])]
+        login_log = next(
+            record
+            for record in records
+            if record.request_id == UUID(denied.headers["X-Request-ID"])
+            and record.event == "auth_login_failed"
+        )
         assert login_log.event == "auth_login_failed"
         assert login_log.details["result"] == "admin_not_allowed"
         assert by_request[UUID(applied.headers["X-Request-ID"])].event == "identity_sync_applied"
