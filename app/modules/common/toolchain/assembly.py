@@ -6,11 +6,16 @@ import httpx
 from fastapi import FastAPI
 
 from app.modules.applications.dependencies import platform_dependencies
+from app.modules.applications.huawei_toolchain import HuaweiAgentCatalogProvider
 from app.modules.applications.providers import DemoApplicationProvider
 from app.modules.applications.toolchain import AgentCatalogProvider
+from app.modules.common.toolchain.catalog import ToolchainCatalogs
+from app.modules.common.toolchain.catalog_store import CatalogStore
 from app.modules.common.toolchain.client import PopClient
 from app.modules.common.toolchain.configuration import module_settings
 from app.modules.common.toolchain.configuration_schemas import MODULE_NAMES
+from app.modules.common.toolchain.huawei import HuaweiClient
+from app.modules.common.toolchain.huawei_mock import HuaweiToolchainMock
 from app.modules.common.toolchain.mock import DocumentedToolchainMock
 from app.modules.knowledge.engine import KnowledgeEngineProvider
 from app.modules.knowledge.engine_workspace import EngineKnowledgeWorkspace
@@ -45,7 +50,7 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
     legacy_mock = DocumentedToolchainMock() if not settings.toolchain_module_connections else None
     with ExitStack() as cleanup:
         for module in MODULE_NAMES:
-            specific = module_settings(settings, module)
+            specific = module_settings(settings, module, "aliyun")
             mock = (
                 (legacy_mock or DocumentedToolchainMock())
                 if specific.toolchain_mode == "mock"
@@ -59,9 +64,38 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
             )
             cleanup.callback(client.close)
             clients[module], mocks[module] = client, mock
-        if clients["models"].mode == "live":
+        huawei_clients, huawei_mocks = {}, {}
+        for module in ("applications", "datasets", "knowledge", "models"):
+            specific = module_settings(settings, module, "huawei")
+            if specific.toolchain_mode == "disabled":
+                continue
+            mock = HuaweiToolchainMock() if specific.toolchain_mode == "mock" else None
+            client = HuaweiClient(specific, httpx.MockTransport(mock) if mock else None)
+            cleanup.callback(client.close)
+            huawei_clients[module], huawei_mocks[module] = client, mock
+        application.state.huawei_toolchain_clients = huawei_clients
+        application.state.huawei_toolchain_mocks = huawei_mocks
+        foundation = getattr(application.state, "foundation", None)
+        catalogs = ToolchainCatalogs(
+            huawei_clients,
+            CatalogStore(
+                application.state.resources.database if huawei_clients else None,
+                schema=foundation.metadata.schema if foundation else None,
+            ),
+        )
+        application.state.toolchain_catalogs = catalogs
+        if "applications" in huawei_clients:
+            service = application.state.application_service
+            application.state.huawei_application_provider = HuaweiAgentCatalogProvider(
+                service.provider, catalogs
+            )
+        if clients["models"].mode == "live" and isinstance(clients["models"], PopClient):
             application.state.model_provider = StudioModelProvider(clients["models"])
-        if clients["applications"].mode != "disabled" and settings.app_env != "production":
+        if (
+            isinstance(clients["applications"], PopClient)
+            and clients["applications"].mode != "disabled"
+            and settings.app_env != "production"
+        ):
             service = application.state.application_service
             service.provider = AgentCatalogProvider(service.provider, clients["applications"])
             service.workflows.provider = service.provider
@@ -70,6 +104,7 @@ def configure_toolchains(application: FastAPI) -> ExitStack:
             workspace.provider = AgentToolCatalogProvider(workspace.provider, clients["tools"])
         if (
             clients["knowledge"].mode != "disabled"
+            and isinstance(clients["knowledge"], PopClient)
             and settings.app_env != "production"
             and getattr(application.state, "foundation", None) is None
         ):

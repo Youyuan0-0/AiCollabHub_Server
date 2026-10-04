@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     applications_runtime: Literal["simulation", "agent_dev"] = "simulation"
     # 兼容旧环境 POP 配置；后台文件按模块分别覆盖，mock 使用文档响应且不访问网络。
     toolchain_mode: Literal["disabled", "mock", "live"] = "disabled"
+    toolchain_provider: Literal["aliyun", "huawei"] = "aliyun"
+    toolchain_api_key: SecretStr | None = None
+    toolchain_polling_enabled: bool = True
+    toolchain_poll_interval: int = Field(default=300, ge=30, le=86400)
     # AI 工具独立启用，避免其他模块启用时自动开放工具成果。
     toolchain_tools_mode: Literal["disabled", "mock", "live"] = "disabled"
     toolchain_models_mode: Literal["disabled", "mock", "live"] = "disabled"
@@ -61,6 +65,9 @@ class Settings(BaseSettings):
     toolchain_configuration_file: Path = Path(".runtime/toolchain-configuration.json")
     toolchain_knowledge_data: dict | None = None
     toolchain_module_connections: dict[str, dict] = Field(default_factory=dict)
+    # 同一模块的两家连接并存；用户选择仅决定本次访问的供应方。
+    toolchain_provider_connections: dict[str, dict[str, dict]] = Field(default_factory=dict)
+    toolchain_entry_url: AnyHttpUrl | None = None
     toolchain_body_encoding: Literal["json", "form"] = "json"
     toolchain_app_key: SecretStr | None = None
     toolchain_proxy_url: AnyHttpUrl | None = None

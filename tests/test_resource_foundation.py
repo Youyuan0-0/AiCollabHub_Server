@@ -232,6 +232,7 @@ def test_exact_tables_and_chinese_comments(connection):
         "announcements",
         "knowledge_documents",
         "knowledge_document_reviews",
+        "toolchain_catalog_snapshots",
     }
     for _, name, prefix in MODULES:
         expected.update({name, f"{prefix}_publications", f"{prefix}_versions"})

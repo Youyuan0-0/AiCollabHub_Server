@@ -497,7 +497,12 @@ def test_toolchain_duplicate_versions_failures_and_new_version_review(
     assert len(client.get(API + "/admin/application-syncs").json()) == 5
 
 
-def test_policy_presentation_revision_and_scope(client, app_id):
+def test_policy_presentation_revision_and_scope(client, app_id, monkeypatch):
+    monkeypatch.setitem(
+        client.app.state.settings.toolchain_provider_connections,
+        "applications",
+        {"aliyun": {"toolchain_entry_url": "https://toolchain.example.com/workspace"}},
+    )
     old = client.get(API + "/admin/application-policy").json()
     policy(
         client,
@@ -509,7 +514,8 @@ def test_policy_presentation_revision_and_scope(client, app_id):
     )
     assert client.put(API + "/admin/application-policy", json=old).status_code == 409
     presentation = client.get(API + "/application-presentation").json()
-    assert presentation["pageSize"] == 6 and presentation["toolchainUrl"].startswith("https://")
+    assert presentation["pageSize"] == 6
+    assert presentation["toolchainUrl"] == "https://toolchain.example.com/workspace"
     assert "sensitiveTerms" not in presentation
     items = client.get(API + "/applications?q=流程验证").json()["items"]
     assert items[0]["badge"] == "推荐"

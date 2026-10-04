@@ -309,8 +309,8 @@ def test_saved_live_connections_drive_three_module_workflows_after_restart(monke
             return httpx.Response(200, json=body)
         return response
 
-    def init(self, settings, supplied_transport=None):
-        original_init(self, settings, httpx.MockTransport(transport))
+    def init(self, settings, supplied_transport=None, **options):
+        original_init(self, settings, httpx.MockTransport(transport), **options)
 
     class Storage:
         def __init__(self):

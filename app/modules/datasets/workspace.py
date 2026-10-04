@@ -11,6 +11,7 @@ from fastapi import HTTPException, Request
 from app.modules.common.fixtures import fixture
 from app.modules.common.identity import Actor, visible
 from app.modules.common.schemas import CatalogQuery
+from app.modules.datasets.classification import normalize_classification
 from app.modules.datasets.publishing import DatasetPublisher, LocalDatasetPublisher
 from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.schemas import DatasetRankingMetric, SaveDataset, validate_submission
@@ -105,6 +106,7 @@ class DatasetWorkspace:
                     ]
                 published[resource["id"]] = resource
         resources.extend(published.values())
+        resources = [normalize_classification(item) for item in resources]
         if resource_id is not None:
             resources = [item for item in resources if item["id"] == resource_id]
         if not self.repository.database:
@@ -392,6 +394,7 @@ class DatasetWorkspace:
             "createdBy": actor.id,
             # 组织权限只来自可信会话，表单 owner 只是展示用归属单位名称。
             "organizationId": actor.organization_id,
+            "securityLevel": payload.data.security_level,
             "data": payload.data.model_dump(by_alias=True),
             "status": "pending" if payload.submit else "draft",
             "createdAt": previous["createdAt"] if previous else now,

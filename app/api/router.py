@@ -11,6 +11,7 @@ from app.modules.applications.review_file_router import router as application_re
 from app.modules.applications.router import router as applications_router
 from app.modules.applications.tutorial_router import router as application_tutorial_router
 from app.modules.applications.workflow_router import router as application_workflow_router
+from app.modules.common.toolchain.catalog_router import router as toolchain_catalog_router
 from app.modules.common.toolchain.configuration_router import (
     router as toolchain_configuration_router,
 )
@@ -50,6 +51,7 @@ database_router.include_router(feedback_router)
 mock_router = APIRouter(prefix="/api/v1")
 for router in (
     toolchain_configuration_router,
+    toolchain_catalog_router,
     datasets_router,
     dataset_toolchain_router,
     dataset_admin_router,

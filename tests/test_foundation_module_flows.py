@@ -341,6 +341,61 @@ def test_tool_import_reopen_and_new_version(foundation, connection):
     assert connection.exec_driver_sql("SELECT count(*) FROM ai_tool_versions").scalar_one() == 1
 
 
+@pytest.mark.parametrize("module", ["applications", "datasets"])
+def test_huawei_draft_import_reopens_without_runtime_cache(foundation, connection, module):
+    """华为来源随申请 JSONB 持久保存，未配置运行缓存时也可幂等导入。"""
+    import httpx
+
+    from app.core.config import Settings
+    from app.modules.applications.application_service import ApplicationService
+    from app.modules.applications.configuration import default_configuration as app_configuration
+    from app.modules.applications.huawei_toolchain import HuaweiAgentCatalogProvider
+    from app.modules.applications.providers import DemoApplicationProvider
+    from app.modules.common.toolchain.catalog import ToolchainCatalogs
+    from app.modules.common.toolchain.catalog_store import CatalogStore
+    from app.modules.common.toolchain.huawei import HuaweiCatalog, HuaweiClient
+    from app.modules.common.toolchain.huawei_mock import HuaweiToolchainMock
+    from app.modules.datasets.huawei_toolchain import HuaweiDatasetToolchain
+    from app.modules.datasets.repository import DatasetRepository
+    from app.modules.datasets.workspace import DatasetWorkspace
+
+    mock = HuaweiToolchainMock()
+    client = HuaweiClient(Settings(toolchain_mode="mock"), httpx.MockTransport(mock))
+    catalogs = ToolchainCatalogs({module: client}, CatalogStore())
+    identifier = mock.rows[module][0]["id"]
+    detail = HuaweiCatalog(client).detail(module, identifier)
+
+    def import_draft():
+        if module == "applications":
+            provider = HuaweiAgentCatalogProvider(DemoApplicationProvider(), catalogs)
+            service = ApplicationService(ResourceDatabase(
+                foundation, "application", configuration=app_configuration()
+            ), provider)
+            return provider.import_draft(service, WRITER, identifier, detail["snapshot"])
+        workspace = DatasetWorkspace(DatasetRepository(foundation=foundation))
+        return HuaweiDatasetToolchain(catalogs, workspace).import_draft(
+            WRITER, identifier, detail["snapshot"], {"owner": "测试单位", "contact": "联系人"}
+        )
+
+    try:
+        first = import_draft()
+        flush_constraints(connection)
+        repeated = import_draft()
+        flush_constraints(connection)
+        assert repeated["publicationId"] == first["publicationId"]
+        prefix = "application" if module == "applications" else "dataset"
+        table = foundation.table(prefix + "_publications")
+        row = connection.execute(table.select()).mappings().one()
+        source = row["data"]["publicationContext"]["source"]
+        assert source["provider"] == "huawei-platform"
+        assert source["externalVersion"] == detail["externalVersion"]
+        assert source["snapshot"] == detail["snapshot"]
+        assert row["revision"] == 1 and row["review_status"] is None
+        assert connection.exec_driver_sql("SELECT count(*) FROM files").scalar_one() == 0
+    finally:
+        client.close()
+
+
 def test_tool_ratings_reopen_from_shared_table(foundation, connection):
     """工具评分与评论复用公共评价表，重建仓储后仍可读取且修改不会新增行。"""
     from tests.test_tools import tool_data

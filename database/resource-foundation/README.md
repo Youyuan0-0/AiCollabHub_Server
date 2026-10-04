@@ -4,7 +4,7 @@
 
 ## 表清单
 
-测试库当前共 43 张业务表，另有 1 张 Alembic 版本记录表。最初基线 25 张，前两次追加各 5 张；随后补齐首页 6 张、知识库文档及审核 2 张。本地索引配置、任务、分段三表已按职责调整撤回，相关能力交由知识库工具链接口。站内通知和外部资源映射仍按用户要求暂缓建表。
+测试库当前共 44 张业务表，另有 1 张 Alembic 版本记录表。2026-10-01 新增外部工具链目录快照表；四类华为资源主表、发布与文件结构保持现有约束。本地索引配置、任务、分段三表已按职责调整撤回，相关能力交由知识库工具链接口。站内通知和外部资源映射表仍未新增。
 
 | 主表 | 发布申请表 | 正式版本表 |
 | --- | --- | --- |
@@ -44,6 +44,7 @@
 | `announcements` | 公共平台公告，与个人站内消息分开 |
 | `knowledge_documents` | 独立上传的知识文档及当前审核状态 |
 | `knowledge_document_reviews` | 每篇文档每轮审核的不可变结论和原始文件快照 |
+| `toolchain_catalog_snapshots` | 华为目录元数据快照、查询时间、失败退避和跨 worker 查询租约 |
 
 此前讨论的资源使用行为继续由操作日志承接，下载另有 `resource_downloads`，本轮不新增未经设计的通用使用日志表。
 
@@ -112,7 +113,7 @@ python -m alembic -n resource_foundation upgrade head
 python -m alembic -n resource_foundation current
 ```
 
-最初基线版本为 `20260920_01_resource_foundation`，当前最新版本为 `20260921_04_knowledge_external`。每次 Python 迁移及对应 SQL 文件冻结该次表结构与约束。未来变更继续新增迁移，不修改已经执行的文件。03 的历史建表记录保留，通过 04 明确撤回本地索引范围；当前结构以迁移链最终结果为准。
+最初基线版本为 `20260920_01_resource_foundation`，当前最新版本为 `20261001_01_toolchain_catalog`。未来变更继续新增迁移，不修改已经执行的文件。03 的历史建表记录保留，通过 04 明确撤回本地索引范围；当前结构以迁移链最终结果为准。
 
 | 迁移文件 | 建设内容 | 新增业务表 |
 | --- | --- | --- |
@@ -121,8 +122,21 @@ python -m alembic -n resource_foundation current
 | [20260921_02_resource_support.py](../../migrations/resource_foundation/versions/20260921_02_resource_support.py) | 模块配置、可见范围、资源文件与预览关系 | 5 |
 | [20260921_03_home_knowledge.py](../../migrations/resource_foundation/versions/20260921_03_home_knowledge.py) | 首页六表与知识文档、审核及索引的历史建设记录 | 11 |
 | [20260921_04_external_knowledge.py](../../migrations/resource_foundation/versions/20260921_04_external_knowledge.py) | 撤回本地索引三表，保留文档、审核及文件保护 | -3 |
+| [20261001_01_toolchain_catalog.py](../../migrations/resource_foundation/versions/20261001_01_toolchain_catalog.py) | 华为目录快照和查询租约，接在字段对齐迁移之后 | 1 |
 
 首次建立基线只支持 PostgreSQL 空 schema，发现旧业务表即停止；已安装本迁移链的数据库按版本追加升级。重复升级不会重复建表。默认 `alembic upgrade head` 属于旧库迁移链，不能用于本新库；不能通过 stamp 跳过迁移或把两条链混用。降级不自动删除业务历史，回退使用操作前备份。
+
+## 华为查询兼容
+
+启动华为连接前执行上述 `resource_foundation upgrade head`。有数据库时缺少快照表会中止启动；无数据库的开发模式使用内存快照，重启后重新查询。
+
+管理端“工具链接入配置”分别维护阿里和华为连接，两家可以同时启用。各模块原有 `connection` 保存阿里配置，`configuration.huawei` 按模块保存华为连接及独立工作台地址；旧单华为配置读取时迁入独立连接，不自动改写原文件。用户在“工具链发布”页面选择阿里或华为，此选择只保存在页面地址，不修改其他用户或后台配置。
+
+华为真实模式需要服务根地址、API Key 和允许访问的平台账号 subject；后台配置保存后重启后端生效。两家同时启用的模拟示例见 [toolchain-huawei.example.json](../../config/toolchain-huawei.example.json)，其不连接真实平台。华为真实模式将 `configuration.huawei` 中对应模块的 `connection.mode` 改为 `live`，填写 `url`、`allowedSubjects`，并在 `credentials` 配置对应的 `applicationsApiKey`、`datasetsApiKey`、`knowledgeApiKey`、`modelsApiKey`。阿里继续使用自己的地址、工作空间和 AK/SK，导入来源包含供应方，外部编号相同也不会混用。
+
+后台启动后首次查询并默认每 300 秒更新完整目录，间隔可配置为 30 至 86400 秒。多个 worker 用数据库租约协调；错误查询保留最后成功结果并退避。关闭 `pollingEnabled` 后仅在点击刷新时查询。用户页面每 30 秒检查后端快照，知识库详情按配置间隔查询文档状态。
+
+智能体和数据集只导入可对应的元数据为发布草稿，按持久来源去重；外部版本和平台版本分开保存。模型提供者与知识库目前只支持外部目录查询。文件 ID 不作为本地 `files` 外键，模型 `config`、智能体 `engine_config` 和知识库配置不进入目录或发布资料。当前文档未交付的运行、下载、检索、上传和 PageIndex 文档接口不会被当作已接通。
 
 ## 验证与业务边界
 

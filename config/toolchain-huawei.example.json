@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "revision": "huawei-example",
+  "configuration": {
+    "applications": { "connection": { "provider": "aliyun", "mode": "mock" } },
+    "datasets": { "connection": { "provider": "aliyun", "mode": "mock" } },
+    "knowledge": { "connection": { "provider": "aliyun", "mode": "mock" } },
+    "models": { "connection": { "provider": "aliyun", "mode": "mock" } },
+    "huawei": {
+      "applications": {
+        "connection": { "provider": "huawei", "mode": "mock", "pollInterval": 300 }
+      },
+      "datasets": {
+        "connection": { "provider": "huawei", "mode": "mock", "pollInterval": 300 }
+      },
+      "knowledge": {
+        "connection": { "provider": "huawei", "mode": "mock", "pollInterval": 300 }
+      },
+      "models": {
+        "connection": { "provider": "huawei", "mode": "mock", "pollInterval": 300 }
+      }
+    }
+  },
+  "credentials": {}
+}

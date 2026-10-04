@@ -8,6 +8,7 @@ from app.core.resources import ApplicationResources
 from app.core.system_logging import SystemLogWriter
 from app.main import create_app
 from app.modules.applications import runtime
+from app.modules.common.toolchain.configuration_schemas import MODULE_NAMES
 
 
 @pytest.mark.parametrize("fail_startup", [False, True])
@@ -24,13 +25,14 @@ def test_toolchain_and_logs_close_before_shared_resources(monkeypatch, fail_star
         return resources
 
     def close_writer(writer):
+        assert application.state.toolchain_catalogs.stopping.is_set()
         assert all(client.http.is_closed for client in application.state.toolchain_clients.values())
         original_writer_close(writer)
         events.append("writer_closed")
 
     def runtime_provider(provider, settings):
         assert application.state.system_log_writer is not None
-        assert len(application.state.toolchain_clients) == 3
+        assert set(application.state.toolchain_clients) == set(MODULE_NAMES)
         if fail_startup:
             raise RuntimeError("runtime_startup_failed")
         return original_provider(provider, settings)

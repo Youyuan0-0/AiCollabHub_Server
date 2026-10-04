@@ -271,6 +271,7 @@ class ApplicationService:
         actor: Actor = DEFAULT_USER,
         *,
         base_resource: dict | None = None,
+        source: dict | None = None,
     ) -> dict:
         if actor.role not in ("publisher", "org_admin", "admin"):
             raise HTTPException(403, "当前账号没有发布应用的权限")
@@ -322,6 +323,8 @@ class ApplicationService:
                 record["applicationId"] = base_resource["id"]
                 record["baseVersionId"] = base_resource["versionId"]
         # 保存草稿为 draft，提交审核为 pending；每次成功保存都增加 revision。
+        if source is not None:
+            record["source"] = deepcopy(source)
         record.update(
             {
                 "data": data,

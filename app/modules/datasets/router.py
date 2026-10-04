@@ -8,9 +8,9 @@ from starlette.background import BackgroundTask
 
 from app.modules.common.downloads import complete_download
 from app.modules.common.identity import current_actor
-from app.modules.common.identity_directory import publication_defaults
+from app.modules.common.identity_directory import configured_directory, publication_defaults
 from app.modules.common.schemas import CatalogQuery
-from app.modules.common.toolchain.configuration import module_settings
+from app.modules.common.toolchain.configuration import module_entry_url, module_settings
 from app.modules.datasets.schemas import (
     DatasetRankingMetric,
     FavoriteDataset,
@@ -151,13 +151,30 @@ def download_sample(dataset_id: str, request: Request) -> Response:
 @router.get("/dataset-publication-defaults", response_model=None)
 def defaults(request: Request) -> dict:
     """提供身份默认值与运行模式；工具链协议尚未接入，不提供虚假的导入成功。"""
+    directory = configured_directory(request)
+    if directory is not None:
+        organizations = [item.model_dump() for item in directory.organizations]
+    elif request.app.state.settings.auth_mode == "disabled":
+        from app.modules.common.identity import DIRECTORY
+
+        organizations = DIRECTORY["organizations"]
+    else:
+        organizations = []
     return {
         **publication_defaults(request, current_actor(request)),
+        "organizations": organizations,
         "storage": "database" if request.app.state.foundation is not None else "memory",
-        "toolchainAvailable": module_settings(request.app.state.settings, "datasets").toolchain_mode
+        "toolchainAvailable": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_mode
         != "disabled",
-        "toolchainMode": module_settings(request.app.state.settings, "datasets").toolchain_mode,
-        "toolchainUrl": str(request.app.state.settings.toolchain_dataset_entry_url or ""),
+        "toolchainMode": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_mode,
+        "toolchainProvider": module_settings(
+            request.app.state.settings, "datasets", "aliyun"
+        ).toolchain_provider,
+        "toolchainUrl": module_entry_url(request.app.state.settings, "datasets", "aliyun"),
     }
 
 

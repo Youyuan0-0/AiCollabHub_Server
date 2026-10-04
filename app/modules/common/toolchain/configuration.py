@@ -20,6 +20,7 @@ from app.modules.common.toolchain.configuration_schemas import (
     ApplicationConnection,
     ConfigurationDocument,
     DatasetConnection,
+    HuaweiConnection,
     KnowledgeConnection,
     MarketConnection,
     MarketResourceBinding,
@@ -38,16 +39,40 @@ CREDENTIAL_FIELDS = {
 }
 
 
-def module_settings(settings: Settings, module: str) -> Settings:
-    """业务按模块取连接；旧环境仍兼容，共享代码不再要求共享地址和权限。"""
+def module_settings(settings: Settings, module: str, provider: str | None = None) -> Settings:
+    """按模块和供应方取独立连接；旧单供应方环境不能自动启用另一家。"""
     if module not in MODULE_NAMES:
         raise ValueError("未知工具链模块")
     updates = settings.toolchain_module_connections.get(module)
     if updates is None and module == "tools":
-        updates = {"toolchain_mode": settings.toolchain_tools_mode}
+        updates = {"toolchain_mode": settings.toolchain_tools_mode, "toolchain_provider": "aliyun"}
     if updates is None and module == "models":
         updates = {"toolchain_mode": settings.toolchain_models_mode}
-    return settings.model_copy(update=updates) if updates is not None else settings
+    specific = settings.model_copy(update=updates) if updates is not None else settings
+    if provider is None:
+        return specific
+    if provider not in ("aliyun", "huawei"):
+        raise ValueError("未知工具链供应方")
+    registered = settings.toolchain_provider_connections.get(module, {}).get(provider)
+    if registered is not None:
+        return specific.model_copy(update=registered)
+    if specific.toolchain_provider == provider:
+        return specific
+    return specific.model_copy(
+        update={
+            "toolchain_provider": provider,
+            "toolchain_mode": "disabled",
+            "toolchain_pop_url": None,
+            "toolchain_api_key": None,
+            "toolchain_access_key_id": None,
+            "toolchain_access_key_secret": None,
+            "toolchain_app_key": None,
+            "toolchain_entry_url": None,
+            "toolchain_workspace": "",
+            "toolchain_region": "",
+            "toolchain_allowed_subjects": [],
+        }
+    )
 
 
 def legacy_json(path: str | None, inline: dict | None) -> dict:
@@ -60,6 +85,26 @@ def legacy_json(path: str | None, inline: dict | None) -> dict:
     if not isinstance(result, dict):
         raise ValueError("配置应为 JSON 对象")
     return result
+
+
+def module_entry_url(settings: Settings, module: str, provider: str) -> str:
+    """工作台地址跟随所属连接，旧单供应方地址不复用于另一家。"""
+    specific = module_settings(settings, module, provider)
+    if specific.toolchain_entry_url:
+        return str(specific.toolchain_entry_url)
+    if module_settings(settings, module).toolchain_provider != provider:
+        return ""
+    field = (
+        "toolchain_"
+        + {
+            "applications": "application",
+            "datasets": "dataset",
+            "models": "model",
+            "tools": "tool",
+        }.get(module, "knowledge")
+        + "_entry_url"
+    )
+    return str(getattr(settings, field, None) or "")
 
 
 def environment_market(settings: Settings, *, load_legacy: bool = True) -> MarketConnection:
@@ -103,7 +148,10 @@ def environment_document(settings: Settings, *, load_legacy: bool = True) -> Con
     )
     connections = {
         module: PopConfiguration(
-            mode=(specific := module_settings(settings, module)).toolchain_mode,
+            mode=(specific := module_settings(settings, module, "aliyun")).toolchain_mode,
+            provider=specific.toolchain_provider,
+            polling_enabled=specific.toolchain_polling_enabled,
+            poll_interval=specific.toolchain_poll_interval,
             url=specific.toolchain_pop_url,
             workspace=specific.toolchain_workspace,
             region=specific.toolchain_region,
@@ -120,28 +168,50 @@ def environment_document(settings: Settings, *, load_legacy: bool = True) -> Con
         if getattr(settings, field)
     }
     for module in MODULE_NAMES:
-        specific = module_settings(settings, module)
+        specific = module_settings(settings, module, "aliyun")
         for suffix, field in (
             ("AccessKeyId", "toolchain_access_key_id"),
             ("AccessKeySecret", "toolchain_access_key_secret"),
             ("AppKey", "toolchain_app_key"),
+            ("ApiKey", "toolchain_api_key"),
         ):
             if getattr(specific, field):
                 credentials[module + suffix] = getattr(specific, field)
+        huawei = module_settings(settings, module, "huawei")
+        if module != "tools" and huawei.toolchain_api_key:
+            credentials[module + "ApiKey"] = huawei.toolchain_api_key
     for subject, account in settings.applications_market_accounts.items():
         if account.get("password"):
             credentials["marketPassword:" + subject] = account["password"]
     return ConfigurationDocument(
         revision="environment",
         configuration=ToolchainConfiguration(
+            huawei={
+                module: HuaweiConnection(
+                    connection=PopConfiguration(
+                        provider="huawei",
+                        mode=(huawei := module_settings(settings, module, "huawei")).toolchain_mode,
+                        url=huawei.toolchain_pop_url,
+                        timeout=huawei.toolchain_timeout,
+                        allowed_subjects=huawei.toolchain_allowed_subjects,
+                        proxy_url=huawei.toolchain_proxy_url,
+                        ca_certificate=huawei.toolchain_ca_certificate,
+                        polling_enabled=huawei.toolchain_polling_enabled,
+                        poll_interval=huawei.toolchain_poll_interval,
+                    ),
+                    entry_url=module_entry_url(settings, module, "huawei") or None,
+                )
+                for module in ("applications", "datasets", "knowledge", "models")
+            },
             tools=ToolConnection(
                 connection=connections["tools"],
-                entry_url=settings.toolchain_tool_entry_url,
+                entry_url=module_entry_url(settings, "tools", "aliyun") or None,
                 tool_category=settings.toolchain_tools_category,
                 tool_types=settings.toolchain_tools_types,
             ),
             models=ModelConnection(
-                connection=connections["models"], entry_url=settings.toolchain_model_entry_url
+                connection=connections["models"],
+                entry_url=module_entry_url(settings, "models", "aliyun") or None,
             ),
             applications=ApplicationConnection(
                 connection=connections["applications"],
@@ -151,7 +221,7 @@ def environment_document(settings: Settings, *, load_legacy: bool = True) -> Con
                 ca_certificate=settings.applications_agent_ca_certificate,
                 url=settings.applications_agent_url,
                 timeout=settings.applications_agent_timeout,
-                entry_url=settings.toolchain_application_entry_url,
+                entry_url=module_entry_url(settings, "applications", "aliyun") or None,
                 bindings=[
                     ApplicationBinding(resource_id=identifier, **binding)
                     for identifier, binding in bindings.items()
@@ -159,7 +229,8 @@ def environment_document(settings: Settings, *, load_legacy: bool = True) -> Con
                 market=environment_market(settings, load_legacy=load_legacy),
             ),
             datasets=DatasetConnection(
-                connection=connections["datasets"], entry_url=settings.toolchain_dataset_entry_url
+                connection=connections["datasets"],
+                entry_url=module_entry_url(settings, "datasets", "aliyun") or None,
             ),
             knowledge=KnowledgeConnection.model_validate(
                 {
@@ -273,6 +344,7 @@ class ToolchainConfigurationStore:
             "toolchain_tools_category": config.tools.tool_category,
             "toolchain_tools_types": config.tools.tool_types,
             "toolchain_module_connections": {},
+            "toolchain_provider_connections": {},
             "toolchain_application_entry_url": config.applications.entry_url,
             "toolchain_dataset_entry_url": config.datasets.entry_url,
             "toolchain_knowledge_data": config.knowledge.model_dump(by_alias=True),
@@ -309,6 +381,10 @@ class ToolchainConfigurationStore:
             connection = getattr(config, module).connection
             updates["toolchain_module_connections"][module] = {
                 "toolchain_mode": connection.mode,
+                "toolchain_provider": connection.provider,
+                "toolchain_polling_enabled": connection.polling_enabled,
+                "toolchain_poll_interval": connection.poll_interval,
+                "toolchain_api_key": self.active.credentials.get(module + "ApiKey"),
                 "toolchain_pop_url": connection.url,
                 "toolchain_workspace": connection.workspace,
                 "toolchain_region": connection.region,
@@ -325,6 +401,30 @@ class ToolchainConfigurationStore:
                 if module == "knowledge"
                 else "json",
             }
+            updates["toolchain_provider_connections"][module] = {
+                "aliyun": updates["toolchain_module_connections"][module],
+            }
+            if module in config.huawei:
+                huawei = config.huawei[module]
+                connection = huawei.connection
+                updates["toolchain_provider_connections"][module]["huawei"] = {
+                    "toolchain_provider": "huawei",
+                    "toolchain_mode": connection.mode,
+                    "toolchain_pop_url": connection.url,
+                    "toolchain_api_key": self.active.credentials.get(module + "ApiKey"),
+                    "toolchain_timeout": connection.timeout,
+                    "toolchain_allowed_subjects": connection.allowed_subjects,
+                    "toolchain_proxy_url": connection.proxy_url,
+                    "toolchain_ca_certificate": connection.ca_certificate,
+                    "toolchain_polling_enabled": connection.polling_enabled,
+                    "toolchain_poll_interval": connection.poll_interval,
+                    "toolchain_entry_url": huawei.entry_url,
+                    "toolchain_workspace": "",
+                    "toolchain_region": "",
+                    "toolchain_access_key_id": None,
+                    "toolchain_access_key_secret": None,
+                    "toolchain_app_key": None,
+                }
         updates.update(
             {field: self.active.credentials.get(key) for key, field in CREDENTIAL_FIELDS.items()}
         )
@@ -349,8 +449,13 @@ class ToolchainConfigurationStore:
                 for module in MODULE_NAMES
             },
             "activeRuntime": self.active.configuration.applications.runtime,
+            "huaweiModes": {
+                module: connection.connection.mode
+                for module, connection in self.active.configuration.huawei.items()
+            },
             "platformStorageConfigured": self.baseline.minio_endpoint is not None,
             "readiness": configuration_readiness(document, self.baseline),
+            "huaweiReadiness": configuration_readiness(document, self.baseline, "huawei"),
         }
 
     def save(self, payload: SaveToolchainConfiguration, subject: str) -> dict:
